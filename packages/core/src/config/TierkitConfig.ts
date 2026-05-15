@@ -1,0 +1,91 @@
+import { z } from "zod";
+import { ModelPolicySchema, ModelProfileMapSchema } from "../model/ModelProfile.js";
+import { TARGETS } from "../plugin/PluginManifest.js";
+
+export const RiskThresholdsSchema = z
+  .object({
+    localFastMax: z.number().int().min(0).max(100).default(25),
+    localStrongMax: z.number().int().min(0).max(100).default(50),
+    privateRemoteMax: z.number().int().min(0).max(100).default(75),
+    publicCloudReviewMin: z.number().int().min(0).max(100).default(76),
+  })
+  .strict();
+
+export const RoutingPolicySchema = z
+  .object({
+    default: z.string().min(1).optional(),
+    preferPrivateRemoteBeforePublicCloud: z.boolean().default(true),
+    publicCloudRequiresApproval: z.boolean().default(true),
+    publicCloudDefaultMode: z.enum(["execute", "review-only"]).default("review-only"),
+    riskThresholds: RiskThresholdsSchema.default({
+      localFastMax: 25,
+      localStrongMax: 50,
+      privateRemoteMax: 75,
+      publicCloudReviewMin: 76,
+    }),
+  })
+  .strict();
+
+export const SecurityPolicySchema = z
+  .object({
+    redactSecretsForRemote: z.boolean().default(true),
+    blockSecretFiles: z.boolean().default(true),
+    dangerousCommandsRequireApproval: z.boolean().default(true),
+  })
+  .strict();
+
+export const BudgetPolicySchema = z
+  .object({
+    dailyUsdLimit: z.number().nonnegative().optional(),
+    monthlyUsdLimit: z.number().nonnegative().optional(),
+    warnAtPercent: z.number().min(0).max(100).default(70),
+    blockAtPercent: z.number().min(0).max(100).default(100),
+  })
+  .strict();
+
+export const RuntimeConfigSchema = z
+  .object({
+    /** TCP port the local runtime daemon binds to. 0 = pick any free port. */
+    port: z.number().int().min(0).max(65535).default(4101),
+    /** Directory (relative to project root) where the daemon stores PID file, port file, and usage log. */
+    dataDir: z.string().min(1).default(".tierkit/runtime"),
+    /** Bind address. Defaults to localhost-only; never change without explicit user consent — see SECURITY.md. */
+    host: z.string().min(1).default("127.0.0.1"),
+  })
+  .strict();
+
+export const TierkitConfigSchema = z
+  .object({
+    version: z.literal("0.1"),
+    activePlugins: z.array(z.string().min(1)).default([]),
+    defaultTarget: z.enum(TARGETS).default("generic"),
+    modelProfiles: ModelProfileMapSchema.default({}),
+    routingPolicy: RoutingPolicySchema.default({
+      preferPrivateRemoteBeforePublicCloud: true,
+      publicCloudRequiresApproval: true,
+      publicCloudDefaultMode: "review-only",
+      riskThresholds: {
+        localFastMax: 25,
+        localStrongMax: 50,
+        privateRemoteMax: 75,
+        publicCloudReviewMin: 76,
+      },
+    }),
+    security: SecurityPolicySchema.default({
+      redactSecretsForRemote: true,
+      blockSecretFiles: true,
+      dangerousCommandsRequireApproval: true,
+    }),
+    budget: BudgetPolicySchema.optional(),
+    modelPolicy: ModelPolicySchema.optional(),
+    runtime: RuntimeConfigSchema.default({
+      port: 4101,
+      dataDir: ".tierkit/runtime",
+      host: "127.0.0.1",
+    }),
+  })
+  .strict();
+
+export type TierkitConfig = z.infer<typeof TierkitConfigSchema>;
+
+export const CONFIG_FILENAME = "tierkit.config.json";

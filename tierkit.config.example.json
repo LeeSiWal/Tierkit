@@ -1,0 +1,22 @@
+{
+  "version": "0.1",
+  "activePlugins": [],
+  "defaultTarget": "generic",
+  "modelProfiles": {},
+  "routingPolicy": {
+    "preferPrivateRemoteBeforePublicCloud": true,
+    "publicCloudRequiresApproval": true,
+    "publicCloudDefaultMode": "review-only",
+    "riskThresholds": {
+      "localFastMax": 25,
+      "localStrongMax": 50,
+      "privateRemoteMax": 75,
+      "publicCloudReviewMin": 76
+    }
+  },
+  "security": {
+    "redactSecretsForRemote": true,
+    "blockSecretFiles": true,
+    "dangerousCommandsRequireApproval": true
+  }
+}

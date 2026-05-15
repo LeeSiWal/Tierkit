@@ -1,0 +1,89 @@
+{
+  "name": "tierkit-vscode",
+  "displayName": "Tierkit",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Talk to a running `tierkit runtime` from inside VS Code: route routing, command classification, usage, and a status bar entry for daemon health.",
+  "license": "MIT",
+  "publisher": "tierkit-placeholder",
+  "engines": {
+    "vscode": "^1.84.0",
+    "node": ">=20.10.0"
+  },
+  "categories": [
+    "AI",
+    "Other"
+  ],
+  "keywords": [
+    "tierkit",
+    "ai",
+    "model routing",
+    "ollama",
+    "anthropic",
+    "openai",
+    "roo",
+    "cline",
+    "continue",
+    "local-first"
+  ],
+  "main": "./dist/extension.js",
+  "repository": {
+    "type": "git",
+    "url": "https://example.com/tierkit.git",
+    "directory": "packages/vscode-tierkit"
+  },
+  "bugs": {
+    "url": "https://example.com/tierkit/issues"
+  },
+  "homepage": "https://example.com/tierkit",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      { "command": "tierkit.health",        "title": "Tierkit: Check runtime health" },
+      { "command": "tierkit.routeExplain",  "title": "Tierkit: Explain route for current task" },
+      { "command": "tierkit.routeRun",      "title": "Tierkit: Run task through Tierkit (streamed)" },
+      { "command": "tierkit.checkCommand",  "title": "Tierkit: Classify a shell command" },
+      { "command": "tierkit.usage",         "title": "Tierkit: Show usage summary" },
+      { "command": "tierkit.sessionStatus", "title": "Tierkit: Show workflow session status" }
+    ],
+    "configuration": {
+      "title": "Tierkit",
+      "properties": {
+        "tierkit.baseUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:4101",
+          "description": "Base URL of the Tierkit runtime daemon."
+        },
+        "tierkit.statusBar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a Tierkit status bar item with daemon health."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist *.vsix .tsbuildinfo",
+    "package": "vsce package --no-dependencies --out tierkit-vscode-${npm_package_version}.vsix",
+    "package:dry-run": "vsce package --no-dependencies --no-yarn --no-update-package-json --out /tmp/tierkit-vscode-dryrun.vsix && unzip -l /tmp/tierkit-vscode-dryrun.vsix",
+    "publish:vsix": "vsce publish --no-dependencies",
+    "vsix:install": "code --install-extension tierkit-vscode-${npm_package_version}.vsix"
+  },
+  "dependencies": {
+    "@tierkit/client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "@types/vscode": "^1.84.0",
+    "@vscode/vsce": "^3.2.0",
+    "tsup": "^8.2.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

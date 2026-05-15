@@ -1,0 +1,49 @@
+{
+  "schemaVersion": "0.1",
+  "id": "superpowers-guided",
+  "name": "Superpowers Guided",
+  "version": "0.1.0",
+  "description": "Encouraging Superpowers-like workflow. Suggests planning, surfaces danger, but does not block — soft warnings via Tierkit session integration.",
+  "author": "tierkit",
+  "license": "MIT",
+  "compatibility": {
+    "tierkit": ">=0.1.0",
+    "targets": ["generic", "roo", "zoo", "cline", "continue"]
+  },
+  "components": {
+    "commands": [
+      { "name": "brainstorm", "file": "commands/brainstorm.md", "description": "Explore requirements and approaches", "category": "planning" },
+      { "name": "debug",      "file": "commands/debug.md",      "description": "Hypothesis-driven debugging",        "category": "debugging" },
+      { "name": "review",     "file": "commands/review.md",     "description": "Review current diff or files",       "category": "review" },
+      { "name": "escalate",   "file": "commands/escalate.md",   "description": "Escalate to a stronger model tier",  "category": "routing" }
+    ],
+    "modes": [
+      { "id": "planner",      "name": "Planner",      "file": "modes/planner.md",      "tools": ["read", "search"],          "role": "planner" },
+      { "id": "brainstormer", "name": "Brainstormer", "file": "modes/brainstormer.md", "tools": ["read", "search"],          "role": "planner" },
+      { "id": "reviewer",     "name": "Reviewer",     "file": "modes/reviewer.md",     "tools": ["read", "search"],          "role": "reviewer" }
+    ],
+    "rules": [
+      "rules/local-first.md",
+      "rules/think-before-act.md"
+    ]
+  },
+  "permissions": {
+    "readFiles": true,
+    "editFiles": true,
+    "runCommands": false,
+    "registerMcp": false,
+    "useLocalDeviceModel": true,
+    "usePrivateRemoteModel": true,
+    "usePublicCloudModel": false,
+    "accessSecrets": false
+  },
+  "modelPolicy": {
+    "defaultTier": "localFast",
+    "preferPrivateRemoteBeforePublicCloud": true,
+    "publicCloudRequiresApproval": true,
+    "publicCloudDefaultMode": "review-only"
+  },
+  "freedom": {
+    "level": "guided"
+  }
+}

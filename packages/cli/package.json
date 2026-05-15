@@ -1,0 +1,39 @@
+{
+  "name": "@tierkit/cli",
+  "version": "0.1.0",
+  "description": "Tierkit command-line interface — thin clipanion layer over @tierkit/core usecases.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "tierkit": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@tierkit/adapter-cline": "workspace:*",
+    "@tierkit/adapter-continue": "workspace:*",
+    "@tierkit/adapter-roo": "workspace:*",
+    "@tierkit/core": "workspace:*",
+    "clipanion": "^4.0.0-rc.4",
+    "typanion": "^3.14.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsup": "^8.2.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5",
+    "yaml": "^2.5.0"
+  }
+}

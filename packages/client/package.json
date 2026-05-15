@@ -1,0 +1,36 @@
+{
+  "name": "@tierkit/client",
+  "version": "0.1.0",
+  "description": "Typed HTTP client for the Tierkit runtime daemon. Used by VS Code extensions, web UIs, and any tool integrating with a running `tierkit runtime`.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist .tsbuildinfo"
+  },
+  "dependencies": {
+    "@tierkit/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsup": "^8.2.4",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.5"
+  }
+}

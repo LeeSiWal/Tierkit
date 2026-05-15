@@ -1,0 +1,86 @@
+{
+  "schemaVersion": "0.1",
+  "id": "superpowers-free",
+  "name": "Superpowers Free",
+  "version": "0.1.0",
+  "description": "Free-form Superpowers-like workflow pack for AI coding agents.",
+  "author": "tierkit",
+  "license": "MIT",
+  "compatibility": {
+    "tierkit": ">=0.1.0",
+    "targets": ["generic", "roo", "zoo", "cline", "continue"]
+  },
+  "components": {
+    "commands": [
+      {
+        "name": "brainstorm",
+        "file": "commands/brainstorm.md",
+        "description": "Explore requirements and implementation approaches",
+        "category": "planning"
+      },
+      {
+        "name": "debug",
+        "file": "commands/debug.md",
+        "description": "Analyze an error or failing behavior",
+        "category": "debugging"
+      },
+      {
+        "name": "review",
+        "file": "commands/review.md",
+        "description": "Review current diff or selected files",
+        "category": "review"
+      },
+      {
+        "name": "escalate",
+        "file": "commands/escalate.md",
+        "description": "Escalate a task to a stronger model tier",
+        "category": "routing"
+      }
+    ],
+    "modes": [
+      {
+        "id": "free-coder",
+        "name": "Free Coder",
+        "file": "modes/free-coder.md",
+        "tools": ["read", "edit", "search", "terminal"],
+        "role": "coder"
+      },
+      {
+        "id": "brainstormer",
+        "name": "Brainstormer",
+        "file": "modes/brainstormer.md",
+        "tools": ["read", "search"],
+        "role": "planner"
+      },
+      {
+        "id": "reviewer",
+        "name": "Reviewer",
+        "file": "modes/reviewer.md",
+        "tools": ["read", "search"],
+        "role": "reviewer"
+      }
+    ],
+    "rules": [
+      "rules/local-first.md"
+    ]
+  },
+  "permissions": {
+    "readFiles": true,
+    "editFiles": true,
+    "runCommands": true,
+    "registerMcp": false,
+    "useLocalDeviceModel": true,
+    "usePrivateRemoteModel": true,
+    "usePublicCloudModel": true,
+    "accessSecrets": false
+  },
+  "modelPolicy": {
+    "defaultTier": "localFast",
+    "preferPrivateRemoteBeforePublicCloud": true,
+    "publicCloudRequiresApproval": true,
+    "publicCloudDefaultMode": "review-only"
+  },
+  "freedom": {
+    "level": "free"
+  }
+}

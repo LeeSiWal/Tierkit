@@ -1,0 +1,17 @@
+{
+  "name": "@tierkit/plugin-superpowers",
+  "version": "0.1.0",
+  "description": "Bundled Superpowers-like sample plugins for Tierkit (free / guided / balanced / strict).",
+  "license": "MIT",
+  "type": "module",
+  "files": [
+    "plugins"
+  ],
+  "scripts": {
+    "build": "echo \"plugin-superpowers has no build step\"",
+    "test": "echo \"plugin-superpowers has no tests\"",
+    "typecheck": "echo \"plugin-superpowers has no typecheck\"",
+    "lint": "echo \"plugin-superpowers has no lint\"",
+    "clean": "echo \"plugin-superpowers has no clean\""
+  }
+}

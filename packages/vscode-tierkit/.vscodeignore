@@ -1,0 +1,24 @@
+# Ignore everything by default and re-include only what the extension actually needs.
+**
+
+# Re-include the compiled extension + manifest + license + readme + icon.
+!dist/**
+!package.json
+!LICENSE
+!README.md
+!icon.png
+!CHANGELOG.md
+
+# Exclude sourcemaps from the published .vsix (keep dist/extension.js only).
+dist/**/*.map
+
+# Standard noise.
+**/.DS_Store
+**/.git/**
+**/node_modules/**
+**/test/**
+**/*.tsbuildinfo
+tsconfig*.json
+tsup.config.*
+vitest.config.*
+src/**

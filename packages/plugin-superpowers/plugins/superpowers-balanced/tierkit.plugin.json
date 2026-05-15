@@ -1,0 +1,51 @@
+{
+  "schemaVersion": "0.1",
+  "id": "superpowers-balanced",
+  "name": "Superpowers Balanced",
+  "version": "0.1.0",
+  "description": "Practical Superpowers-like workflow. Tierkit's session gate refuses multi-file execute without a session in 'implementing'.",
+  "author": "tierkit",
+  "license": "MIT",
+  "compatibility": {
+    "tierkit": ">=0.1.0",
+    "targets": ["generic", "roo", "zoo", "cline", "continue"]
+  },
+  "components": {
+    "commands": [
+      { "name": "brainstorm", "file": "commands/brainstorm.md", "description": "Explore requirements and approaches", "category": "planning" },
+      { "name": "debug",      "file": "commands/debug.md",      "description": "Hypothesis-driven debugging",        "category": "debugging" },
+      { "name": "review",     "file": "commands/review.md",     "description": "Review current diff or files",       "category": "review" },
+      { "name": "escalate",   "file": "commands/escalate.md",   "description": "Escalate to a stronger model tier",  "category": "routing" }
+    ],
+    "modes": [
+      { "id": "planner",      "name": "Planner",      "file": "modes/planner.md",      "tools": ["read", "search"], "role": "planner" },
+      { "id": "brainstormer", "name": "Brainstormer", "file": "modes/brainstormer.md", "tools": ["read", "search"], "role": "planner" },
+      { "id": "reviewer",     "name": "Reviewer",     "file": "modes/reviewer.md",     "tools": ["read", "search"], "role": "reviewer" }
+    ],
+    "rules": [
+      "rules/local-first.md",
+      "rules/plan-before-multifile.md",
+      "rules/review-after-big-diff.md",
+      "rules/tool-integration.md"
+    ]
+  },
+  "permissions": {
+    "readFiles": true,
+    "editFiles": true,
+    "runCommands": false,
+    "registerMcp": false,
+    "useLocalDeviceModel": true,
+    "usePrivateRemoteModel": true,
+    "usePublicCloudModel": false,
+    "accessSecrets": false
+  },
+  "modelPolicy": {
+    "defaultTier": "localFast",
+    "preferPrivateRemoteBeforePublicCloud": true,
+    "publicCloudRequiresApproval": true,
+    "publicCloudDefaultMode": "review-only"
+  },
+  "freedom": {
+    "level": "balanced"
+  }
+}
