@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.1.2 — 2026-05-15
+
+Diagnostics for the "Daemon unreachable: Failed to fetch" case (especially on Windows).
+
+### Features
+
+**Diagnostic Output channel**
+- New "Tierkit" Output channel logs every step of `maybeStartDaemon`: VS Code version, Node version, workspace folders, configured baseUrl, existing-daemon probe, port-binding attempts, fallback to port 0, and the full stack of any failure.
+- New command **`Tierkit: Show diagnostic output`** opens it from anywhere.
+- When auto-start fails, the warning toast now has an **Open output** button.
+
+**Restart daemon command**
+- New command **`Tierkit: Restart daemon`** closes the in-process server (if any) and re-runs auto-start. Useful after opening a folder, changing `tierkit.config.json`, or unblocking a port.
+
+**In-sidebar daemon banner**
+- When the host (VS Code) flags an auto-start failure, the sidebar shows a clearly worded banner at the top with two buttons: **진단 로그 열기 / Show output** and **데몬 재시작 / Restart daemon**. No more hunting through 5 separate "Failed to fetch" messages.
+
+### Why this matters
+The sidebar previously gave 5 identical "Failed to fetch" errors when the daemon didn't start, with no clue why. On Windows in particular, common silent-failure modes are: no workspace folder open, port 4101 inside Hyper-V's reserved port range, AV blocking `node:http.listen`, or a missing `tierkit.config.json`. The new Output channel surfaces the exact failure so it can actually be fixed.
+
 ## 0.1.1 — 2026-05-15
 
 Zero-config first run + Korean localization.

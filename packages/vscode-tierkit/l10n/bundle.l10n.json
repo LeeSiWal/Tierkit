@@ -14,5 +14,9 @@
   "(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)": "(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)",
   "Shell command to classify": "Shell command to classify",
   "Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.": "Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.",
-  "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.": "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls."
+  "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.": "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.",
+  "autoStart disabled: tierkit.autoStartDaemon is false": "autoStart disabled: tierkit.autoStartDaemon is false",
+  "No folder is open. Tierkit needs a workspace folder to know where to read tierkit.config.json. Open a folder, then run \"Tierkit: Restart daemon\".": "No folder is open. Tierkit needs a workspace folder to know where to read tierkit.config.json. Open a folder, then run \"Tierkit: Restart daemon\".",
+  "Could not auto-start the Tierkit daemon: {0}. Run \"Tierkit: Show diagnostic output\" for details.": "Could not auto-start the Tierkit daemon: {0}. Run \"Tierkit: Show diagnostic output\" for details.",
+  "Open output": "Open output"
 }

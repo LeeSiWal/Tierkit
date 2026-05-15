@@ -12,5 +12,7 @@
   "commands.routeRun": "Tierkit: Run task through Tierkit (streamed)",
   "commands.checkCommand": "Tierkit: Classify a shell command",
   "commands.usage": "Tierkit: Show usage summary",
-  "commands.sessionStatus": "Tierkit: Show workflow session status"
+  "commands.sessionStatus": "Tierkit: Show workflow session status",
+  "commands.restartDaemon": "Tierkit: Restart daemon",
+  "commands.showOutput": "Tierkit: Show diagnostic output"
 }

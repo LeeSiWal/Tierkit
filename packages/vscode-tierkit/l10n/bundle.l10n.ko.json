@@ -14,5 +14,9 @@
   "(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)": "(자동 라우팅에는 profileId가 필요합니다 — 지정해주세요)",
   "Shell command to classify": "분류할 쉘 명령어",
   "Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.": "Tierkit: 활성 세션 없음 (freedom={0}). 사이드바에서 세션을 시작하세요.",
-  "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.": "Tierkit 세션 {0} — 상태={1}{2} — 사이드바에서 전체 제어 가능합니다."
+  "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.": "Tierkit 세션 {0} — 상태={1}{2} — 사이드바에서 전체 제어 가능합니다.",
+  "autoStart disabled: tierkit.autoStartDaemon is false": "자동 시작이 꺼져 있음: tierkit.autoStartDaemon 설정이 false 입니다.",
+  "No folder is open. Tierkit needs a workspace folder to know where to read tierkit.config.json. Open a folder, then run \"Tierkit: Restart daemon\".": "열려 있는 폴더가 없습니다. Tierkit은 tierkit.config.json을 읽을 위치를 알기 위해 워크스페이스 폴더가 필요합니다. 폴더를 연 뒤 \"Tierkit: 데몬 재시작\"을 실행하세요.",
+  "Could not auto-start the Tierkit daemon: {0}. Run \"Tierkit: Show diagnostic output\" for details.": "Tierkit 데몬을 자동 시작하지 못했습니다: {0}. 자세한 내용은 \"Tierkit: 진단 로그 보기\"를 실행하세요.",
+  "Open output": "로그 열기"
 }

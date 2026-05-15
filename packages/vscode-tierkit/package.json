@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "%description%",
   "license": "MIT",
@@ -67,7 +67,9 @@
       { "command": "tierkit.routeRun",      "title": "%commands.routeRun%" },
       { "command": "tierkit.checkCommand",  "title": "%commands.checkCommand%" },
       { "command": "tierkit.usage",         "title": "%commands.usage%" },
-      { "command": "tierkit.sessionStatus", "title": "%commands.sessionStatus%" }
+      { "command": "tierkit.sessionStatus", "title": "%commands.sessionStatus%" },
+      { "command": "tierkit.restartDaemon", "title": "%commands.restartDaemon%" },
+      { "command": "tierkit.showOutput",    "title": "%commands.showOutput%" }
     ],
     "configuration": {
       "title": "%configuration.title%",

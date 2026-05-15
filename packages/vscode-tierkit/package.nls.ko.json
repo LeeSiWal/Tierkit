@@ -12,5 +12,7 @@
   "commands.routeRun": "Tierkit: 작업 실행 (스트리밍)",
   "commands.checkCommand": "Tierkit: 쉘 명령어 위험도 분류",
   "commands.usage": "Tierkit: 사용량 요약 보기",
-  "commands.sessionStatus": "Tierkit: 워크플로 세션 상태 보기"
+  "commands.sessionStatus": "Tierkit: 워크플로 세션 상태 보기",
+  "commands.restartDaemon": "Tierkit: 데몬 재시작",
+  "commands.showOutput": "Tierkit: 진단 로그 보기"
 }

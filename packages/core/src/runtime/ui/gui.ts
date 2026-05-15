@@ -136,6 +136,7 @@ export const GUI_HTML = `<!doctype html>
 </h1>
 
 <div id="err-banner" class="err-banner" style="display:none"></div>
+<div id="host-banner" class="err-banner" style="display:none"></div>
 
 <div class="grid grid-2">
 
@@ -674,6 +675,35 @@ export const GUI_HTML = `<!doctype html>
   async function refreshAll() {
     await Promise.all([refreshHealth(), refreshSession(), refreshModels(), refreshUsage()]);
   }
+
+  // ── Host-banner: when running inside the VS Code webview AND the host extension flagged
+  // a daemon auto-start failure, show a clear actionable banner instead of letting the user
+  // hunt through 5 separate "Failed to fetch" messages. The buttons postMessage back to the
+  // host, which is wired in extension.ts to open the diagnostic Output channel / restart.
+  (function maybeRenderHostBanner() {
+    const host = (typeof window !== 'undefined' && window.__TIERKIT_HOST__) || '';
+    const errMsg = (typeof window !== 'undefined' && window.__TIERKIT_DAEMON_ERROR__) || '';
+    if (host !== 'vscode' || !errMsg) return;
+    const banner = $('host-banner');
+    if (!banner) return;
+    const labels = lang === 'ko'
+      ? { title: '데몬 자동 시작 실패', showOutput: '진단 로그 열기', restart: '데몬 재시작' }
+      : { title: 'Daemon auto-start failed', showOutput: 'Show output', restart: 'Restart daemon' };
+    banner.style.display = 'block';
+    banner.innerHTML =
+      '<div style="font-weight:600;margin-bottom:4px">' + escapeHtml(labels.title) + '</div>' +
+      '<div style="margin-bottom:8px">' + escapeHtml(errMsg) + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+        '<button id="btn-host-output" class="tiny">' + escapeHtml(labels.showOutput) + '</button>' +
+        '<button id="btn-host-restart" class="tiny">' + escapeHtml(labels.restart) + '</button>' +
+      '</div>';
+    const acquire = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi : null;
+    const vsApi = acquire ? acquire() : null;
+    function post(type) { if (vsApi) vsApi.postMessage({ type }); }
+    $('btn-host-output').onclick = () => post('showOutput');
+    $('btn-host-restart').onclick = () => post('restartDaemon');
+  })();
+
   refreshAll();
   setInterval(() => { refreshHealth(); refreshUsage(); }, 30_000);
 })();
