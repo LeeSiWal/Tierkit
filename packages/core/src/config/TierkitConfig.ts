@@ -83,6 +83,20 @@ export const RuntimeConfigSchema = z
      *      the shim happened)
      */
     toolShim: z.enum(["auto", "on", "off"]).default("auto"),
+    /**
+     * When true (default), Tierkit probes a running Ollama daemon's `/api/tags` on each
+     * `loadConfig()` (cached for 30 seconds) and synthesizes a model profile per installed
+     * chat-capable model. So any user who has Ollama with models pulled — regardless of
+     * which models — gets viable local profiles in `/models` and auto-route candidates
+     * without writing a single line of config.
+     *
+     * Generated profile ids look like `ollama-qwen2-5-coder-7b` (the model name sanitized).
+     * Source is reported as `"discovered"` in listModels output.
+     *
+     * Set false to suppress discovery — useful if you have a small set of carefully-
+     * defined profiles and don't want the auto-route to consider random installed models.
+     */
+    discoverOllamaModels: z.boolean().default(true),
   })
   .strict();
 

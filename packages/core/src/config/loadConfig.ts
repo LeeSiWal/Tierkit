@@ -7,10 +7,11 @@ import {
   type TierkitConfig,
 } from "./TierkitConfig.js";
 import { DEFAULT_MODEL_PROFILES } from "./defaultProfiles.js";
+import { discoverOllamaProfiles } from "../model/discoverOllamaProfiles.js";
 import type { ModelProfile, ModelProfileMap } from "../model/ModelProfile.js";
 
 /** Where a given config value originated. Surfaced via `/v1/models` so users can see why a profile is visible. */
-export type ConfigSource = "bundled" | "user" | "workspace";
+export type ConfigSource = "bundled" | "user" | "workspace" | "discovered";
 
 export interface ConfigLoadResult {
   /** The merged effective config. */
@@ -173,6 +174,28 @@ export async function loadConfig(
       if (val === null) delete profileSources[id];
     }
     for (const id of Object.keys(wsRead.config.modelProfiles)) profileSources[id] = "workspace";
+  }
+
+  // ── Ollama auto-discovery ─────────────────────────────────────────────────
+  // After all explicit configs (bundled/user/workspace) are merged, look at the local
+  // Ollama daemon to see what models the user actually has pulled and synthesize a
+  // profile per chat-capable model. Discovered profiles fill in for users whose
+  // installed models don't match Tierkit's bundled-default model names.
+  //
+  // Discovered profiles NEVER override existing ones — if a workspace/user/bundled
+  // profile has the same id (very unlikely given the `ollama-` prefix), it wins.
+  if (acc.runtime.discoverOllamaModels !== false) {
+    const discovered = await discoverOllamaProfiles();
+    const merged: ModelProfileMap = { ...acc.modelProfiles };
+    for (const [id, p] of Object.entries(discovered)) {
+      if (!(id in merged)) {
+        merged[id] = p;
+        profileSources[id] = "discovered";
+      }
+    }
+    if (Object.keys(discovered).length > 0) {
+      acc = { ...acc, modelProfiles: merged };
+    }
   }
 
   return {

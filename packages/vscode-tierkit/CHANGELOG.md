@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.3.4 — 2026-05-16
+
+**Ollama model auto-discovery — whatever you have pulled, Tierkit uses it.**
+
+### Problem
+Bundled defaults pointed at specific model names (`qwen2.5-coder:7b`, `llama3.2:3b`). Users who had completely different Ollama models pulled — gemma, mistral-nemo, deepseek-coder, etc. — got zero viable local profiles out of the box and had to either pull the bundled-default models OR manually configure profiles. Friction wall for first-run.
+
+### Fix
+`loadConfig()` now probes Ollama's `/api/tags` (cached for 30s) and synthesizes a profile per chat-capable installed model. Generated profile ids look like `ollama-qwen2-5-coder-7b` (model name sanitized to alphanumeric+hyphen). Source is reported as `"discovered"` so the sidebar can label them differently from bundled/user/workspace.
+
+### Filter rules
+- Embedding-only models (name contains `embed`, starts with `nomic-embed`, `bge-`, `snowflake-arctic-embed`) are filtered out — they can't serve `/api/chat`, so including them would just create fallback noise.
+- Role tags inferred from name: `code` for `coder`/`code` substrings, `vision` for vision models, `chat` as default.
+
+### Precedence
+- Workspace > User > Bundled > **Discovered**
+- If a user/workspace/bundled profile has the same id (`ollama-X`) as a discovered one, the explicit profile wins. Discovered profiles only fill gaps.
+
+### Config
+`runtime.discoverOllamaModels`: `true` (default) | `false`. Set false if you want a tightly-controlled profile list.
+`TIERKIT_NO_DISCOVERY=1` env var for test isolation (test setup uses this).
+
+### Caching
+30-second TTL avoids hammering Ollama on every `loadConfig()` call (which happens on every `/v1/llm-call`, route-explain, etc.). Cache invalidates if `baseUrl` changes; `force: true` bypasses for explicit re-probes.
+
+### Tests
+349 pass (243 core + 28 client + adapter/cli unchanged). 9 new tests cover: chat-capable discovery, embed filtering, env-var opt-out, network failure → empty, caching, force re-probe, integration with loadConfig source tagging, workspace override, runtime flag disabling.
+
+### Real-world effect
+The user from issue threads who had `gemma4:e2b`, `gemma4-26b-fast`, and `qwen2.5:7b-instruct` (none of them in the bundled defaults) now sees three discovered local profiles immediately and Roo Code's `auto` routing picks one without any config.
+
 ## 0.3.3 — 2026-05-16
 
 **Tool-shim: weak local models can now drive Roo / Cline / Continue.** Tierkit transparently bridges OpenAI structured tool calling to text-format tool calls (XML tags or JSON-in-content) for models that don't reliably emit `tool_calls`.

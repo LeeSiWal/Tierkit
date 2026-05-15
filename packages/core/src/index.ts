@@ -129,6 +129,11 @@ export {
 } from "./config/loadConfig.js";
 export { DEFAULT_MODEL_PROFILES, DEFAULT_PROFILE_IDS } from "./config/defaultProfiles.js";
 export {
+  discoverOllamaProfiles,
+  _clearDiscoveryCacheForTests,
+  type DiscoverOptions,
+} from "./model/discoverOllamaProfiles.js";
+export {
   addProfile,
   removeProfile,
   ProfileCrudError,

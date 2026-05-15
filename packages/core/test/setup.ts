@@ -3,3 +3,5 @@
 process.env.TIERKIT_NO_BUNDLED_DEFAULTS = "1";
 // Never spawn real `ollama serve` during tests, regardless of provider client paths.
 process.env.TIERKIT_DISABLE_AUTO_LAUNCH = "1";
+// Never probe a real Ollama daemon to auto-discover profiles during tests.
+process.env.TIERKIT_NO_DISCOVERY = "1";
