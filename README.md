@@ -195,10 +195,14 @@ Roo Code가 settings.json 키를 무시하면 (3.x에서 종종 발생) Roo 아�
 
 | 필드 | 값 |
 |---|---|
-| API Provider | **OpenAI Compatible** |
+| API Provider | **OpenAI Compatible** ← 절대 `OpenAI` 아님 |
 | Base URL | `http://127.0.0.1:4101/v1/openai` |
-| API Key | `tierkit-loopback` (아무 값) |
+| API Key | `tierkit-loopback` (어떤 비어있지 않은 문자열도 OK, 빈칸은 안 됨) |
 | Model ID | `auto` (또는 `localCoder` 등 특정 프로파일) |
+
+**저장 후 반드시 VS Code Reload Window (Ctrl+R)**
+
+더 자세한 Roo 설정 가이드 (자주 보는 에러 의미, 체크리스트, code-server 특이사항 등): [**docs/ROO.ko.md**](docs/ROO.ko.md)
 
 ### 6. Roo 채팅창에서 task 실행
 
@@ -318,7 +322,8 @@ tierkit plugin enable my-team-rules
 ## 더 알아보기
 
 - 한글 시작 가이드: [docs/GUIDE.ko.md](docs/GUIDE.ko.md)
-- 연결 가이드 (Roo/Cline/Continue): [docs/CONNECT.ko.md](docs/CONNECT.ko.md)
+- **Roo Code 단독 설정 가이드** (정확한 값 + 자주 보는 에러 + 체크리스트): [docs/ROO.ko.md](docs/ROO.ko.md)
+- 연결 가이드 (Roo/Cline/Continue 통합): [docs/CONNECT.ko.md](docs/CONNECT.ko.md)
 - 디자인 스펙: [docs/SPEC.md](docs/SPEC.md)
 - 보안 모델: [docs/SECURITY.md](docs/SECURITY.md)
 - VS Code 마켓플레이스 publish 절차: [docs/PUBLISH.ko.md](docs/PUBLISH.ko.md)

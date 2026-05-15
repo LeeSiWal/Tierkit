@@ -100,10 +100,13 @@ Auto-refreshes every 5s for activity + usage. Click `[Connect]`/`[Add]`/`[New]` 
 If `tierkit connect roo` doesn't take effect (Roo 3.x sometimes ignores VS Code settings.json keys), configure manually via Roo's own UI:
 
 1. Open Roo panel → ⚙ Settings
-2. **API Provider** → `OpenAI Compatible`
+2. **API Provider** → `OpenAI Compatible` (NOT `OpenAI`)
 3. **Base URL** → `http://127.0.0.1:4101/v1/openai`
-4. **API Key** → `tierkit-loopback` (any non-empty string)
+4. **API Key** → `tierkit-loopback` (any non-empty string; empty fields are rejected by Roo)
 5. **Model ID** → `auto` (let Tierkit route) or a specific profile id like `localCoder` / `claudeSonnet`
+6. **Save + Reload Window** (Ctrl+R / Cmd+R)
+
+Detailed Roo guide (Korean) with error meanings + checklist: [docs/ROO.ko.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/ROO.ko.md)
 
 After saving, run any task in Roo and watch Mission Control's Recent Activity card.
 
@@ -190,14 +193,16 @@ tierkit plugin enable superpowers-balanced
 
 사이드바 → **"연결된 도구" 카드** → `roo` 옆 **[연결]** 클릭. `.vscode/settings.json`에 자동으로 4개 키 작성. **VS Code 윈도우 reload** 필수.
 
-Roo 3.x가 setttings.json을 무시하면 Roo 패널 → ⚙ Settings에서 직접:
+Roo 3.x가 settings.json을 무시하면 Roo 패널 → ⚙ Settings에서 직접:
 
 | 필드 | 값 |
 |---|---|
-| API Provider | **OpenAI Compatible** |
+| API Provider | **OpenAI Compatible** ← 절대 `OpenAI` 아님 |
 | Base URL | `http://127.0.0.1:4101/v1/openai` |
-| API Key | `tierkit-loopback` (아무거나) |
+| API Key | `tierkit-loopback` (빈칸 안 됨) |
 | Model ID | `auto` (또는 `localCoder` 등) |
+
+**저장 후 Ctrl+R로 reload 필수.** 자세한 Roo 가이드: [docs/ROO.ko.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/ROO.ko.md)
 
 ### 5. Roo에서 평소처럼 사용
 
