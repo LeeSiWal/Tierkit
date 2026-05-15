@@ -18,6 +18,11 @@ describe("OpenAI-compatible endpoint: tool calling round-trip", () => {
         modelProfiles: {
           mockProfile: { kind: "local-device", provider: "mock", model: "mock-1" },
         },
+        // Tests in this block exercise the structured-passthrough path. The shim defaults
+        // to "auto" (apply for local-device), which would strip tools from the mock and
+        // suppress its built-in auto-synthesized tool_calls. Force-off here so we test
+        // pure structured passthrough.
+        runtime: { toolShim: "off", port: 4101, dataDir: ".tierkit/runtime", host: "127.0.0.1" },
       }),
     );
     server = await startServer({ cwd: root, host: "127.0.0.1", port: 0 });
@@ -163,6 +168,72 @@ describe("OpenAI-compatible endpoint: tool calling round-trip", () => {
       // mockOk should have been chosen — ghostOllama was filtered out by the viability check.
       expect(body.tierkit?.profileId).toBe("mockOk");
     } finally {
+      await localServer.close().catch(() => {});
+    }
+  });
+
+  it("tool-shim: weak model emitting JSON-in-content gets translated to structured tool_calls", async () => {
+    // Simulate a weak local model that — like qwen2.5-coder:7b — responds with the OpenAI
+    // function-call shape baked into the `content` text rather than the structured
+    // `tool_calls` field. The shim (enabled by default for local-device tier) must detect
+    // and translate so the caller sees a clean OpenAI structured response.
+    const fs = await import("node:fs/promises");
+    const os = await import("node:os");
+    const pathMod = await import("node:path");
+    const { startServer, MockModelClient } = await import("@tierkit/core");
+    const localRoot = await fs.mkdtemp(pathMod.join(os.tmpdir(), "tierkit-shim-e2e-"));
+    await fs.writeFile(
+      pathMod.join(localRoot, "tierkit.config.json"),
+      JSON.stringify({
+        version: "0.1",
+        modelProfiles: {
+          mockWeak: { kind: "local-device", provider: "mock", model: "weak-1" },
+        },
+      }),
+    );
+    // Patch MockModelClient: simulate a weak model that always emits the JSON-in-content
+    // pattern (the qwen2.5-coder:7b shape). The shim strips `tools` before they reach the
+    // mock, so we infer the tool name from the system prompt the shim writes — but here
+    // we know exactly what the test sends, so hardcode "ask_followup_question".
+    const origChat = MockModelClient.prototype.chat;
+    MockModelClient.prototype.chat = async function (profile, _request, _env) {
+      return {
+        ok: true,
+        text: `{\n  "name": "ask_followup_question",\n  "arguments": {\n    "question": "Why?"\n  }\n}`,
+        usage: { inputTokens: 5, outputTokens: 12 },
+        latencyMs: 1,
+        model: profile.model,
+      };
+    };
+    const localServer = await startServer({ cwd: localRoot, host: "127.0.0.1", port: 0 });
+    try {
+      const res = await fetch(`http://127.0.0.1:${localServer.port}/v1/openai/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "mockWeak",
+          messages: [{ role: "user", content: "ask why" }],
+          tools: [{ type: "function", function: { name: "ask_followup_question", parameters: { type: "object" } } }],
+        }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        choices: {
+          message: { content: string | null; tool_calls?: { id: string; function: { name: string; arguments: string } }[] };
+          finish_reason: string;
+        }[];
+      };
+      // The shim should have translated the JSON-in-content to structured tool_calls.
+      const tc = body.choices[0]!.message.tool_calls;
+      expect(tc).toBeDefined();
+      expect(tc!.length).toBe(1);
+      expect(tc![0]!.function.name).toBe("ask_followup_question");
+      expect(JSON.parse(tc![0]!.function.arguments).question).toBe("Why?");
+      // Content should be cleaned (the JSON is now in tool_calls, not duplicated in content).
+      expect(body.choices[0]!.message.content).toBe(null);
+      expect(body.choices[0]!.finish_reason).toBe("tool_calls");
+    } finally {
+      MockModelClient.prototype.chat = origChat;
       await localServer.close().catch(() => {});
     }
   });

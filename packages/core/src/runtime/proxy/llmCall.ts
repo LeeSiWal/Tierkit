@@ -7,6 +7,7 @@ import type { ChatMessage, ToolDefinition, ToolChoice, ToolCall } from "../../mo
 import { appendUsage, estimateCost, type UsageRecord } from "../usageLog.js";
 import { checkBudget } from "../budget.js";
 import { assembleActiveRules } from "../../plugin/assembleActiveRules.js";
+import { buildXmlToolInstructions, extractToolCallsFromText } from "../../model/toolShim.js";
 
 export interface LlmCallRequest {
   /** Model profile id to route the call through. */
@@ -135,13 +136,38 @@ export async function executeLlmCall(
     }
   }
 
-  // Redact outbound messages for remote tiers when the policy says so.
+  // ── Tool-shim: weak local models often don't emit structured tool_calls. The shim
+  // converts the OpenAI `tools` array into XML-tag instructions in the system prompt,
+  // strips tools from the outgoing call, and parses the text response back into
+  // tool_calls. The caller (Roo/Cline) is unaware — it sees a normal OpenAI-shape
+  // response with tool_calls populated.
+  //
+  // Mode is controlled by runtime.toolShim:
+  //   - "auto" (default): apply for local-device profiles only
+  //   - "on": apply for every profile (e.g. testing weak remote endpoints)
+  //   - "off": never apply (pass tools through to provider)
   const isRemote = profile.kind !== "local-device";
+  const shimMode = cfg.config.runtime.toolShim ?? "auto";
+  const shimActive =
+    request.tools !== undefined &&
+    request.tools.length > 0 &&
+    (shimMode === "on" || (shimMode === "auto" && !isRemote));
+
+  let messagesForProvider = messagesWithRules;
+  if (shimActive) {
+    const xmlInstructions = buildXmlToolInstructions(request.tools!);
+    messagesForProvider = [
+      { role: "system" as const, content: xmlInstructions },
+      ...messagesWithRules,
+    ];
+  }
+
+  // Redact outbound messages for remote tiers when the policy says so.
   const shouldRedact = isRemote && cfg.config.security.redactSecretsForRemote !== false;
-  let redactedMessages = messagesWithRules;
+  let redactedMessages = messagesForProvider;
   const allHits: { ruleId: string; count: number }[] = [];
   if (shouldRedact) {
-    redactedMessages = messagesWithRules.map((m) => {
+    redactedMessages = messagesForProvider.map((m) => {
       const r = redactSecrets(m.content);
       for (const h of r.hits) {
         const existing = allHits.find((x) => x.ruleId === h.ruleId);
@@ -161,14 +187,17 @@ export async function executeLlmCall(
     };
   }
 
+  // When the shim is active we strip `tools`/`toolChoice` from the provider request —
+  // the model sees only the XML instructions in the system prompt. When the shim is off
+  // we forward structured tools as before.
   const chatResult = await client.chat(
     profile,
     {
       messages: redactedMessages,
       ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
-      ...(request.tools !== undefined ? { tools: request.tools } : {}),
-      ...(request.toolChoice !== undefined ? { toolChoice: request.toolChoice } : {}),
+      ...(!shimActive && request.tools !== undefined ? { tools: request.tools } : {}),
+      ...(!shimActive && request.toolChoice !== undefined ? { toolChoice: request.toolChoice } : {}),
     },
     context.env,
   );
@@ -200,17 +229,36 @@ export async function executeLlmCall(
     };
   }
 
+  // ── Tool-shim response parsing ─────────────────────────────────────────────
+  // When the shim is active and the provider didn't already return structured tool_calls,
+  // scan the response text for XML tags / JSON patterns matching one of the originally-
+  // requested tool names. If we find any, surface them as if the provider had emitted
+  // structured tool_calls — the caller (Roo/Cline) sees a uniform OpenAI shape regardless
+  // of which path the model actually took.
+  let resultText = chatResult.text;
+  let resultToolCalls = chatResult.toolCalls;
+  let resultFinishReason = chatResult.finishReason;
+  if (shimActive && (!resultToolCalls || resultToolCalls.length === 0)) {
+    const knownNames = (request.tools ?? []).map((t) => t.function.name);
+    const extracted = extractToolCallsFromText(resultText, knownNames);
+    if (extracted.toolCalls.length > 0) {
+      resultToolCalls = extracted.toolCalls;
+      resultText = extracted.cleanedContent;
+      resultFinishReason = "tool_calls";
+    }
+  }
+
   return {
     ok: true,
-    text: chatResult.text,
+    text: resultText,
     inputTokens: chatResult.usage.inputTokens,
     outputTokens: chatResult.usage.outputTokens,
     costUsd: record.costUsd,
     latencyMs: chatResult.latencyMs,
     profileId: request.profileId,
     model: chatResult.model,
-    ...(chatResult.toolCalls !== undefined ? { toolCalls: chatResult.toolCalls } : {}),
-    ...(chatResult.finishReason !== undefined ? { finishReason: chatResult.finishReason } : {}),
+    ...(resultToolCalls !== undefined ? { toolCalls: resultToolCalls } : {}),
+    ...(resultFinishReason !== undefined ? { finishReason: resultFinishReason } : {}),
     redactionHits: allHits,
     commandClassifications: commandClassifications.map((c) => ({
       command: c.command,

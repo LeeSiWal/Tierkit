@@ -63,6 +63,26 @@ export const RuntimeConfigSchema = z
      * see plain user messages on the wire for debugging).
      */
     injectPluginRules: z.boolean().default(true),
+    /**
+     * Tool-shim mode: how Tierkit handles OpenAI structured tool calling for models that
+     * don't reliably emit `tool_calls` (most local Ollama models).
+     *
+     *   - `"auto"` (default): apply the shim only for local-device profiles, where small
+     *     models commonly emit tool calls as text/JSON-in-content rather than structured.
+     *     Anthropic/OpenAI providers use their native structured tool calling.
+     *   - `"on"`: force the shim for every profile.
+     *   - `"off"`: pass `tools` through to every provider untouched. Use this when you
+     *     know all your profiles have rock-solid OpenAI tool-call support.
+     *
+     * What the shim does, end-to-end:
+     *   1. Convert OpenAI `tools` array → XML-tag instructions in the system prompt
+     *   2. Strip `tools` from the outgoing provider request
+     *   3. Parse the model's text response for `<tool_name>...</tool_name>` or
+     *      `{"name": "...", "arguments": {...}}` patterns
+     *   4. Return as OpenAI-shape `tool_calls` to the caller (Roo/Cline/etc don't know
+     *      the shim happened)
+     */
+    toolShim: z.enum(["auto", "on", "off"]).default("auto"),
   })
   .strict();
 

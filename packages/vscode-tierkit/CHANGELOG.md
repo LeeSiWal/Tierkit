@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.3.3 — 2026-05-16
+
+**Tool-shim: weak local models can now drive Roo / Cline / Continue.** Tierkit transparently bridges OpenAI structured tool calling to text-format tool calls (XML tags or JSON-in-content) for models that don't reliably emit `tool_calls`.
+
+### The problem
+Coding agents (Roo, Cline, Continue) send OpenAI-format `tools` array and expect `tool_calls` back. But most local Ollama models — even `qwen2.5-coder:7b` — emit the call as TEXT in `content` rather than as a structured `tool_calls` field:
+
+```json
+{
+  "role": "assistant",
+  "content": "{\n  \"name\": \"ask_followup_question\",\n  \"arguments\": {\n    \"question\": \"What's the goal?\"\n  }\n}"
+  // ← tool_calls is missing
+}
+```
+
+Result: caller sees `tool_calls: undefined` and reports "model didn't use any tool". The agent loop breaks.
+
+### The fix
+Tierkit now does exactly what Cline / Roo themselves do internally — XML-tag tool calling in the system prompt:
+
+1. **Inbound**: Convert OpenAI `tools` array → XML-tag instructions appended as a system prompt with examples
+2. **Outbound to provider**: Strip `tools` from the wire request — the model sees only the natural-language prompt
+3. **Inbound from provider**: Parse the model's text response for matching patterns
+4. **Outbound to caller**: Return as OpenAI-shape `tool_calls`
+
+Patterns the parser recognizes (whichever the model emits, Tierkit handles):
+- XML tags: `<read_file><path>src/foo.ts</path></read_file>`
+- Code-fenced JSON: ` ```json {"name": "...", "arguments": {...}} ``` `
+- Bare JSON consuming whole content: `{"name": "X", "arguments": {...}}`
+- Multiple tool calls in one response (each translated independently)
+- JSON-typed XML param values (arrays, numbers, bools) parsed as JSON
+
+### Config
+`runtime.toolShim`:
+- `"auto"` (default) — apply for local-device profiles only; Anthropic/OpenAI use their native structured tool calling
+- `"on"` — force shim for every profile
+- `"off"` — never shim, pass `tools` through unmodified
+
+### Compatibility
+Caller doesn't see the shim. Roo / Cline / Continue / curl / any OpenAI-compatible client gets a uniform structured response regardless of which path the model took. The original `tools` array stays in `request.tools` for parser bounds checking but isn't sent on the wire when the shim is active.
+
+### Tests
+340 pass (234 core + 28 client + adapter/cli unchanged). 9 new tests cover:
+- XML extraction with single + multiple tags
+- JSON-typed XML param values
+- Unknown tool names ignored
+- Pure JSON-in-content (the qwen2.5-coder pattern)
+- Code-fenced JSON in mixed content
+- Arguments emitted as JSON string vs object
+- Malformed input ignored
+- End-to-end through `/v1/openai/chat/completions` with weak-model simulation
+
+### Result
+A user with `qwen2.5-coder:7b` and `superpowers-balanced` plugin enabled can now run real coding tasks through Roo Code with all of Tierkit's policy gates (routing, redaction, command-gate, budget, sessions, plugin rules) applied — entirely on-machine, no API key needed.
+
 ## 0.3.2 — 2026-05-16
 
 **Plugin rules now actually influence the model — system-prompt injection on every `/v1/llm-call`.**
