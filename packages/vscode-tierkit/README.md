@@ -1,120 +1,269 @@
 # Tierkit (VS Code)
 
-> Local-first hybrid model routing for AI coding agents — now with a one-click sidebar dashboard.
+> Local-first policy + routing layer for **Roo Code · Cline · Continue · aider** — and any OpenAI-compatible coding agent.
 >
-> 한 번에 켜지는 로컬 우선 하이브리드 모델 라우팅 툴킷. 사이드바에서 작업 실행 · 워크플로 세션 · 보안 검사 · 사용량까지 한 곳에서.
+> Roo/Cline/Continue 같은 코딩 에이전트 **뒤에 깔리는** 로컬 우선 정책·라우팅 레이어. 사이드바는 미션 컨트롤 (라우팅·활성 플러그인·실시간 활동·사용량·모델).
 
-[Tierkit](https://github.com/LeeSiWal/Tierkit) is a local-first HTTP daemon that sits between your IDE and the model providers. It handles **model routing** (local / private-remote / public-cloud), **secret redaction**, **dangerous-command classification**, **budget enforcement**, and **workflow session gating** — uniformly, for every tool that talks to it.
+[Tierkit](https://github.com/LeeSiWal/Tierkit) is a routing/policy daemon that sits between your existing coding agent (Roo, Cline, Continue, aider, …) and the actual model providers. It uniformly applies:
 
-This extension is the VS Code companion. The runtime now **auto-starts in-process** the moment the extension activates, so there is nothing to install or configure on a fresh machine beyond opening a folder.
+- **Tier-based routing** (local / private-remote / public-cloud) chosen per-task by risk + cost
+- **Secret redaction** before any remote call
+- **Dangerous-command classifier** (`rm -rf /` is blocked before execution)
+- **Budget + workflow session gates** (strict mode requires plan approval before execute)
+- **Plugin rules** injected into every model call's system prompt
+- **Tool-call shim** that makes OpenAI structured tool calling work with weak local models (Cline-style XML/JSON parsing under the hood)
+
+This extension is the VS Code companion. The daemon **auto-starts in-process** on activation — open a folder, the daemon runs.
 
 ---
 
-## Sidebar dashboard
+## How to use (5 min)
 
-Pin the **Tierkit** icon on the activity bar — the sidebar embeds the same dashboard the daemon serves at `http://127.0.0.1:4101/`:
+### 1. Install + open a folder
 
-- **Run** — pick a profile, choose `execute` / `plan` / `review`, see the response inline.
-- **Session** — start, approve plan, advance, abandon. Strict packs gate execute on `state=implementing` + `planApproved`.
-- **Check** — three tabs: secret redaction, dangerous-command classifier, sensitive-path blocklist.
-- **Models** — table of configured profiles, with a `Test` button per row that probes the provider for reachability + model availability (no tokens spent).
-- **Usage** — calls / tokens / cost rolled up per profile.
+Marketplace listing: `leesiwal.tierkit-vscode`. After install, open a project folder. Click the **Tierkit** icon in the activity bar — Mission Control sidebar appears.
 
-A status bar item polls `GET /v1/health` every 30s; click it to re-check.
+### 2. Pull a tool-calling-capable local model (optional but recommended)
 
-## Command palette
-
-| Command | What it does |
-|---|---|
-| `Tierkit: Focus dashboard sidebar` | Open the dashboard from anywhere. |
-| `Tierkit: Check runtime health` | `GET /v1/health` — version + project root. |
-| `Tierkit: Explain route for current task` | Prompt for a task → `POST /v1/route` → prints the decision (tier, profile, score, reasons). |
-| `Tierkit: Run task through Tierkit (streamed)` | Prompt for task + profile id → `POST /v1/llm-call` → streams the response into an output channel. |
-| `Tierkit: Classify a shell command` | Prompt for a command → shows `block` / `warn` / `ok` with matched rule ids. |
-| `Tierkit: Show usage summary` | `GET /v1/usage` — per-profile totals. |
-| `Tierkit: Show workflow session status` | Current session state + reminder that the sidebar has full controls. |
-
-## Auto-start daemon (new in 0.1.1)
-
-The extension launches the Tierkit runtime in-process when it activates. No `tierkit runtime start` in a separate terminal is needed.
-
-- If a Tierkit daemon is already running at `tierkit.baseUrl`, the extension **reuses** it.
-- If the configured port is busy with something else, Tierkit falls back to an OS-chosen port and the sidebar uses that base URL automatically.
-- Opt out with `tierkit.autoStartDaemon: false` if you prefer to manage the daemon yourself in a terminal.
-
-### Configuration
-
-```jsonc
-// .vscode/settings.json
-{
-  "tierkit.baseUrl":         "http://127.0.0.1:4101",
-  "tierkit.statusBar":       true,
-  "tierkit.autoStartDaemon": true
-}
+```bash
+ollama pull qwen2.5-coder:7b
 ```
 
-## Localization
+Tierkit's `localCoder` bundled profile points to this. Larger and more reliable for tool calls: `qwen2.5-coder:14b`.
 
-Both VS Code surfaces (command titles, settings descriptions, runtime messages) and the embedded dashboard are localized. VS Code picks the locale from your IDE display language; the dashboard picks from `navigator.language`. **Korean (한국어)** is supported today; contributions for more locales are welcome.
+Or set `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` in your shell before launching VS Code — bundled `claudeSonnet`/`gpt4o` profiles activate automatically.
 
-## Privacy and security
+### 3. (Optional) Enable a Tierkit plugin
 
-- The daemon binds **`127.0.0.1` (loopback) only** — never reachable from another machine.
-- Secret redaction runs before any request leaves the daemon for a remote model tier (`private-remote` or `public-cloud`).
-- Public-cloud profiles are **review-only and require approval** by default — never widened.
-- No telemetry. No analytics. No phone-home.
+For workflow discipline (plan-first, tests-first, etc.):
 
-See [docs/SECURITY.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/SECURITY.md).
+```bash
+# Install the bundled superpowers-balanced plugin
+tierkit plugin install <path-to-tierkit-source>/packages/plugin-superpowers/plugins/superpowers-balanced
+tierkit plugin enable superpowers-balanced
+```
+
+Plugin rules are auto-injected into every model call's system prompt. (Sidebar-button install for bundled plugins is on the 0.3.4 roadmap.)
+
+### 4. Connect your coding agent
+
+In the Mission Control sidebar → **Connected tools** card → click `[Connect]` next to Roo / Cline / Continue. This edits `.vscode/settings.json` (or `.continue/config.yaml` for Continue) so the tool routes through Tierkit's OpenAI-compatible endpoint at `http://127.0.0.1:4101/v1/openai`.
+
+**Reload VS Code** after connecting.
+
+### 5. Use the tool as normal
+
+Open Roo Code (or Cline, Continue) and start a task. Tierkit transparently:
+- Picks a viable model profile (skips Ollama profiles whose model isn't pulled)
+- Falls back to next candidate if one fails
+- Injects active plugin rules
+- Converts OpenAI structured tool calling → XML/JSON for weak local models, parses response back
+- Logs the call to Mission Control's Recent Activity card
+
+You should see the request appear in the sidebar within 5 seconds.
 
 ---
 
-# 한국어 안내
+## Mission Control sidebar
 
-**Tierkit**은 로컬 우선(local-first) 하이브리드 모델 라우팅 데몬이에요. IDE와 모델 제공자 사이에 끼어서 다음을 통일된 정책으로 처리합니다:
+```
+┌──────────────────────────────────────┐
+│ Tierkit  v0.1  guided  ↻              │
+├──────────────────────────────────────┤
+│ Connected tools                [Sync]│
+│   roo       routed to Tierkit  [⤴]  │
+│   cline     not installed     [Connect]│
+│   continue  routed to Tierkit       │
+├──────────────────────────────────────┤
+│ Active plugins              [+ New] │
+│   ▣ superpowers-balanced  guided    │
+├──────────────────────────────────────┤
+│ Recent activity      (refreshes 5s) │
+│   14:23:01  localCoder              │
+│             856ms · 1.2k↑/450↓      │
+├──────────────────────────────────────┤
+│ Today's usage                       │
+│   24 calls · 18k tokens · $0.00     │
+├──────────────────────────────────────┤
+│ Model profiles                [+ Add]│
+│   localCoder    ollama        test  │
+│   claudeSonnet  anthropic ⚠   test  │
+└──────────────────────────────────────┘
+```
 
-- **모델 라우팅** — `local-device` / `private-remote` / `public-cloud` 3티어를 작업 위험도 · 비용 · 워크플로 정책에 따라 자동 선택
-- **시크릿 가리기** — 모든 원격 호출 직전에 `.env`/API 키/PEM 등 패턴 자동 마스킹
-- **위험 명령 분류** — `rm -rf /` 같은 명령을 `block` / `warn` / `ok`로 분류해서 실행 게이트
-- **예산 강제** — 호출 · 토큰 · 비용 한도 초과 시 게이트
-- **워크플로 세션** — `guided` / `balanced` / `strict` 자유도에 따라 실행 권한 게이트 (예: strict는 plan 승인 + `state=implementing`이어야 execute 허용)
+Auto-refreshes every 5s for activity + usage. Click `[Connect]`/`[Add]`/`[New]` for inline forms. No chat input — Tierkit is the policy layer behind agents, not an agent itself.
 
-## 사이드바 대시보드
+---
 
-활동 바의 **Tierkit** 아이콘을 누르면 데몬이 `http://127.0.0.1:4101/`에 띄우는 것과 동일한 GUI가 사이드바에 임베드됩니다:
+## Roo Code on the openai-compatible endpoint
 
-- **작업 실행** — 프로파일 + 모드(`execute`/`plan`/`review`) 선택 후 결과 인라인 표시
-- **세션** — 시작 / 계획 승인 / 단계 진행 / 폐기. strict 팩은 plan 승인 + `state=implementing` 만족해야 execute 가능
-- **보안 검사** — 시크릿 가리기 / 명령어 위험도 / 경로 차단 3개 탭
-- **모델** — 등록된 프로파일 목록 + 행별 `Test` 버튼으로 도달성 + 모델 가용성 확인 (토큰 소비 없음)
-- **사용량** — 프로파일별 호출 · 토큰 · 비용 요약
+If `tierkit connect roo` doesn't take effect (Roo 3.x sometimes ignores VS Code settings.json keys), configure manually via Roo's own UI:
 
-## 자동 실행 (0.1.1 신규)
+1. Open Roo panel → ⚙ Settings
+2. **API Provider** → `OpenAI Compatible`
+3. **Base URL** → `http://127.0.0.1:4101/v1/openai`
+4. **API Key** → `tierkit-loopback` (any non-empty string)
+5. **Model ID** → `auto` (let Tierkit route) or a specific profile id like `localCoder` / `claudeSonnet`
 
-확장이 활성화될 때 Tierkit 런타임이 in-process로 **자동 시작**됩니다. 별도 터미널에서 `tierkit runtime start`를 실행할 필요가 없어요.
+After saving, run any task in Roo and watch Mission Control's Recent Activity card.
 
-- 이미 데몬이 떠 있으면 그것을 **재사용**합니다.
-- 설정된 포트가 다른 프로세스에 막혀 있으면 OS가 고른 빈 포트로 폴백하고, 사이드바는 그 새 주소를 자동으로 사용합니다.
-- 직접 데몬을 관리하고 싶다면 `tierkit.autoStartDaemon: false`로 끄세요.
+---
 
-### 한글 표시
+## Tool-call shim — how weak local models work
 
-VS Code 표시 언어가 한국어이면 명령 팔레트 · 설정 설명 · 상태바 메시지가 한글로 보입니다. 사이드바 대시보드는 브라우저(또는 VS Code 웹뷰)의 `navigator.language`를 따라 자동 전환됩니다.
+`qwen2.5-coder:7b` and other small models often emit OpenAI tool calls as TEXT in `content` rather than as a structured `tool_calls` field. Roo/Cline see no `tool_calls` and report "model didn't use any tool".
 
-## 설치 후 첫 실행
+Tierkit's tool-shim (auto-enabled for local-device tier) does what Cline / Roo themselves do internally:
+1. Convert OpenAI `tools` array into XML-tag instructions in the system prompt
+2. Strip structured `tools` from the outgoing request — model sees plain instructions
+3. Parse model's text response for XML tags or JSON patterns
+4. Return as structured `tool_calls` to the caller
 
-1. VS Code에서 **폴더를 열어주세요** — 런타임이 working directory가 있어야 시작됩니다.
-2. 활동 바의 **Tierkit** 아이콘을 누르면 사이드바가 열립니다.
-3. 상단 상태 영역이 **🟢 Daemon OK**로 바뀌면 사용 준비 완료. (포트가 막혀 있으면 자동으로 다른 포트로 폴백되며 그 주소가 사이드바에 표시됩니다.)
+Supported response formats:
+- `<read_file><path>foo.ts</path></read_file>` (XML)
+- ` ```json {"name": "X", "arguments": {...}} ``` ` (code-fenced JSON)
+- Bare `{"name": "X", "arguments": {...}}` (the qwen2.5-coder pattern)
+- Multiple tool calls per response
 
-## 알려진 제약
+Config: `tierkit.config.json::runtime.toolShim` = `auto` (default, local only) | `on` | `off`.
 
-- `tierkit.routeRun` 명령 팔레트 경로는 아직 명시적인 profile id가 필요합니다. 자동 라우팅이 필요하면 사이드바의 **Run** 패널을 쓰세요.
-- `/v1/llm-call`은 현재 업스트림 스트림 종료 후 단일 JSON으로 응답하기 때문에 사이드바의 Run 결과가 한 번에 그려집니다. 토큰 단위 스트림은 향후 `/v1/llm-call/stream` 엔드포인트에서 지원 예정입니다.
+---
+
+## Diagnostics (when something doesn't work)
+
+| Symptom | What to do |
+|---|---|
+| Sidebar shows "offline" | VS Code → Output → select **Tierkit** channel → read auto-start log |
+| Roo says "API request failed" | Run `tierkit connect roo` again + reload window |
+| Roo says "model didn't use any tool" | Check the model — try `qwen2.5-coder:7b` or Claude. The shim works but if the model emits nothing tool-like in content, it can't translate |
+| Daemon won't start on Windows | Common: AppContainer (Microsoft Store VS Code) blocks loopback. Run `CheckNetIsolation LoopbackExempt -a -n="Microsoft.VisualStudioCode_8wekyb3d8bbwe"` as admin |
+| Port 4101 taken | Tierkit auto-falls back to an OS-assigned port; check Output channel for the new URL |
+
+The **"Tierkit" Output channel** (View → Output → Tierkit) logs every auto-start step. If something's off, that's the first place to check.
+
+---
+
+# 한국어 사용법
+
+**Tierkit**은 Roo Code · Cline · Continue · aider 같은 **코딩 에이전트 뒤에 깔리는 정책·라우팅 레이어**예요. 에이전트를 대체하지 않고 그들의 모델 호출을 가로채서 통일된 정책 적용:
+
+- **계층별 라우팅** (로컬 · 프라이빗 원격 · 퍼블릭 클라우드) 위험도+비용 자동 선택
+- **시크릿 자동 마스킹** (.env, API 키, PEM 패턴)
+- **위험 명령 차단** (`rm -rf /` 등)
+- **예산 + 워크플로 세션 게이트**
+- **Tierkit 플러그인의 룰** 자동으로 system prompt 주입
+- **Tool-call shim** — 약한 로컬 모델 (qwen2.5-coder:7b 등)도 OpenAI 구조화 도구 호출이 작동하도록 자동 XML/JSON 변환
+
+## 5분 사용법
+
+### 1. 설치 + 폴더 열기
+
+Marketplace에서 `leesiwal.tierkit-vscode` 설치. 프로젝트 폴더를 열고 활동 바의 Tierkit 아이콘 클릭 → 사이드바에 미션 컨트롤 표시.
+
+### 2. 로컬 모델 받기
+
+도구 호출 잘 따르는 모델:
+```bash
+ollama pull qwen2.5-coder:7b   # 4.7GB · 8GB+ RAM
+# 더 신뢰성 있게:
+ollama pull qwen2.5-coder:14b  # 9GB · 16GB+ RAM
+```
+
+또는 클라우드 사용:
+```bash
+export ANTHROPIC_API_KEY="sk-ant-..."
+# 환경변수가 잡힌 셸에서 VS Code 다시 열기 (code .)
+```
+
+### 3. (선택) Tierkit 플러그인 활성화
+
+워크플로 규율 (plan 먼저, tests 우선 등):
+```bash
+cd <workspace>
+tierkit plugin install <tierkit-source>/packages/plugin-superpowers/plugins/superpowers-balanced
+tierkit plugin enable superpowers-balanced
+```
+
+룰이 모든 모델 호출의 system prompt에 자동 주입됨.
+
+### 4. 코딩 에이전트 연결
+
+사이드바 → **"연결된 도구" 카드** → `roo` 옆 **[연결]** 클릭. `.vscode/settings.json`에 자동으로 4개 키 작성. **VS Code 윈도우 reload** 필수.
+
+Roo 3.x가 setttings.json을 무시하면 Roo 패널 → ⚙ Settings에서 직접:
+
+| 필드 | 값 |
+|---|---|
+| API Provider | **OpenAI Compatible** |
+| Base URL | `http://127.0.0.1:4101/v1/openai` |
+| API Key | `tierkit-loopback` (아무거나) |
+| Model ID | `auto` (또는 `localCoder` 등) |
+
+### 5. Roo에서 평소처럼 사용
+
+Roo 채팅창에서 task. Tierkit이 뒤에서:
+- viable한 모델 프로파일 자동 선택 (안 받은 Ollama 모델 등 skip)
+- 첫 시도 실패 시 다음 후보로 폴백
+- 활성 플러그인 룰 주입
+- 작은 모델이 텍스트로 도구 호출 emit해도 자동으로 구조화 변환
+- 모든 호출을 사이드바 "최근 활동" 카드에 5초 안에 표시
+
+## 직접 검증 (Roo 우회 curl)
+
+```bash
+curl -sS -X POST http://127.0.0.1:4101/v1/openai/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "auto",
+    "messages": [{"role":"user","content":"list files in this project"}],
+    "tools": [{
+      "type":"function",
+      "function": {
+        "name":"list_files",
+        "parameters":{"type":"object","properties":{"path":{"type":"string"}}}
+      }
+    }]
+  }' | jq
+```
+
+응답에 `tool_calls` 배열 + `finish_reason: "tool_calls"`가 보이면 → 파이프라인 정상.
+
+## 작동 안 할 때
+
+| 증상 | 처방 |
+|---|---|
+| 사이드바 "오프라인" | View → Output → **Tierkit** 채널 → 자동 시작 로그 확인 |
+| Roo "API request failed" | `tierkit connect roo` 다시 + VS Code reload |
+| Roo "도구 안 썼다" | 모델 한계. `qwen2.5-coder:7b` 또는 Claude로 변경 |
+| Windows에서 데몬 안 뜸 | Microsoft Store VS Code는 AppContainer로 localhost 차단. `CheckNetIsolation LoopbackExempt -a -n="Microsoft.VisualStudioCode_8wekyb3d8bbwe"` 관리자 PS |
+| 4101 포트 막힘 | Tierkit이 자동으로 빈 포트 폴백. Output 채널에서 새 URL 확인 |
+
+**모든 진단의 시작**: VS Code → 출력(Output) 패널 → 드롭다운 **Tierkit** 선택 → 단계별 로그.
+
+## 자기 플러그인 만들기
+
+```bash
+tierkit plugin new my-team-rules
+$EDITOR my-team-rules/tierkit.plugin.json
+tierkit plugin install ./my-team-rules
+tierkit plugin enable my-team-rules
+# → 자동으로 연결된 Roo/Cline/Continue에 export
+```
+
+플러그인 하나 작성 = 모든 도구에 동일 룰 적용.
+
+## 보안
+
+- 데몬은 `127.0.0.1` (loopback) 전용
+- `public-cloud` 프로파일은 review-only + 승인 필요 기본값
+- 원격 호출 직전 시크릿 자동 마스킹
+- 위험 명령 사전 차단
+- 텔레메트리 없음
 
 ## 더 알아보기
 
 - GitHub: <https://github.com/LeeSiWal/Tierkit>
-- 한글 시작 가이드: [docs/GUIDE.ko.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/GUIDE.ko.md)
+- 연결 가이드: [docs/CONNECT.ko.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/CONNECT.ko.md)
 - 디자인 스펙: [docs/SPEC.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/SPEC.md)
 - 보안 모델: [docs/SECURITY.md](https://github.com/LeeSiWal/Tierkit/blob/main/docs/SECURITY.md)
 
