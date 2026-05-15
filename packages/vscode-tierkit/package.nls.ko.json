@@ -1,0 +1,16 @@
+{
+  "description": "로컬 우선 하이브리드 모델 라우팅 툴킷. 확장 활성화 시 Tierkit 런타임이 자동으로 실행되며, 사이드바에서 작업 실행 · 세션 관리 · 명령어 검사 · 사용량 확인이 가능합니다.",
+  "viewContainer.title": "Tierkit",
+  "view.dashboard.name": "대시보드",
+  "configuration.title": "Tierkit",
+  "configuration.baseUrl": "Tierkit 런타임 데몬의 Base URL. 기본값 http://127.0.0.1:4101. 확장이 활성화될 때 이 URL에 데몬을 자동으로 시작합니다 (tierkit.autoStartDaemon이 false면 제외).",
+  "configuration.statusBar": "데몬 상태를 표시하는 Tierkit 상태바 항목을 표시합니다.",
+  "configuration.autoStartDaemon": "확장이 활성화될 때 Tierkit 런타임 데몬을 in-process로 자동 실행합니다. 직접 터미널에서 `tierkit runtime start`를 실행하고 싶다면 false로 설정하세요.",
+  "commands.focusSidebar": "Tierkit: 대시보드 사이드바 열기",
+  "commands.health": "Tierkit: 데몬 상태 확인",
+  "commands.routeExplain": "Tierkit: 작업 라우팅 설명",
+  "commands.routeRun": "Tierkit: 작업 실행 (스트리밍)",
+  "commands.checkCommand": "Tierkit: 쉘 명령어 위험도 분류",
+  "commands.usage": "Tierkit: 사용량 요약 보기",
+  "commands.sessionStatus": "Tierkit: 워크플로 세션 상태 보기"
+}

@@ -1,72 +1,164 @@
 /**
- * Tierkit VS Code companion — v0.1 scaffold.
+ * Tierkit VS Code companion.
  *
- * This is a minimal extension that talks to a running `tierkit runtime` daemon via the
- * `@tierkit/client` SDK. It does **not** patch or shim other extensions (Roo/Zoo/Cline/Continue);
- * each of those can either call the same daemon directly OR call the commands we register here.
+ * What this extension does:
+ *   1. **Auto-starts the runtime daemon in-process.** No separate `tierkit runtime start`
+ *      terminal needed — the extension host (Node.js) calls `startServer()` from
+ *      `@tierkit/core` directly. The daemon shares the extension host's lifetime: it dies
+ *      when VS Code closes. If a Tierkit daemon is already reachable at the configured URL
+ *      (e.g. the user is running one in a terminal), we use that one and don't start a
+ *      duplicate. Behavior controlled by the `tierkit.autoStartDaemon` setting.
+ *   2. **Renders the dashboard in a sidebar webview.** The HTML is `GUI_HTML` from
+ *      `@tierkit/core`, the same page the daemon serves at `/`. CSP injection allows
+ *      loopback fetches; `window.__TIERKIT_BASE_URL__` is set so the page knows where to
+ *      hit the daemon.
+ *   3. **Registers a command palette + status bar item.**
  *
- * Roadmap:
- * - v0.1 (this file): commands palette + status bar
- * - v0.2: tree view for installed plugins, session state
- * - v0.3: inline route-explain hover
- * - v0.4: bridge to Roo's CustomMode picker (when their extension API stabilizes)
+ * It does **not** patch or shim Roo / Zoo / Cline / Continue. Those extensions either
+ * call the same daemon directly via `@tierkit/client`, or they don't get Tierkit's policy.
  */
 import * as vscode from "vscode";
 import { TierkitClient, TierkitClientError } from "@tierkit/client";
-import { GUI_HTML } from "@tierkit/core";
+import { GUI_HTML, startServer, type RunningServer } from "@tierkit/core";
 
 let statusItem: vscode.StatusBarItem | undefined;
+let serverHandle: RunningServer | undefined;
+/** Set when we successfully start (or detect) a daemon. Overrides config-derived baseUrl. */
+let effectiveBaseUrl: string | undefined;
+let sidebarRef: TierkitSidebarProvider | undefined;
 
-function makeClient(): TierkitClient {
-  const config = vscode.workspace.getConfiguration("tierkit");
-  return new TierkitClient({ baseUrl: config.get<string>("baseUrl") ?? "http://127.0.0.1:4101" });
-}
-
-function baseUrl(): string {
+function configBaseUrl(): string {
   const config = vscode.workspace.getConfiguration("tierkit");
   return config.get<string>("baseUrl") ?? "http://127.0.0.1:4101";
 }
 
+function baseUrl(): string {
+  return effectiveBaseUrl ?? configBaseUrl();
+}
+
+function makeClient(): TierkitClient {
+  return new TierkitClient({ baseUrl: baseUrl() });
+}
+
 /**
- * Renders the Tierkit dashboard inside VS Code's sidebar (activity bar → Tierkit).
+ * Probe `${url}/v1/health`. Returns true only if a Tierkit-shaped response comes back —
+ * that protects against accidentally adopting some unrelated service on the same port.
+ */
+async function isTierkitDaemonAt(url: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${url}/v1/health`, { signal: AbortSignal.timeout(800) });
+    if (!res.ok) return false;
+    const body = await res.json();
+    return Boolean(body?.ok && typeof body?.version === "string");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Auto-start the daemon in-process. Fires-and-forgets (the rest of `activate()` doesn't
+ * block on it). When the daemon is ready, re-renders the sidebar so the webview picks up
+ * the actual base URL.
  *
- * The webview embeds the same `GUI_HTML` the daemon serves directly to a browser. We inject
- * two things at the top of the document:
+ * Order of operations:
+ *   1. Honor `tierkit.autoStartDaemon: false` — bail out.
+ *   2. If a daemon is already at the configured baseUrl, use it.
+ *   3. Otherwise start one on the configured port. If the port is busy with non-Tierkit,
+ *      fall back to a free port (0) and notify the user.
+ *   4. If no workspace folder is open, can't determine cwd — surface a hint and stop.
+ */
+async function maybeStartDaemon(): Promise<void> {
+  const config = vscode.workspace.getConfiguration("tierkit");
+  if (config.get<boolean>("autoStartDaemon") === false) return;
+
+  const configured = configBaseUrl();
+  if (await isTierkitDaemonAt(configured)) {
+    effectiveBaseUrl = configured;
+    sidebarRef?.render();
+    return;
+  }
+
+  const workspace = vscode.workspace.workspaceFolders?.[0];
+  if (!workspace) {
+    void vscode.window.showInformationMessage(
+      vscode.l10n.t("Tierkit: Open a folder to auto-start the runtime, or start it from a terminal with `tierkit runtime start`."),
+    );
+    return;
+  }
+
+  let port = 4101;
+  try {
+    const u = new URL(configured);
+    port = Number.parseInt(u.port, 10) || 4101;
+  } catch {
+    /* keep default */
+  }
+
+  try {
+    serverHandle = await startServer({ cwd: workspace.uri.fsPath, host: "127.0.0.1", port });
+    effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
+  } catch {
+    // Port likely taken by something else. Try a free one.
+    try {
+      serverHandle = await startServer({ cwd: workspace.uri.fsPath, host: "127.0.0.1", port: 0 });
+      effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
+      void vscode.window.showInformationMessage(
+        vscode.l10n.t(
+          "Tierkit: port {0} was busy; started daemon on {1} instead.",
+          String(port),
+          String(serverHandle.port),
+        ),
+      );
+    } catch (e2) {
+      void vscode.window.showWarningMessage(
+        vscode.l10n.t(
+          "Tierkit could not auto-start daemon ({0}). Run `tierkit runtime start` in a terminal.",
+          (e2 as Error).message,
+        ),
+      );
+      return;
+    }
+  }
+  sidebarRef?.render();
+}
+
+/**
+ * Sidebar webview provider. Renders the same `GUI_HTML` the daemon serves at `/`, with
+ * a CSP meta + bootstrap script injected so:
+ *   - inline scripts/styles execute (the GUI is single-file),
+ *   - `connect-src` allows loopback fetches to the daemon,
+ *   - `window.__TIERKIT_BASE_URL__` is set so the page hits the right host:port.
  *
- *   1. A CSP meta tag that allows inline scripts/styles (the GUI is single-file) and
- *      explicitly permits `connect-src` to `http://127.0.0.1:*` so the in-page `fetch` can
- *      reach the daemon. VS Code webviews default to a very restrictive CSP otherwise.
- *
- *   2. A tiny bootstrap script that sets `window.__TIERKIT_BASE_URL__` from VS Code config —
- *      the GUI's `fetch` then prepends that to every request. Same HTML works in browser
- *      (BASE = "") and in the webview (BASE = "http://127.0.0.1:4101").
- *
- * The webview is `retainContextWhenHidden: true` so flipping to another sidebar view and
- * back doesn't reset the panel state.
+ * `retainContextWhenHidden` keeps webview state when the user flips to another sidebar
+ * and back. The provider also re-renders when:
+ *   - `tierkit.baseUrl` changes (user reconfigures),
+ *   - the auto-started daemon becomes ready (effectiveBaseUrl updates).
  */
 class TierkitSidebarProvider implements vscode.WebviewViewProvider {
   public static readonly viewType = "tierkit.sidebar";
+  private current?: vscode.WebviewView;
 
   resolveWebviewView(webviewView: vscode.WebviewView): void {
-    webviewView.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [],
-    };
-    webviewView.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl());
+    this.current = webviewView;
+    webviewView.onDidDispose(() => {
+      if (this.current === webviewView) this.current = undefined;
+    });
+    this.render();
 
-    // Re-render when the user changes `tierkit.baseUrl` so the next page load uses it.
     const sub = vscode.workspace.onDidChangeConfiguration((e) => {
-      if (e.affectsConfiguration("tierkit.baseUrl")) {
-        webviewView.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl());
-      }
+      if (e.affectsConfiguration("tierkit.baseUrl")) this.render();
     });
     webviewView.onDidDispose(() => sub.dispose());
+  }
+
+  render(): void {
+    if (!this.current) return;
+    this.current.webview.options = { enableScripts: true, localResourceRoots: [] };
+    this.current.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl());
   }
 }
 
 function wrapHtmlForWebview(html: string, base: string): string {
-  // Allowed connect targets — keep narrow. We support 127.0.0.1 and localhost on any port
-  // so users who run the daemon on a non-default port still work.
   const csp =
     `<meta http-equiv="Content-Security-Policy" content="` +
     `default-src 'none'; ` +
@@ -77,7 +169,6 @@ function wrapHtmlForWebview(html: string, base: string): string {
     `font-src data:;` +
     `">`;
   const bootstrap = `<script>window.__TIERKIT_BASE_URL__ = ${JSON.stringify(base)};</script>`;
-  // Inject right after <head> so CSP applies before the GUI's inline <script> runs.
   return html.replace(/<head>/i, `<head>\n${csp}\n${bootstrap}`);
 }
 
@@ -87,7 +178,7 @@ async function withClient<T>(action: (c: TierkitClient) => Promise<T>): Promise<
   } catch (err) {
     if (err instanceof TierkitClientError) {
       void vscode.window.showErrorMessage(
-        `Tierkit: ${err.code} — ${err.message}${err.code === "network-error" ? " (is `tierkit runtime start` running?)" : ""}`,
+        vscode.l10n.t("Tierkit: {0} — {1}", err.code, err.message),
       );
     } else {
       void vscode.window.showErrorMessage(`Tierkit error: ${(err as Error).message}`);
@@ -97,10 +188,13 @@ async function withClient<T>(action: (c: TierkitClient) => Promise<T>): Promise<
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  // ── Auto-start the daemon in-process (fire and forget). ──
+  void maybeStartDaemon();
+
   // ── Sidebar dashboard webview ──
-  const sidebar = new TierkitSidebarProvider();
+  sidebarRef = new TierkitSidebarProvider();
   context.subscriptions.push(
-    vscode.window.registerWebviewViewProvider(TierkitSidebarProvider.viewType, sidebar, {
+    vscode.window.registerWebviewViewProvider(TierkitSidebarProvider.viewType, sidebarRef, {
       webviewOptions: { retainContextWhenHidden: true },
     }),
     vscode.commands.registerCommand("tierkit.focusSidebar", () => {
@@ -113,12 +207,11 @@ export function activate(context: vscode.ExtensionContext): void {
   if (config.get<boolean>("statusBar") !== false) {
     statusItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusItem.text = "$(sync~spin) Tierkit";
-    statusItem.tooltip = "Tierkit runtime status";
+    statusItem.tooltip = vscode.l10n.t("Tierkit runtime status");
     statusItem.command = "tierkit.health";
     statusItem.show();
     context.subscriptions.push(statusItem);
     void refreshStatus();
-    // Refresh every 30s as a soft heartbeat.
     const timer = setInterval(refreshStatus, 30_000);
     context.subscriptions.push({ dispose: () => clearInterval(timer) });
   }
@@ -126,13 +219,16 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     vscode.commands.registerCommand("tierkit.health", async () => {
       const h = await withClient((c) => c.health());
-      if (h) void vscode.window.showInformationMessage(`Tierkit runtime ${h.version} OK at ${h.cwd}`);
+      if (h)
+        void vscode.window.showInformationMessage(
+          vscode.l10n.t("Tierkit runtime {0} OK at {1}", h.version, h.cwd),
+        );
     }),
 
     vscode.commands.registerCommand("tierkit.routeExplain", async () => {
       const task = await vscode.window.showInputBox({
-        prompt: "Task to explain (Tierkit route)",
-        placeHolder: "rename a helper function",
+        prompt: vscode.l10n.t("Task to explain (Tierkit route)"),
+        placeHolder: vscode.l10n.t("rename a helper function"),
       });
       if (!task) return;
       const r = await withClient((c) => c.routeExplain({ task }));
@@ -149,12 +245,12 @@ export function activate(context: vscode.ExtensionContext): void {
 
     vscode.commands.registerCommand("tierkit.routeRun", async () => {
       const task = await vscode.window.showInputBox({
-        prompt: "Task to run through Tierkit",
-        placeHolder: "summarize this project",
+        prompt: vscode.l10n.t("Task to run through Tierkit"),
+        placeHolder: vscode.l10n.t("summarize this project"),
       });
       if (!task) return;
       const profile = await vscode.window.showInputBox({
-        prompt: "Profile id (leave blank for auto-routing)",
+        prompt: vscode.l10n.t("Profile id (leave blank for auto-routing)"),
         placeHolder: "localFast",
       });
       const out = vscode.window.createOutputChannel("Tierkit");
@@ -162,15 +258,11 @@ export function activate(context: vscode.ExtensionContext): void {
       out.appendLine(`→ tierkit route run "${task}"${profile ? ` --profile ${profile}` : ""}`);
       try {
         const client = makeClient();
-        const req = profile
-          ? { profileId: profile, messages: [{ role: "user" as const, content: task }] }
-          : // For auto-routing through the daemon, the caller would first hit /v1/route to pick a profile.
-            //   Tier-1 scaffold: surface that auto-route requires a profileId; future v0.2 can compose explain+run.
-            undefined;
-        if (!req) {
-          out.appendLine("(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)");
+        if (!profile) {
+          out.appendLine(vscode.l10n.t("(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)"));
           return;
         }
+        const req = { profileId: profile, messages: [{ role: "user" as const, content: task }] };
         for await (const evt of client.llmCallStream(req)) {
           if (evt.type === "delta") out.append(evt.text);
           else if (evt.type === "end") out.appendLine(`\n— ${evt.latencyMs}ms`);
@@ -183,7 +275,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand("tierkit.checkCommand", async () => {
-      const cmd = await vscode.window.showInputBox({ prompt: "Shell command to classify" });
+      const cmd = await vscode.window.showInputBox({ prompt: vscode.l10n.t("Shell command to classify") });
       if (!cmd) return;
       const r = await withClient((c) => c.checkCommand(cmd));
       if (!r) return;
@@ -207,19 +299,21 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand("tierkit.sessionStatus", async () => {
-      // The sidebar dashboard surfaces the current session. Point users there.
       const r = await withClient((c) => c.session());
       if (!r) return;
       if (!r.session) {
         void vscode.window.showInformationMessage(
-          `Tierkit: no current session (freedom=${r.freedom}). Open the Tierkit sidebar to start one.`,
+          vscode.l10n.t("Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.", r.freedom),
         );
         return;
       }
       void vscode.window.showInformationMessage(
-        `Tierkit session ${r.session.id.slice(0, 8)} — state=${r.session.state}` +
-          (r.session.planApproved ? ", plan ✓" : "") +
-          ` — open the Tierkit sidebar for full controls.`,
+        vscode.l10n.t(
+          "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.",
+          r.session.id.slice(0, 8),
+          r.session.state,
+          r.session.planApproved ? ", plan ✓" : "",
+        ),
       );
       await vscode.commands.executeCommand("tierkit.focusSidebar");
     }),
@@ -232,13 +326,17 @@ async function refreshStatus(): Promise<void> {
     const client = makeClient();
     const h = await client.health();
     statusItem.text = `$(check) Tierkit ${h.version}`;
-    statusItem.tooltip = `Tierkit runtime ${h.version} OK at ${h.cwd}`;
+    statusItem.tooltip = vscode.l10n.t("Tierkit runtime {0} OK at {1}", h.version, h.cwd);
   } catch {
-    statusItem.text = "$(circle-slash) Tierkit offline";
-    statusItem.tooltip = "Tierkit runtime not reachable. Run `tierkit runtime start` in a terminal.";
+    statusItem.text = "$(circle-slash) Tierkit";
+    statusItem.tooltip = vscode.l10n.t("Tierkit runtime not reachable. Open a folder, or run `tierkit runtime start` in a terminal.");
   }
 }
 
 export function deactivate(): void {
   statusItem?.dispose();
+  // Close our in-process daemon if we started it (no-op if user is running one in a terminal).
+  serverHandle?.close().catch(() => {
+    /* ignore — VS Code is shutting down anyway */
+  });
 }

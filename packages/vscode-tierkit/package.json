@@ -1,9 +1,9 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
-  "description": "Talk to a running `tierkit runtime` from inside VS Code: route routing, command classification, usage, and a status bar entry for daemon health.",
+  "description": "%description%",
   "license": "MIT",
   "publisher": "leesiwal",
   "engines": {
@@ -28,6 +28,7 @@
   ],
   "main": "./dist/extension.js",
   "icon": "icon.png",
+  "l10n": "./l10n",
   "repository": {
     "type": "git",
     "url": "https://github.com/LeeSiWal/Tierkit.git",
@@ -45,7 +46,7 @@
       "activitybar": [
         {
           "id": "tierkit",
-          "title": "Tierkit",
+          "title": "%viewContainer.title%",
           "icon": "media/tierkit.svg"
         }
       ]
@@ -55,31 +56,36 @@
         {
           "type": "webview",
           "id": "tierkit.sidebar",
-          "name": "Dashboard"
+          "name": "%view.dashboard.name%"
         }
       ]
     },
     "commands": [
-      { "command": "tierkit.focusSidebar",  "title": "Tierkit: Focus dashboard sidebar" },
-      { "command": "tierkit.health",        "title": "Tierkit: Check runtime health" },
-      { "command": "tierkit.routeExplain",  "title": "Tierkit: Explain route for current task" },
-      { "command": "tierkit.routeRun",      "title": "Tierkit: Run task through Tierkit (streamed)" },
-      { "command": "tierkit.checkCommand",  "title": "Tierkit: Classify a shell command" },
-      { "command": "tierkit.usage",         "title": "Tierkit: Show usage summary" },
-      { "command": "tierkit.sessionStatus", "title": "Tierkit: Show workflow session status" }
+      { "command": "tierkit.focusSidebar",  "title": "%commands.focusSidebar%" },
+      { "command": "tierkit.health",        "title": "%commands.health%" },
+      { "command": "tierkit.routeExplain",  "title": "%commands.routeExplain%" },
+      { "command": "tierkit.routeRun",      "title": "%commands.routeRun%" },
+      { "command": "tierkit.checkCommand",  "title": "%commands.checkCommand%" },
+      { "command": "tierkit.usage",         "title": "%commands.usage%" },
+      { "command": "tierkit.sessionStatus", "title": "%commands.sessionStatus%" }
     ],
     "configuration": {
-      "title": "Tierkit",
+      "title": "%configuration.title%",
       "properties": {
         "tierkit.baseUrl": {
           "type": "string",
           "default": "http://127.0.0.1:4101",
-          "description": "Base URL of the Tierkit runtime daemon."
+          "description": "%configuration.baseUrl%"
         },
         "tierkit.statusBar": {
           "type": "boolean",
           "default": true,
-          "description": "Show a Tierkit status bar item with daemon health."
+          "description": "%configuration.statusBar%"
+        },
+        "tierkit.autoStartDaemon": {
+          "type": "boolean",
+          "default": true,
+          "description": "%configuration.autoStartDaemon%"
         }
       }
     }
@@ -87,7 +93,7 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.vsix .tsbuildinfo",
     "prepublish:check": "node -e \"const p=require('./package.json'); if(p.publisher==='tierkit-placeholder'){console.error('ABORT: package.json::publisher is still the placeholder. Edit it to your actual VS Code Marketplace publisher id before publishing.'); process.exit(1)} if(!require('fs').existsSync('./icon.png')){console.error('ABORT: icon.png is missing. Generate one from media/tierkit.svg with: rsvg-convert -w 128 -h 128 media/tierkit.svg -o icon.png'); process.exit(1)} console.log('prepublish check ok: publisher=' + p.publisher + ', icon=icon.png present')\"",

@@ -10,9 +10,10 @@
  *   - VS Code sidebar webview: the host extension injects `window.__TIERKIT_BASE_URL__`
  *     before the script runs; fetch prepends that to every path.
  *
- * Deliberately minimal: cards stack vertically below 800px (sidebar-friendly). No framework,
- * no build step, no fonts. The whole point of a GUI here is *quick visibility*, not a
- * polished product surface.
+ * Localization (v1.7): every user-facing string carries `data-i18n="<key>"` (or
+ * `data-i18n-placeholder` / `data-i18n-title`). At load time we look at `navigator.language`
+ * and swap to Korean if it starts with `ko`. Default is English. The LOCALES table sits at
+ * the top of the inline script — adding a language is just adding one entry.
  */
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
@@ -131,7 +132,7 @@ export const GUI_HTML = `<!doctype html>
   <span id="health-pill" class="pill pill-warn">…</span>
   <span id="freedom-pill" class="pill pill-accent">freedom: …</span>
   <span style="flex:1"></span>
-  <button id="btn-refresh" class="tiny" title="Reload all panels">↻</button>
+  <button id="btn-refresh" class="tiny" data-i18n-title="refresh" title="Reload all panels">↻</button>
 </h1>
 
 <div id="err-banner" class="err-banner" style="display:none"></div>
@@ -142,73 +143,73 @@ export const GUI_HTML = `<!doctype html>
   <div class="grid">
 
     <div class="card">
-      <h2>Run a task</h2>
-      <label for="t-task">Task</label>
-      <textarea id="t-task" placeholder="Summarize this project's plugin format."></textarea>
+      <h2 data-i18n="run">Run a task</h2>
+      <label for="t-task" data-i18n="task">Task</label>
+      <textarea id="t-task" data-i18n-placeholder="taskPlaceholder" placeholder="Summarize this project's plugin format."></textarea>
       <div style="height:8px"></div>
       <div class="row">
         <div>
-          <label for="t-profile">Profile</label>
+          <label for="t-profile" data-i18n="profile">Profile</label>
           <select id="t-profile"></select>
         </div>
         <div>
-          <label for="t-mode">Mode</label>
+          <label for="t-mode" data-i18n="mode">Mode</label>
           <select id="t-mode">
             <option value="execute" selected>execute</option>
             <option value="plan">plan</option>
             <option value="review">review</option>
           </select>
         </div>
-        <button id="btn-run" class="primary">Run</button>
+        <button id="btn-run" class="primary" data-i18n="btnRun">Run</button>
       </div>
       <div style="height:10px"></div>
       <div id="run-meta" class="small"></div>
-      <pre id="run-output" class="empty">(output appears here)</pre>
+      <pre id="run-output" class="empty" data-i18n="outputPlaceholder">(output appears here)</pre>
     </div>
 
     <div class="card">
-      <h2>Security check</h2>
+      <h2 data-i18n="securityCheck">Security check</h2>
       <div class="tabs">
-        <button class="tab-btn active" data-tab="redact">Redact</button>
-        <button class="tab-btn" data-tab="command">Command</button>
-        <button class="tab-btn" data-tab="path">Path</button>
+        <button class="tab-btn active" data-tab="redact" data-i18n="tabRedact">Redact</button>
+        <button class="tab-btn" data-tab="command" data-i18n="tabCommand">Command</button>
+        <button class="tab-btn" data-tab="path" data-i18n="tabPath">Path</button>
       </div>
       <div class="tab-panel active" data-tab="redact">
-        <label for="c-redact-text">Text to redact</label>
-        <textarea id="c-redact-text" placeholder="key=sk-abcdef..."></textarea>
+        <label for="c-redact-text" data-i18n="textToRedact">Text to redact</label>
+        <textarea id="c-redact-text" data-i18n-placeholder="redactPlaceholder" placeholder="key=sk-abcdef..."></textarea>
         <div style="height:6px"></div>
-        <button id="btn-redact">Redact</button>
+        <button id="btn-redact" data-i18n="btnRedact">Redact</button>
         <div id="c-redact-out" class="small" style="margin-top:8px"></div>
       </div>
       <div class="tab-panel" data-tab="command">
-        <label for="c-cmd">Shell command</label>
-        <input id="c-cmd" placeholder='rm -rf /' />
+        <label for="c-cmd" data-i18n="shellCommand">Shell command</label>
+        <input id="c-cmd" data-i18n-placeholder="cmdPlaceholder" placeholder='rm -rf /' />
         <div style="height:6px"></div>
-        <button id="btn-cmd">Classify</button>
+        <button id="btn-cmd" data-i18n="btnClassify">Classify</button>
         <div id="c-cmd-out" class="small" style="margin-top:8px"></div>
       </div>
       <div class="tab-panel" data-tab="path">
-        <label for="c-path">File path</label>
-        <input id="c-path" placeholder=".env or rules/foo.md" />
+        <label for="c-path" data-i18n="filePath">File path</label>
+        <input id="c-path" data-i18n-placeholder="pathPlaceholder" placeholder=".env or rules/foo.md" />
         <div style="height:6px"></div>
-        <button id="btn-path">Check</button>
+        <button id="btn-path" data-i18n="btnCheck">Check</button>
         <div id="c-path-out" class="small" style="margin-top:8px"></div>
       </div>
     </div>
 
     <div class="card">
-      <h2>Usage</h2>
+      <h2 data-i18n="usage">Usage</h2>
       <div class="stat-row">
-        <div class="stat"><div class="stat-label">Calls</div><div class="stat-value" id="u-calls">—</div></div>
-        <div class="stat"><div class="stat-label">Tokens</div><div class="stat-value" id="u-tokens">—</div></div>
-        <div class="stat"><div class="stat-label">Cost</div><div class="stat-value" id="u-cost">—</div></div>
+        <div class="stat"><div class="stat-label" data-i18n="calls">Calls</div><div class="stat-value" id="u-calls">—</div></div>
+        <div class="stat"><div class="stat-label" data-i18n="tokens">Tokens</div><div class="stat-value" id="u-tokens">—</div></div>
+        <div class="stat"><div class="stat-label" data-i18n="cost">Cost</div><div class="stat-value" id="u-cost">—</div></div>
       </div>
-      <div id="u-by-profile" class="small dim">Per-profile breakdown loads…</div>
+      <div id="u-by-profile" class="small dim" data-i18n="usageLoading">Per-profile breakdown loads…</div>
     </div>
 
     <div class="card">
-      <h2>Models</h2>
-      <div id="m-list"><span class="empty">loading…</span></div>
+      <h2 data-i18n="models">Models</h2>
+      <div id="m-list"><span class="empty" data-i18n="loading">loading…</span></div>
     </div>
 
   </div>
@@ -217,17 +218,17 @@ export const GUI_HTML = `<!doctype html>
   <div class="grid">
 
     <div class="card">
-      <h2>Session</h2>
-      <div id="s-status"><span class="empty">no current session</span></div>
+      <h2 data-i18n="session">Session</h2>
+      <div id="s-status"><span class="empty" data-i18n="noSession">no current session</span></div>
       <div class="session-actions" id="s-actions">
-        <input id="s-new-task" placeholder="task for a new session…" style="flex:1 1 200px" />
-        <button id="btn-session-start">Start</button>
+        <input id="s-new-task" data-i18n-placeholder="newSessionPlaceholder" placeholder="task for a new session…" style="flex:1 1 200px" />
+        <button id="btn-session-start" data-i18n="btnStart">Start</button>
       </div>
     </div>
 
     <div class="card">
-      <h2>Daemon</h2>
-      <div id="d-info" class="mono dim">loading…</div>
+      <h2 data-i18n="daemon">Daemon</h2>
+      <div id="d-info" class="mono dim" data-i18n="loading">loading…</div>
     </div>
 
   </div>
@@ -236,9 +237,145 @@ export const GUI_HTML = `<!doctype html>
 
 <script>
 (function () {
-  // Base URL: empty in direct-browser context (relative paths), set by host extension in webview.
-  const BASE = (typeof window !== 'undefined' && window.__TIERKIT_BASE_URL__) || '';
+  // ── Localization ────────────────────────────────────────────────────────────
+  // Default labels live in the HTML (English). When the browser locale starts with "ko",
+  // we swap them via the LOCALES.ko table. Adding a new language = adding one entry below.
+  const LOCALES = {
+    ko: {
+      run: '작업 실행',
+      task: '작업 내용',
+      profile: '프로파일',
+      mode: '모드',
+      btnRun: '실행',
+      taskPlaceholder: '예: 이 프로젝트의 플러그인 포맷 요약',
+      outputPlaceholder: '(여기에 응답이 표시됩니다)',
+      securityCheck: '보안 검사',
+      tabRedact: '시크릿 가리기',
+      tabCommand: '명령어',
+      tabPath: '경로',
+      textToRedact: '가릴 텍스트',
+      redactPlaceholder: '예: key=sk-abcdef...',
+      btnRedact: '가리기',
+      shellCommand: '쉘 명령어',
+      cmdPlaceholder: '예: rm -rf /',
+      btnClassify: '위험도 분류',
+      filePath: '파일 경로',
+      pathPlaceholder: '예: .env 또는 rules/foo.md',
+      btnCheck: '검사',
+      usage: '사용량',
+      calls: '호출',
+      tokens: '토큰',
+      cost: '비용',
+      usageLoading: '프로파일별 내역 불러오는 중…',
+      models: '모델',
+      session: '세션',
+      noSession: '활성 세션 없음',
+      newSessionPlaceholder: '새 세션에 사용할 작업 내용…',
+      btnStart: '시작',
+      daemon: '데몬',
+      loading: '불러오는 중…',
+      refresh: '모든 패널 새로고침',
+    },
+  };
+  const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
+  if (lang !== 'en' && LOCALES[lang]) {
+    const t = LOCALES[lang];
+    const apply = (sel, attr, key) => {
+      document.querySelectorAll('[data-i18n' + sel + ']').forEach((el) => {
+        const k = el.getAttribute('data-i18n' + sel);
+        if (t[k]) attr ? el.setAttribute(attr, t[k]) : (el.textContent = t[k]);
+      });
+    };
+    apply('', null, null);
+    apply('-placeholder', 'placeholder', null);
+    apply('-title', 'title', null);
+    document.documentElement.setAttribute('lang', lang);
+  }
+  // i18n helper for runtime-built strings (used by renderSession etc.)
+  const i18n = lang === 'ko' && LOCALES.ko
+    ? {
+        plan: '계획',
+        approveBtn: '계획 승인',
+        toImplementing: '→ 구현 단계로',
+        toReviewing: '→ 리뷰 단계로',
+        toDone: '→ 완료',
+        abandon: '중단',
+        noSessionHint: '활성 세션 없음 — 아래에서 시작하세요',
+        history: '히스토리',
+        events: '건',
+        idLabel: 'id',
+        plannedOk: '계획 ✓',
+        plannedPending: '계획 대기 중',
+        noProfiles: 'tierkit.config.json에 프로파일이 없습니다 — modelProfiles를 추가하세요',
+        autoRoute: '(자동 라우팅)',
+        thId: 'id', thTier: '계층', thProvider: '프로바이더', thModel: '모델', thCost: '비용', thTest: '',
+        btnTest: '테스트',
+        modelsErr: '모델 정보 오류',
+        usageNone: '(호출 기록 없음 — 위에서 작업을 실행해보세요)',
+        usageErr: '사용량 오류',
+        sessionErr: '세션 오류',
+        budgetWarn: '예산 경고',
+        modelAvailable: '구성된 모델 사용 가능',
+        modelUnavailable: '구성된 모델 사용 불가',
+        modelOf: '개 모델',
+        enterTask: '먼저 작업 내용을 입력하세요',
+        selectProfile: '프로파일을 선택하세요 (자동 라우팅은 향후 지원)',
+        sending: '전송 중…',
+        network: '네트워크 오류',
+        probing: '확인 중',
+        clean: '깨끗함',
+        rulesHit: '개 규칙 매칭',
+        rulesMatched: '개 규칙 매칭됨:',
+        noRules: '매칭된 규칙 없음',
+        sensitive: '민감',
+        sensitiveMatches: '매칭 패턴',
+        notInBlocklist: '블록리스트에 없음',
+        daemonUnreachable: '데몬에 연결할 수 없습니다',
+        offline: '오프라인',
+      }
+    : {
+        plan: 'plan',
+        approveBtn: 'Approve plan',
+        toImplementing: '→ implementing',
+        toReviewing: '→ reviewing',
+        toDone: '→ done',
+        abandon: 'Abandon',
+        noSessionHint: 'no current session — start one below',
+        history: 'History',
+        events: 'events',
+        idLabel: 'id',
+        plannedOk: 'plan ✓',
+        plannedPending: 'plan pending',
+        noProfiles: 'no profiles in tierkit.config.json — add modelProfiles',
+        autoRoute: '(auto-route)',
+        thId: 'id', thTier: 'tier', thProvider: 'provider', thModel: 'model', thCost: 'cost', thTest: '',
+        btnTest: 'Test',
+        modelsErr: 'models error',
+        usageNone: '(no calls yet — run a task above)',
+        usageErr: 'usage error',
+        sessionErr: 'session error',
+        budgetWarn: 'budget warn',
+        modelAvailable: 'configured model available',
+        modelUnavailable: 'configured model NOT available',
+        modelOf: 'model(s)',
+        enterTask: 'enter a task first',
+        selectProfile: 'select a profile (auto-route through daemon is a follow-up)',
+        sending: 'sending…',
+        network: 'network',
+        probing: 'probing',
+        clean: 'clean',
+        rulesHit: 'rule(s) hit',
+        rulesMatched: 'rule(s):',
+        noRules: 'no rules matched',
+        sensitive: 'SENSITIVE',
+        sensitiveMatches: 'matches',
+        notInBlocklist: 'not in blocklist',
+        daemonUnreachable: 'Daemon unreachable',
+        offline: 'offline',
+      };
 
+  // ── App ──
+  const BASE = (typeof window !== 'undefined' && window.__TIERKIT_BASE_URL__) || '';
   const $ = (id) => document.getElementById(id);
   const banner = $('err-banner');
 
@@ -272,9 +409,9 @@ export const GUI_HTML = `<!doctype html>
       $('health-pill').className = 'pill pill-ok';
       $('d-info').textContent = h.cwd;
     } catch (e) {
-      $('health-pill').textContent = 'offline';
+      $('health-pill').textContent = i18n.offline;
       $('health-pill').className = 'pill pill-err';
-      showError('Daemon unreachable: ' + e.message);
+      showError(i18n.daemonUnreachable + ': ' + e.message);
     }
   }
 
@@ -285,7 +422,7 @@ export const GUI_HTML = `<!doctype html>
       $('freedom-pill').className = 'pill pill-' + (r.freedom === 'strict' ? 'err' : r.freedom === 'balanced' ? 'warn' : 'accent');
       renderSession(r.session);
     } catch (e) {
-      $('s-status').innerHTML = '<span class="empty">session error: ' + e.message + '</span>';
+      $('s-status').innerHTML = '<span class="empty">' + i18n.sessionErr + ': ' + e.message + '</span>';
     }
   }
 
@@ -293,9 +430,9 @@ export const GUI_HTML = `<!doctype html>
     const status = $('s-status');
     const actions = $('s-actions');
     if (!s) {
-      status.innerHTML = '<span class="empty">no current session — start one below</span>';
-      actions.innerHTML = '<input id="s-new-task" placeholder="task for a new session…" style="flex:1 1 200px" />' +
-        '<button id="btn-session-start">Start</button>';
+      status.innerHTML = '<span class="empty">' + i18n.noSessionHint + '</span>';
+      actions.innerHTML = '<input id="s-new-task" placeholder="' + escapeHtml(LOCALES[lang]?.newSessionPlaceholder || 'task for a new session…') + '" style="flex:1 1 200px" />' +
+        '<button id="btn-session-start">' + (lang === 'ko' ? '시작' : 'Start') + '</button>';
       $('btn-session-start').onclick = startSession;
       return;
     }
@@ -303,11 +440,11 @@ export const GUI_HTML = `<!doctype html>
     const stateClass = state === 'done' ? 'ok' : state === 'abandoned' ? 'err' : 'accent';
     status.innerHTML =
       '<div style="display:flex;gap:6px;align-items:baseline;margin-bottom:6px;flex-wrap:wrap"><span class="pill pill-' + stateClass + '">' + state + '</span>' +
-      (s.planApproved ? '<span class="pill pill-ok">plan ✓</span>' : '<span class="pill pill-warn">plan pending</span>') +
+      (s.planApproved ? '<span class="pill pill-ok">' + i18n.plannedOk + '</span>' : '<span class="pill pill-warn">' + i18n.plannedPending + '</span>') +
       '</div>' +
-      '<div class="small dim">id ' + s.id.slice(0, 8) + ' · ' + s.createdAt.replace('T', ' ').slice(0, 19) + '</div>' +
+      '<div class="small dim">' + i18n.idLabel + ' ' + s.id.slice(0, 8) + ' · ' + s.createdAt.replace('T', ' ').slice(0, 19) + '</div>' +
       '<div class="mono" style="margin:6px 0;font-weight:500;font-size:12px;word-break:break-word">' + escapeHtml(s.task) + '</div>' +
-      '<div class="small dim" style="margin-bottom:4px">History (' + s.history.length + ')</div>' +
+      '<div class="small dim" style="margin-bottom:4px">' + i18n.history + ' (' + s.history.length + ' ' + i18n.events + ')</div>' +
       '<div class="history-list">' + s.history.map(h =>
         '<div><span class="dim">' + h.timestamp.slice(11, 19) + '</span> ' +
         (h.from ? escapeHtml(h.from) + ' → ' : '') + '<b>' + escapeHtml(h.to) + '</b>' +
@@ -315,11 +452,11 @@ export const GUI_HTML = `<!doctype html>
       ).join('') + '</div>';
 
     const buttons = [];
-    if (state === 'planning' && !s.planApproved) buttons.push(['Approve plan', () => post('/v1/session/approve-plan')]);
-    if (state === 'planning') buttons.push(['→ implementing', () => post('/v1/session/advance', { toState: 'implementing' })]);
-    if (state === 'implementing') buttons.push(['→ reviewing', () => post('/v1/session/advance', { toState: 'reviewing' })]);
-    if (state === 'reviewing') buttons.push(['→ done', () => post('/v1/session/advance', { toState: 'done' })]);
-    if (state !== 'done' && state !== 'abandoned') buttons.push(['Abandon', () => post('/v1/session/abandon'), 'danger']);
+    if (state === 'planning' && !s.planApproved) buttons.push([i18n.approveBtn, () => post('/v1/session/approve-plan')]);
+    if (state === 'planning') buttons.push([i18n.toImplementing, () => post('/v1/session/advance', { toState: 'implementing' })]);
+    if (state === 'implementing') buttons.push([i18n.toReviewing, () => post('/v1/session/advance', { toState: 'reviewing' })]);
+    if (state === 'reviewing') buttons.push([i18n.toDone, () => post('/v1/session/advance', { toState: 'done' })]);
+    if (state !== 'done' && state !== 'abandoned') buttons.push([i18n.abandon, () => post('/v1/session/abandon'), 'danger']);
 
     actions.innerHTML = '';
     for (const [label, fn, cls] of buttons) {
@@ -344,7 +481,7 @@ export const GUI_HTML = `<!doctype html>
 
   async function startSession() {
     const task = ($('s-new-task').value || '').trim();
-    if (!task) return showError('enter a task first');
+    if (!task) return showError(i18n.enterTask);
     clearError();
     try {
       await jpost('/v1/session/start', { task });
@@ -360,36 +497,36 @@ export const GUI_HTML = `<!doctype html>
       const r = await jget('/v1/models');
       const sel = $('t-profile');
       const cur = sel.value;
-      sel.innerHTML = '<option value="">(auto-route)</option>' + r.entries.map(e =>
+      sel.innerHTML = '<option value="">' + i18n.autoRoute + '</option>' + r.entries.map(e =>
         '<option value="' + e.id + '">' + e.id + ' — ' + e.profile.kind + '/' + e.profile.provider + '/' + e.profile.model + '</option>'
       ).join('');
       if (cur) sel.value = cur;
 
       if (r.entries.length === 0) {
-        $('m-list').innerHTML = '<span class="empty">no profiles in tierkit.config.json — add modelProfiles</span>';
+        $('m-list').innerHTML = '<span class="empty">' + i18n.noProfiles + '</span>';
       } else {
         const rows = r.entries.map(e =>
           '<tr><td class="mono">' + escapeHtml(e.id) + '</td><td><span class="pill pill-' +
           (e.profile.kind === 'public-cloud' ? 'err' : e.profile.kind === 'private-remote' ? 'warn' : 'ok') +
           '">' + e.profile.kind + '</span></td><td>' + escapeHtml(e.profile.provider) + '</td><td class="mono">' +
           escapeHtml(e.profile.model) + '</td><td>' + fmtCost(e.profile.cost) +
-          '</td><td><button class="tiny" data-test-id="' + escapeHtml(e.id) + '">Test</button></td></tr>'
+          '</td><td><button class="tiny" data-test-id="' + escapeHtml(e.id) + '">' + i18n.btnTest + '</button></td></tr>'
         ).join('');
         $('m-list').innerHTML =
-          '<table><thead><tr><th>id</th><th>tier</th><th>provider</th><th>model</th><th>cost</th><th></th></tr></thead><tbody>' +
+          '<table><thead><tr><th>' + i18n.thId + '</th><th>' + i18n.thTier + '</th><th>' + i18n.thProvider + '</th><th>' + i18n.thModel + '</th><th>' + i18n.thCost + '</th><th></th></tr></thead><tbody>' +
           rows + '</tbody></table><div id="m-test-out" class="small dim" style="margin-top:8px"></div>';
         document.querySelectorAll('[data-test-id]').forEach(btn => {
           btn.onclick = () => testModel(btn.getAttribute('data-test-id'), btn);
         });
       }
     } catch (e) {
-      $('m-list').innerHTML = '<span class="empty">models error: ' + e.message + '</span>';
+      $('m-list').innerHTML = '<span class="empty">' + i18n.modelsErr + ': ' + e.message + '</span>';
     }
   }
 
   async function testModel(profileId, btn) {
     const out = $('m-test-out');
-    out.innerHTML = '<span class="dim">probing ' + escapeHtml(profileId) + '…</span>';
+    out.innerHTML = '<span class="dim">' + i18n.probing + ' ' + escapeHtml(profileId) + '…</span>';
     btn.disabled = true;
     try {
       const r = await jpost('/v1/models/test', { profileId });
@@ -400,15 +537,15 @@ export const GUI_HTML = `<!doctype html>
         if (result.ok) {
           out.innerHTML = '<span class="pill pill-ok">' + escapeHtml(profileId) + '</span> ' +
             result.latencyMs + 'ms' +
-            (result.modelCount !== undefined ? ' · ' + result.modelCount + ' model(s)' : '') +
-            (result.modelAvailable !== undefined ? (result.modelAvailable ? ' · configured model available' : ' · configured model NOT available') : '') +
+            (result.modelCount !== undefined ? ' · ' + result.modelCount + ' ' + i18n.modelOf : '') +
+            (result.modelAvailable !== undefined ? ' · ' + (result.modelAvailable ? i18n.modelAvailable : i18n.modelUnavailable) : '') +
             (result.note ? '<br><span class="dim">' + escapeHtml(result.note) + '</span>' : '');
         } else {
           out.innerHTML = '<span class="pill pill-err">' + escapeHtml(profileId) + ' / ' + result.code + '</span> ' + escapeHtml(result.message);
         }
       }
     } catch (e) {
-      out.innerHTML = '<span class="pill pill-err">network</span> ' + e.message;
+      out.innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
     } finally {
       btn.disabled = false;
     }
@@ -430,25 +567,25 @@ export const GUI_HTML = `<!doctype html>
       const byProfile = r.summary.byProfile || {};
       const keys = Object.keys(byProfile);
       $('u-by-profile').innerHTML = keys.length === 0
-        ? '(no calls yet)'
-        : keys.map(k => k + ': ' + byProfile[k].calls + ' calls, $' + byProfile[k].costUsd.toFixed(4)).join(' · ');
+        ? i18n.usageNone
+        : keys.map(k => k + ': ' + byProfile[k].calls + (lang === 'ko' ? '회, ' : ' calls, ') + '$' + byProfile[k].costUsd.toFixed(4)).join(' · ');
     } catch (e) {
-      $('u-by-profile').innerHTML = '<span class="empty">usage error: ' + e.message + '</span>';
+      $('u-by-profile').innerHTML = '<span class="empty">' + i18n.usageErr + ': ' + e.message + '</span>';
     }
   }
 
   $('btn-run').onclick = async () => {
     const task = ($('t-task').value || '').trim();
-    if (!task) return showError('enter a task first');
+    if (!task) return showError(i18n.enterTask);
     const profileId = $('t-profile').value;
     const mode = $('t-mode').value;
-    if (!profileId) return showError('select a profile (auto-route through daemon is a follow-up)');
+    if (!profileId) return showError(i18n.selectProfile);
 
     clearError();
     $('btn-run').disabled = true;
     $('run-output').textContent = '';
     $('run-output').classList.remove('empty');
-    $('run-meta').textContent = 'sending…';
+    $('run-meta').textContent = i18n.sending;
     try {
       const messages = [
         { role: 'user', content: (mode === 'plan' ? '(plan mode) ' : mode === 'review' ? '(review mode) ' : '') + task },
@@ -458,7 +595,7 @@ export const GUI_HTML = `<!doctype html>
         $('run-output').textContent = r.data.text;
         $('run-meta').innerHTML = '<span class="pill pill-ok">ok</span> ' +
           r.data.inputTokens + ' in / ' + r.data.outputTokens + ' out · ' + r.data.latencyMs + 'ms · $' + r.data.costUsd.toFixed(6) +
-          (r.data.budget?.status === 'warn' ? ' <span class="pill pill-warn">budget warn</span>' : '');
+          (r.data.budget?.status === 'warn' ? ' <span class="pill pill-warn">' + i18n.budgetWarn + '</span>' : '');
       } else {
         $('run-output').textContent = '';
         $('run-meta').innerHTML = '<span class="pill pill-err">' + r.data.code + '</span> ' + escapeHtml(r.data.message);
@@ -466,7 +603,7 @@ export const GUI_HTML = `<!doctype html>
       await refreshUsage();
       await refreshSession();
     } catch (e) {
-      $('run-meta').innerHTML = '<span class="pill pill-err">network</span> ' + e.message;
+      $('run-meta').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
     } finally {
       $('btn-run').disabled = false;
     }
@@ -488,12 +625,12 @@ export const GUI_HTML = `<!doctype html>
       const r = await jpost('/v1/redact', { text });
       const hits = r.data.hits || [];
       $('c-redact-out').innerHTML = hits.length === 0
-        ? '<span class="pill pill-ok">clean</span> no secret patterns matched'
-        : '<span class="pill pill-err">' + hits.length + ' rule(s) hit</span> ' +
+        ? '<span class="pill pill-ok">' + i18n.clean + '</span>'
+        : '<span class="pill pill-err">' + hits.length + ' ' + i18n.rulesHit + '</span> ' +
           hits.map(h => h.ruleId + ' × ' + h.count).join(', ') +
           '<pre style="margin-top:6px">' + escapeHtml(r.data.text) + '</pre>';
     } catch (e) {
-      $('c-redact-out').innerHTML = '<span class="pill pill-err">network</span> ' + e.message;
+      $('c-redact-out').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
     }
   };
 
@@ -506,11 +643,11 @@ export const GUI_HTML = `<!doctype html>
       const cls = sev === 'block' ? 'err' : sev === 'warn' ? 'warn' : 'ok';
       const matched = r.data.matched || [];
       $('c-cmd-out').innerHTML = '<span class="pill pill-' + cls + '">' + sev.toUpperCase() + '</span> ' +
-        (matched.length === 0 ? 'no rules matched' : matched.length + ' rule(s):') +
+        (matched.length === 0 ? i18n.noRules : matched.length + ' ' + i18n.rulesMatched) +
         (matched.length > 0 ? '<ul style="margin:4px 0 0;padding-left:16px">' +
           matched.map(m => '<li><b>' + escapeHtml(m.id) + '</b> — ' + escapeHtml(m.description) + '</li>').join('') + '</ul>' : '');
     } catch (e) {
-      $('c-cmd-out').innerHTML = '<span class="pill pill-err">network</span> ' + e.message;
+      $('c-cmd-out').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
     }
   };
 
@@ -520,10 +657,10 @@ export const GUI_HTML = `<!doctype html>
     try {
       const r = await jpost('/v1/check/path', { path: p });
       $('c-path-out').innerHTML = r.data.sensitive
-        ? '<span class="pill pill-err">SENSITIVE</span> matches: ' + (r.data.matchedPatterns || []).join(', ')
-        : '<span class="pill pill-ok">ok</span> not in blocklist';
+        ? '<span class="pill pill-err">' + i18n.sensitive + '</span> ' + i18n.sensitiveMatches + ': ' + (r.data.matchedPatterns || []).join(', ')
+        : '<span class="pill pill-ok">ok</span> ' + i18n.notInBlocklist;
     } catch (e) {
-      $('c-path-out').innerHTML = '<span class="pill pill-err">network</span> ' + e.message;
+      $('c-path-out').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
     }
   };
 

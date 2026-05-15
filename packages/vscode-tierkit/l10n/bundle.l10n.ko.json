@@ -1,0 +1,18 @@
+{
+  "Tierkit: Open a folder to auto-start the runtime, or start it from a terminal with `tierkit runtime start`.": "Tierkit: 폴더를 열어 런타임을 자동 실행하거나, 터미널에서 `tierkit runtime start`를 실행하세요.",
+  "Tierkit: port {0} was busy; started daemon on {1} instead.": "Tierkit: 포트 {0}이 사용 중이라 {1}에서 데몬을 시작했습니다.",
+  "Tierkit could not auto-start daemon ({0}). Run `tierkit runtime start` in a terminal.": "Tierkit이 데몬을 자동 실행하지 못했습니다 ({0}). 터미널에서 `tierkit runtime start`를 실행하세요.",
+  "Tierkit runtime status": "Tierkit 런타임 상태",
+  "Tierkit runtime {0} OK at {1}": "Tierkit 런타임 {0} 정상 — {1}",
+  "Tierkit runtime not reachable. Open a folder, or run `tierkit runtime start` in a terminal.": "Tierkit 런타임에 연결할 수 없습니다. 폴더를 열거나 터미널에서 `tierkit runtime start`를 실행하세요.",
+  "Tierkit: {0} — {1}": "Tierkit: {0} — {1}",
+  "Task to explain (Tierkit route)": "라우팅을 설명할 작업 내용",
+  "rename a helper function": "헬퍼 함수 이름 변경",
+  "Task to run through Tierkit": "Tierkit으로 실행할 작업",
+  "summarize this project": "이 프로젝트 요약",
+  "Profile id (leave blank for auto-routing)": "프로파일 id (비워두면 자동 라우팅)",
+  "(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)": "(자동 라우팅에는 profileId가 필요합니다 — 지정해주세요)",
+  "Shell command to classify": "분류할 쉘 명령어",
+  "Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.": "Tierkit: 활성 세션 없음 (freedom={0}). 사이드바에서 세션을 시작하세요.",
+  "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.": "Tierkit 세션 {0} — 상태={1}{2} — 사이드바에서 전체 제어 가능합니다."
+}

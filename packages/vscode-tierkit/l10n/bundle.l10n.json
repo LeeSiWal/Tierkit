@@ -1,0 +1,18 @@
+{
+  "Tierkit: Open a folder to auto-start the runtime, or start it from a terminal with `tierkit runtime start`.": "Tierkit: Open a folder to auto-start the runtime, or start it from a terminal with `tierkit runtime start`.",
+  "Tierkit: port {0} was busy; started daemon on {1} instead.": "Tierkit: port {0} was busy; started daemon on {1} instead.",
+  "Tierkit could not auto-start daemon ({0}). Run `tierkit runtime start` in a terminal.": "Tierkit could not auto-start daemon ({0}). Run `tierkit runtime start` in a terminal.",
+  "Tierkit runtime status": "Tierkit runtime status",
+  "Tierkit runtime {0} OK at {1}": "Tierkit runtime {0} OK at {1}",
+  "Tierkit runtime not reachable. Open a folder, or run `tierkit runtime start` in a terminal.": "Tierkit runtime not reachable. Open a folder, or run `tierkit runtime start` in a terminal.",
+  "Tierkit: {0} — {1}": "Tierkit: {0} — {1}",
+  "Task to explain (Tierkit route)": "Task to explain (Tierkit route)",
+  "rename a helper function": "rename a helper function",
+  "Task to run through Tierkit": "Task to run through Tierkit",
+  "summarize this project": "summarize this project",
+  "Profile id (leave blank for auto-routing)": "Profile id (leave blank for auto-routing)",
+  "(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)": "(auto-route via /v1/llm-call requires explicit profileId in this scaffold — pass one)",
+  "Shell command to classify": "Shell command to classify",
+  "Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.": "Tierkit: no current session (freedom={0}). Open the Tierkit sidebar to start one.",
+  "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls.": "Tierkit session {0} — state={1}{2} — open the Tierkit sidebar for full controls."
+}

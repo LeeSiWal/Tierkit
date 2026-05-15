@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.1.1 — 2026-05-15
+
+Zero-config first run + Korean localization.
+
+### Features
+
+**Auto-start daemon**
+- On extension activation the runtime daemon now starts **in-process** at the configured `tierkit.baseUrl` (default `http://127.0.0.1:4101`). No more `Daemon unreachable: Failed to fetch` on first install.
+- If something else already owns port 4101, Tierkit transparently falls back to an OS-chosen port and the sidebar uses that base URL automatically.
+- If a Tierkit daemon is already running (e.g., you ran `tierkit runtime start` in a terminal), the extension reuses it instead of starting a second one.
+- Opt out with `tierkit.autoStartDaemon: false` if you prefer to manage the daemon yourself.
+
+**Korean localization (한글화)**
+- Command palette titles, configuration descriptions, and runtime messages are now translated via VS Code's standard `package.nls.*.json` + `l10n/bundle.l10n.*.json` mechanism — VS Code picks the locale automatically.
+- The embedded sidebar dashboard (and the GUI served at `http://127.0.0.1:4101/`) localizes labels, placeholders, tooltips, and inline status text based on `navigator.language`. Browsers/VS Code instances set to `ko*` get Korean; everything else stays English.
+
+### Configuration
+
+```jsonc
+// .vscode/settings.json
+{
+  "tierkit.baseUrl":         "http://127.0.0.1:4101",
+  "tierkit.statusBar":       true,
+  "tierkit.autoStartDaemon": true
+}
+```
+
 ## 0.1.0 — 2026-05-15
 
 Initial sideload release. Not yet on the VS Code Marketplace.

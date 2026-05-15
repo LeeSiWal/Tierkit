@@ -9,6 +9,9 @@
 !icon.png
 !CHANGELOG.md
 !media/**
+!package.nls.json
+!package.nls.*.json
+!l10n/**
 
 # Exclude sourcemaps from the published .vsix (keep dist/extension.js only).
 dist/**/*.map

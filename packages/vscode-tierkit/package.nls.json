@@ -1,0 +1,16 @@
+{
+  "description": "Local-first hybrid model routing toolkit. The Tierkit runtime starts automatically; the sidebar lets you run tasks, drive workflow sessions, classify commands, and watch usage.",
+  "viewContainer.title": "Tierkit",
+  "view.dashboard.name": "Dashboard",
+  "configuration.title": "Tierkit",
+  "configuration.baseUrl": "Base URL of the Tierkit runtime daemon. Defaults to http://127.0.0.1:4101. The extension auto-starts a daemon at this URL when activated (unless tierkit.autoStartDaemon is false).",
+  "configuration.statusBar": "Show a Tierkit status bar item with daemon health.",
+  "configuration.autoStartDaemon": "Automatically start the Tierkit runtime daemon in-process when the extension activates. Set to false if you prefer to run `tierkit runtime start` yourself in a terminal.",
+  "commands.focusSidebar": "Tierkit: Focus dashboard sidebar",
+  "commands.health": "Tierkit: Check runtime health",
+  "commands.routeExplain": "Tierkit: Explain route for current task",
+  "commands.routeRun": "Tierkit: Run task through Tierkit (streamed)",
+  "commands.checkCommand": "Tierkit: Classify a shell command",
+  "commands.usage": "Tierkit: Show usage summary",
+  "commands.sessionStatus": "Tierkit: Show workflow session status"
+}
