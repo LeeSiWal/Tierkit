@@ -29,9 +29,10 @@ jobs:
           node-version: "20"
 
       - name: Set up pnpm
+        # No `version:` here — pnpm/action-setup reads it from packageManager in the root
+        # package.json (pnpm@9.0.0). Specifying both errors out with ERR_PNPM_BAD_PM_VERSION.
         uses: pnpm/action-setup@v4
         with:
-          version: 9
           run_install: false
 
       - name: Install dependencies
