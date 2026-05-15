@@ -10,3 +10,7 @@ dist
 coverage
 *.tsbuildinfo
 *.vsix
+
+# Local Tierkit runtime data (usage logs, PID files, etc.) — generated when running
+# the daemon from this directory for testing
+.tierkit/runtime/
