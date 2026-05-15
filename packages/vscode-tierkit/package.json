@@ -5,7 +5,7 @@
   "private": true,
   "description": "Talk to a running `tierkit runtime` from inside VS Code: route routing, command classification, usage, and a status bar entry for daemon health.",
   "license": "MIT",
-  "publisher": "tierkit-placeholder",
+  "publisher": "leesiwal",
   "engines": {
     "vscode": "^1.84.0",
     "node": ">=20.10.0"
