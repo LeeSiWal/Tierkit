@@ -1,6 +1,6 @@
 import type { ModelProfile } from "../ModelProfile.js";
 import type { ProbeResult, ProviderClient } from "./types.js";
-import type { ChatRequest, ChatResult, StreamEvent } from "./chatTypes.js";
+import type { ChatRequest, ChatResult, StreamEvent, ToolCall } from "./chatTypes.js";
 
 /**
  * Test-only provider client. Returns canned responses for `probe()`, `chat()`, and `stream()`
@@ -18,6 +18,16 @@ export interface MockModelClientOptions {
   outputTokens?: number;
   latencyMs?: number;
   failWith?: { code: string; message: string; status?: number };
+  /**
+   * If set, the mock will emit these tool_calls instead of (or alongside) text whenever the
+   * request includes a `tools` array. Useful for testing the tool-call round trip.
+   */
+  toolCalls?: ToolCall[];
+  /**
+   * If true (default true when request.tools is non-empty), emit a synthetic tool_call to
+   * the first declared tool with empty arguments. Set false to suppress.
+   */
+  autoToolCall?: boolean;
 }
 
 export class MockModelClient implements ProviderClient {
@@ -61,6 +71,7 @@ export class MockModelClient implements ProviderClient {
       };
     }
     const text = this.opts.text ?? (this.opts.chunks?.join("") ?? "");
+    const toolCalls = this.synthesizeToolCalls(request);
     return {
       ok: true,
       text,
@@ -70,7 +81,27 @@ export class MockModelClient implements ProviderClient {
       },
       latencyMs: this.opts.latencyMs ?? 0,
       model: profile.model,
+      ...(toolCalls.length > 0 ? { toolCalls, finishReason: "tool_calls" as const } : {}),
     };
+  }
+
+  /**
+   * Produce tool_calls for the response. Order of precedence:
+   *   1. Explicit `opts.toolCalls` (test author specified exactly what to emit)
+   *   2. If `request.tools` is non-empty AND `opts.autoToolCall !== false` → synthesize
+   *      a tool_call for the first declared tool with empty arguments
+   *   3. Otherwise no tool_calls
+   */
+  private synthesizeToolCalls(request: ChatRequest): ToolCall[] {
+    if (this.opts.toolCalls && this.opts.toolCalls.length > 0) return this.opts.toolCalls;
+    if (request.tools && request.tools.length > 0 && this.opts.autoToolCall !== false) {
+      return [{
+        id: `call_mock_${Math.random().toString(36).slice(2, 8)}`,
+        type: "function" as const,
+        function: { name: request.tools[0]!.function.name, arguments: "{}" },
+      }];
+    }
+    return [];
   }
 
   async *stream(profile: ModelProfile, request: ChatRequest): AsyncIterable<StreamEvent> {

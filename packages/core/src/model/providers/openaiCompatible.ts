@@ -1,20 +1,46 @@
 import type { ModelProfile } from "../ModelProfile.js";
 import type { ProbeResult, ProviderClient } from "./types.js";
-import type { ChatRequest, ChatResult, StreamEvent } from "./chatTypes.js";
+import type { ChatRequest, ChatResult, StreamEvent, ChatMessage, ToolCall } from "./chatTypes.js";
 import { iterSSE } from "./streamUtils.js";
 
 interface ModelsResponse {
   data?: { id: string }[];
 }
 
+interface OpenAIWireMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string | null;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+}
+
 interface ChatCompletionsResponse {
-  choices?: { message?: { content?: string } }[];
+  choices?: {
+    message?: { content?: string | null; tool_calls?: ToolCall[] };
+    finish_reason?: string;
+  }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
 interface ChatCompletionsStreamChunk {
-  choices?: { delta?: { content?: string } }[];
+  choices?: {
+    delta?: { content?: string; tool_calls?: Array<{ index: number; id?: string; type?: "function"; function?: { name?: string; arguments?: string } }> };
+  }[];
   usage?: { prompt_tokens?: number; completion_tokens?: number };
+}
+
+/**
+ * Convert Tierkit's ChatMessage[] to the OpenAI wire format. Most fields are 1:1; the only
+ * tricky bit is that OpenAI puts `tool_calls` on the assistant message and `tool_call_id`
+ * on the tool message — both of those land at the top level here.
+ */
+function toOpenAIWireMessages(messages: ChatMessage[]): OpenAIWireMessage[] {
+  return messages.map((m): OpenAIWireMessage => {
+    const out: OpenAIWireMessage = { role: m.role, content: m.content };
+    if (m.toolCalls && m.toolCalls.length > 0) out.tool_calls = m.toolCalls;
+    if (m.toolCallId) out.tool_call_id = m.toolCallId;
+    return out;
+  });
 }
 
 /**
@@ -121,12 +147,14 @@ export class OpenAICompatibleClient implements ProviderClient {
       headers["Authorization"] = `Bearer ${key}`;
     }
     const url = buildChatUrl(profile.baseUrl);
-    const body = {
+    const body: Record<string, unknown> = {
       model: profile.model,
-      messages: request.messages,
+      messages: toOpenAIWireMessages(request.messages),
       ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     };
+    if (request.tools && request.tools.length > 0) body.tools = request.tools;
+    if (request.toolChoice !== undefined) body.tool_choice = request.toolChoice;
     const start = performance.now();
     try {
       const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
@@ -151,6 +179,8 @@ export class OpenAICompatibleClient implements ProviderClient {
       }
       const parsed = (await res.json()) as ChatCompletionsResponse;
       const text = parsed.choices?.[0]?.message?.content ?? "";
+      const toolCalls = parsed.choices?.[0]?.message?.tool_calls;
+      const finishReason = parsed.choices?.[0]?.finish_reason;
       return {
         ok: true,
         text,
@@ -160,6 +190,10 @@ export class OpenAICompatibleClient implements ProviderClient {
         },
         latencyMs,
         model: profile.model,
+        ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
+        ...(finishReason === "stop" || finishReason === "length" || finishReason === "tool_calls" || finishReason === "content_filter"
+          ? { finishReason: finishReason as "stop" | "length" | "tool_calls" | "content_filter" }
+          : {}),
       };
     } catch (err) {
       return {
@@ -205,14 +239,16 @@ export class OpenAICompatibleClient implements ProviderClient {
     yield { type: "start", model: profile.model, provider: profile.provider };
 
     const url = buildChatUrl(profile.baseUrl);
-    const body = {
+    const body: Record<string, unknown> = {
       model: profile.model,
-      messages: request.messages,
+      messages: toOpenAIWireMessages(request.messages),
       stream: true,
       stream_options: { include_usage: true },
       ...(request.maxTokens !== undefined ? { max_tokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     };
+    if (request.tools && request.tools.length > 0) body.tools = request.tools;
+    if (request.toolChoice !== undefined) body.tool_choice = request.toolChoice;
     const start = performance.now();
     let res: Response;
     try {
@@ -248,13 +284,40 @@ export class OpenAICompatibleClient implements ProviderClient {
     }
     let promptTokens: number | undefined;
     let completionTokens: number | undefined;
+    // OpenAI streams tool calls as delta fragments keyed by `index`. We accumulate per-index
+    // and emit a `tool_call` event when each is complete (we use a heuristic: once we see
+    // a new index OR the stream ends without arguments having grown — at end of stream).
+    const toolCallBuffers: Record<number, { id?: string; name?: string; arguments: string }> = {};
     try {
       for await (const chunk of iterSSE<ChatCompletionsStreamChunk>(res.body)) {
-        const delta = chunk.choices?.[0]?.delta?.content;
+        const choice = chunk.choices?.[0];
+        const delta = choice?.delta?.content;
         if (delta && delta.length > 0) yield { type: "delta", text: delta };
+        if (choice?.delta?.tool_calls) {
+          for (const tc of choice.delta.tool_calls) {
+            const buf = toolCallBuffers[tc.index] ?? { arguments: "" };
+            if (tc.id) buf.id = tc.id;
+            if (tc.function?.name) buf.name = tc.function.name;
+            if (tc.function?.arguments) buf.arguments += tc.function.arguments;
+            toolCallBuffers[tc.index] = buf;
+          }
+        }
         if (chunk.usage) {
           promptTokens = chunk.usage.prompt_tokens;
           completionTokens = chunk.usage.completion_tokens;
+        }
+      }
+      // End of stream: flush any tool call buffers.
+      for (const buf of Object.values(toolCallBuffers)) {
+        if (buf.name) {
+          yield {
+            type: "tool_call",
+            toolCall: {
+              id: buf.id ?? `call_${Date.now().toString(36)}`,
+              type: "function",
+              function: { name: buf.name, arguments: buf.arguments || "{}" },
+            },
+          };
         }
       }
     } catch (err) {

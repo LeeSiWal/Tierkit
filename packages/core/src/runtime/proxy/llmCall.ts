@@ -3,9 +3,10 @@ import { redactSecrets } from "../../security/SecretRedactor.js";
 import { classifyCommand } from "../../security/dangerousCommands.js";
 import { loadConfig } from "../../config/loadConfig.js";
 import { pickProviderClient } from "../../model/providers/index.js";
-import type { ChatMessage } from "../../model/providers/chatTypes.js";
+import type { ChatMessage, ToolDefinition, ToolChoice, ToolCall } from "../../model/providers/chatTypes.js";
 import { appendUsage, estimateCost, type UsageRecord } from "../usageLog.js";
 import { checkBudget } from "../budget.js";
+import { assembleActiveRules } from "../../plugin/assembleActiveRules.js";
 
 export interface LlmCallRequest {
   /** Model profile id to route the call through. */
@@ -19,6 +20,10 @@ export interface LlmCallRequest {
    * so the agent can surface approval prompts.
    */
   toolCommands?: string[];
+  /** Tool definitions to forward to the model. Provider clients translate to native formats. */
+  tools?: ToolDefinition[];
+  /** How aggressively the model must use the provided tools. */
+  toolChoice?: ToolChoice;
 }
 
 export interface LlmCallOk {
@@ -30,6 +35,10 @@ export interface LlmCallOk {
   latencyMs: number;
   profileId: string;
   model: string;
+  /** Tool calls the model requested (when caller provided `tools`). */
+  toolCalls?: ToolCall[];
+  /** Why the model stopped (forwarded from the provider). */
+  finishReason?: "stop" | "length" | "tool_calls" | "content_filter";
   redactionHits: { ruleId: string; count: number }[];
   commandClassifications: { command: string; severity: "ok" | "warn" | "block" }[];
   budget: { status: "ok" | "warn" | "block"; reason?: string };
@@ -65,14 +74,10 @@ export async function executeLlmCall(
   request: LlmCallRequest,
   context: LlmCallContext,
 ): Promise<LlmCallResult> {
+  // We no longer reject when `tierkit.config.json` is absent — the 3-tier loader
+  // (bundled < user < workspace) means profile lookup can succeed against bundled defaults.
+  // If the requested profile is unknown, the `unknown-profile` check below catches it.
   const cfg = await loadConfig(context.cwd);
-  if (!cfg.found) {
-    return {
-      ok: false,
-      code: "no-config",
-      message: "no tierkit.config.json found; run `tierkit init` first",
-    };
-  }
   const profile = cfg.config.modelProfiles[request.profileId];
   if (!profile) {
     const known = Object.keys(cfg.config.modelProfiles);
@@ -110,13 +115,33 @@ export async function executeLlmCall(
     };
   }
 
+  // ── Inject active plugin rules as a system prompt prefix ──
+  // This is THE mechanism by which Tierkit plugins (superpowers-balanced/strict/...) shape
+  // model behavior end-to-end. Without it, plugin rules only exist as files exported to
+  // per-tool config dirs; with it, even raw `/v1/openai/chat/completions` callers (Roo,
+  // Cline, Continue, curl) get the rules applied before their messages reach the model.
+  //
+  // The injected system message is placed FIRST so any caller-supplied system message that
+  // followed in the request is preserved and the model sees Tierkit's rules as background
+  // context. Disable per-workspace with `runtime.injectPluginRules: false`.
+  let messagesWithRules = request.messages;
+  if (cfg.config.runtime.injectPluginRules !== false) {
+    const assembled = await assembleActiveRules(context.cwd);
+    if (assembled.text.length > 0) {
+      messagesWithRules = [
+        { role: "system" as const, content: assembled.text },
+        ...request.messages,
+      ];
+    }
+  }
+
   // Redact outbound messages for remote tiers when the policy says so.
   const isRemote = profile.kind !== "local-device";
   const shouldRedact = isRemote && cfg.config.security.redactSecretsForRemote !== false;
-  let redactedMessages = request.messages;
+  let redactedMessages = messagesWithRules;
   const allHits: { ruleId: string; count: number }[] = [];
   if (shouldRedact) {
-    redactedMessages = request.messages.map((m) => {
+    redactedMessages = messagesWithRules.map((m) => {
       const r = redactSecrets(m.content);
       for (const h of r.hits) {
         const existing = allHits.find((x) => x.ruleId === h.ruleId);
@@ -142,6 +167,8 @@ export async function executeLlmCall(
       messages: redactedMessages,
       ...(request.maxTokens !== undefined ? { maxTokens: request.maxTokens } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
+      ...(request.tools !== undefined ? { tools: request.tools } : {}),
+      ...(request.toolChoice !== undefined ? { toolChoice: request.toolChoice } : {}),
     },
     context.env,
   );
@@ -182,6 +209,8 @@ export async function executeLlmCall(
     latencyMs: chatResult.latencyMs,
     profileId: request.profileId,
     model: chatResult.model,
+    ...(chatResult.toolCalls !== undefined ? { toolCalls: chatResult.toolCalls } : {}),
+    ...(chatResult.finishReason !== undefined ? { finishReason: chatResult.finishReason } : {}),
     redactionHits: allHits,
     commandClassifications: commandClassifications.map((c) => ({
       command: c.command,

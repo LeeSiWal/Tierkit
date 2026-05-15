@@ -1,23 +1,81 @@
 import type { ModelProfile } from "../ModelProfile.js";
 import type { ProbeResult, ProviderClient } from "./types.js";
-import type { ChatRequest, ChatResult, StreamEvent } from "./chatTypes.js";
+import type { ChatRequest, ChatResult, StreamEvent, ChatMessage, ToolCall } from "./chatTypes.js";
 import { iterNDJSON } from "./streamUtils.js";
+import { tryEnsureOllamaRunning } from "./ollamaAutoLaunch.js";
 
 interface OllamaTagsResponse {
   models?: { name: string }[];
 }
 
+interface OllamaToolCall {
+  function: {
+    name: string;
+    /** Ollama returns arguments as a parsed object, NOT a JSON string. */
+    arguments: Record<string, unknown>;
+  };
+}
+
+interface OllamaMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: OllamaToolCall[];
+}
+
 interface OllamaChatResponse {
-  message?: { content?: string };
+  message?: OllamaMessage;
+  prompt_eval_count?: number;
+  eval_count?: number;
+  done_reason?: string;
+}
+
+interface OllamaStreamChunk {
+  message?: { content?: string; tool_calls?: OllamaToolCall[] };
+  done?: boolean;
   prompt_eval_count?: number;
   eval_count?: number;
 }
 
-interface OllamaStreamChunk {
-  message?: { content?: string };
-  done?: boolean;
-  prompt_eval_count?: number;
-  eval_count?: number;
+/**
+ * Convert Tierkit's ChatMessage to Ollama's on-the-wire format. The shapes are close to
+ * identical except `toolCalls.arguments` is a JSON STRING in Tierkit/OpenAI's convention
+ * but an OBJECT in Ollama's. We unwrap on the way out, re-wrap on the way back.
+ */
+function toOllamaMessages(messages: ChatMessage[]): OllamaMessage[] {
+  return messages.map((m): OllamaMessage => {
+    const base: OllamaMessage = { role: m.role, content: m.content };
+    if (m.toolCalls && m.toolCalls.length > 0) {
+      base.tool_calls = m.toolCalls.map((tc) => ({
+        function: {
+          name: tc.function.name,
+          arguments: safeJsonParse(tc.function.arguments) ?? {},
+        },
+      }));
+    }
+    return base;
+  });
+}
+
+function safeJsonParse(text: string): Record<string, unknown> | null {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+function ollamaToolCallsToOpenAI(ollamaToolCalls: OllamaToolCall[]): ToolCall[] {
+  return ollamaToolCalls.map((tc, idx) => ({
+    // Ollama doesn't generate per-call ids. Synthesize one so tool result messages can
+    // reference back to it via tool_call_id.
+    id: `call_${Date.now().toString(36)}_${idx}`,
+    type: "function" as const,
+    function: {
+      name: tc.function.name,
+      arguments: JSON.stringify(tc.function.arguments ?? {}),
+    },
+  }));
 }
 
 function isConnectionRefused(err: Error): boolean {
@@ -36,6 +94,17 @@ function friendlyOllamaUnreachable(baseUrl: string, err: Error): string {
  * No auth required for the default Ollama install. We additionally check whether the
  * profile's configured model appears in the returned list and report it via `modelAvailable`.
  */
+async function ensureUpThenFetch(baseUrl: string, url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    if (!isConnectionRefused(err as Error)) throw err;
+    // Connection-refused on first try → attempt auto-launch + one retry.
+    await tryEnsureOllamaRunning(baseUrl);
+    return await fetch(url, init);
+  }
+}
+
 export class OllamaClient implements ProviderClient {
   async probe(profile: ModelProfile): Promise<ProbeResult> {
     if (!profile.baseUrl) {
@@ -44,7 +113,7 @@ export class OllamaClient implements ProviderClient {
     const url = joinUrl(profile.baseUrl, "/api/tags");
     const start = performance.now();
     try {
-      const res = await fetch(url, { method: "GET" });
+      const res = await ensureUpThenFetch(profile.baseUrl, url, { method: "GET" });
       const latencyMs = Math.round(performance.now() - start);
       if (!res.ok) {
         return {
@@ -88,9 +157,9 @@ export class OllamaClient implements ProviderClient {
       };
     }
     const url = joinUrl(profile.baseUrl, "/api/chat");
-    const body = {
+    const body: Record<string, unknown> = {
       model: profile.model,
-      messages: request.messages,
+      messages: toOllamaMessages(request.messages),
       stream: false,
       ...(request.maxTokens !== undefined || request.temperature !== undefined
         ? {
@@ -101,9 +170,12 @@ export class OllamaClient implements ProviderClient {
           }
         : {}),
     };
+    // Forward tools to Ollama 0.4+ (older versions ignore the field). Ollama accepts the
+    // OpenAI tool format verbatim, so we just pass `request.tools` through unchanged.
+    if (request.tools && request.tools.length > 0) body.tools = request.tools;
     const start = performance.now();
     try {
-      const res = await fetch(url, {
+      const res = await ensureUpThenFetch(profile.baseUrl, url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -120,6 +192,10 @@ export class OllamaClient implements ProviderClient {
       }
       const parsed = (await res.json()) as OllamaChatResponse;
       const text = parsed.message?.content ?? "";
+      const ollamaToolCalls = parsed.message?.tool_calls;
+      const toolCalls = ollamaToolCalls && ollamaToolCalls.length > 0
+        ? ollamaToolCallsToOpenAI(ollamaToolCalls)
+        : undefined;
       return {
         ok: true,
         text,
@@ -129,6 +205,7 @@ export class OllamaClient implements ProviderClient {
         },
         latencyMs,
         model: profile.model,
+        ...(toolCalls ? { toolCalls, finishReason: "tool_calls" as const } : {}),
       };
     } catch (err) {
       return {
@@ -152,9 +229,9 @@ export class OllamaClient implements ProviderClient {
     }
     yield { type: "start", model: profile.model, provider: "ollama" };
     const url = joinUrl(profile.baseUrl, "/api/chat");
-    const body = {
+    const body: Record<string, unknown> = {
       model: profile.model,
-      messages: request.messages,
+      messages: toOllamaMessages(request.messages),
       stream: true,
       ...(request.maxTokens !== undefined || request.temperature !== undefined
         ? {
@@ -165,10 +242,11 @@ export class OllamaClient implements ProviderClient {
           }
         : {}),
     };
+    if (request.tools && request.tools.length > 0) body.tools = request.tools;
     const start = performance.now();
     let res: Response;
     try {
-      res = await fetch(url, {
+      res = await ensureUpThenFetch(profile.baseUrl, url, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
@@ -199,6 +277,11 @@ export class OllamaClient implements ProviderClient {
       for await (const chunk of iterNDJSON<OllamaStreamChunk>(res.body)) {
         const delta = chunk.message?.content ?? "";
         if (delta.length > 0) yield { type: "delta", text: delta };
+        if (chunk.message?.tool_calls && chunk.message.tool_calls.length > 0) {
+          for (const tc of ollamaToolCallsToOpenAI(chunk.message.tool_calls)) {
+            yield { type: "tool_call", toolCall: tc };
+          }
+        }
         if (chunk.done) {
           promptTokens = chunk.prompt_eval_count;
           evalTokens = chunk.eval_count;

@@ -192,6 +192,71 @@ export class TierkitClient {
     return this.get("/v1/plugins");
   }
 
+  // ── v1.8: profile mutation + workspace init ──
+  async configAddProfile(args: {
+    id: string;
+    profile: Record<string, unknown>;
+    scope?: "workspace" | "user";
+  }): Promise<{ path: string; scope: "workspace" | "user"; id: string }> {
+    return this.post("/v1/config/profile", args);
+  }
+
+  async configRemoveProfile(
+    id: string,
+    scope: "workspace" | "user" = "workspace",
+  ): Promise<{ path: string; scope: "workspace" | "user"; id: string }> {
+    const url = `/v1/config/profile/${encodeURIComponent(id)}?scope=${scope}`;
+    return this.request("DELETE", url);
+  }
+
+  async configInit(args?: {
+    force?: boolean;
+    defaultTarget?: "roo" | "zoo" | "cline" | "continue" | "claude-code" | "generic";
+  }): Promise<{ projectRoot: string; configPath: string; registryPath: string; created: string[]; skipped: string[] }> {
+    return this.post("/v1/config/init", args ?? {});
+  }
+
+  // ── v0.2: connect external tools + plugin scaffold/sync ──
+  async connections(): Promise<{
+    connections: { tool: string; present: boolean; routed: boolean; configPath: string; modelId?: string }[];
+  }> {
+    return this.get("/v1/connections");
+  }
+
+  async pluginEnable(pluginId: string): Promise<{ pluginId: string; activePlugins: string[]; action: string; sync?: unknown }> {
+    return this.post("/v1/plugins/enable", { pluginId });
+  }
+
+  async pluginDisable(pluginId: string): Promise<{ pluginId: string; activePlugins: string[]; action: string; sync?: unknown }> {
+    return this.post("/v1/plugins/disable", { pluginId });
+  }
+
+  async connectTool(args: {
+    tool: "roo" | "cline" | "continue";
+    tierkitBaseUrl?: string;
+    defaultProfile?: string;
+  }): Promise<{ tool: string; configPath: string; summary: string; followUp?: string }> {
+    return this.post("/v1/connect", args);
+  }
+
+  async pluginsSync(tools?: Array<"roo" | "cline" | "continue">): Promise<{
+    detected: string[];
+    synced: { tool: string; target: string; filesWritten: number; warnings: number }[];
+    skipped: { tool: string; reason: string }[];
+  }> {
+    return this.post("/v1/plugins/sync", tools ? { tools } : {});
+  }
+
+  async pluginNew(args: {
+    id: string;
+    name?: string;
+    description?: string;
+    author?: string;
+    force?: boolean;
+  }): Promise<{ pluginDir: string; created: string[]; skipped: string[] }> {
+    return this.post("/v1/plugins/new", args);
+  }
+
   // ── private helpers ──
 
   private async get<T>(path: string): Promise<T> {
@@ -202,7 +267,7 @@ export class TierkitClient {
     return this.request<T>("POST", path, body);
   }
 
-  private async request<T>(method: "GET" | "POST", path: string, body?: unknown): Promise<T> {
+  private async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown): Promise<T> {
     const url = `${this.baseUrl}${path}`;
     const controller = this.timeoutMs > 0 ? new AbortController() : undefined;
     const timer =

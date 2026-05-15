@@ -160,6 +160,15 @@ importers:
 
   packages/vscode-tierkit:
     dependencies:
+      '@tierkit/adapter-cline':
+        specifier: workspace:*
+        version: link:../adapter-cline
+      '@tierkit/adapter-continue':
+        specifier: workspace:*
+        version: link:../adapter-continue
+      '@tierkit/adapter-roo':
+        specifier: workspace:*
+        version: link:../adapter-roo
       '@tierkit/client':
         specifier: workspace:*
         version: link:../client

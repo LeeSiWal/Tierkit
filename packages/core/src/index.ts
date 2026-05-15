@@ -119,7 +119,44 @@ export {
   CONFIG_FILENAME,
   type TierkitConfig,
 } from "./config/TierkitConfig.js";
-export { loadConfig, defaultConfig, type ConfigLoadResult } from "./config/loadConfig.js";
+export {
+  loadConfig,
+  defaultConfig,
+  userConfigPath,
+  type ConfigLoadResult,
+  type ConfigSource,
+  type LoadConfigOptions,
+} from "./config/loadConfig.js";
+export { DEFAULT_MODEL_PROFILES, DEFAULT_PROFILE_IDS } from "./config/defaultProfiles.js";
+export {
+  addProfile,
+  removeProfile,
+  ProfileCrudError,
+  type ProfileScope,
+  type AddProfileInput,
+  type RemoveProfileInput,
+  type ProfileCrudResult,
+} from "./usecases/profileCrud.js";
+export {
+  connectTool,
+  listConnections,
+  type ConnectableTool,
+  type ConnectToolInput,
+  type ConnectToolResult,
+  type ConnectionStatus,
+} from "./usecases/connectTool.js";
+export {
+  syncPlugins,
+  detectConnectedTools,
+  type SyncPluginsInput,
+  type SyncPluginsResult,
+} from "./usecases/syncPlugins.js";
+export {
+  pluginNew,
+  PluginNewError,
+  type PluginNewInput,
+  type PluginNewResult,
+} from "./usecases/pluginNew.js";
 
 // Filesystem safety
 export { resolveUnder, isWithin, PathTraversalError } from "./fs/safePath.js";

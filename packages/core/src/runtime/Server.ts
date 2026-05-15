@@ -20,6 +20,16 @@ import {
 import { listModels } from "../usecases/listModels.js";
 import { testModel, TestModelError } from "../usecases/testModel.js";
 import { listPlugins } from "../usecases/listPlugins.js";
+import { addProfile, removeProfile, ProfileCrudError, type ProfileScope } from "../usecases/profileCrud.js";
+import { initProject } from "../usecases/initProject.js";
+import { shutdownSpawnedOllama } from "./../model/providers/ollamaAutoLaunch.js";
+import { handleOpenAIChatCompletions } from "./openaiCompat.js";
+import { connectTool, listConnections, type ConnectableTool as ConnTool } from "../usecases/connectTool.js";
+import { enablePlugin, disablePlugin, PluginLifecycleError } from "../usecases/pluginLifecycle.js";
+import { syncPlugins } from "../usecases/syncPlugins.js";
+import { pluginNew, PluginNewError } from "../usecases/pluginNew.js";
+import type { TierkitAdapter } from "../adapter/TierkitAdapter.js";
+import type { Target } from "../plugin/PluginManifest.js";
 import { GUI_HTML } from "./ui/gui.js";
 import type { SessionState } from "./session/ExecutionSession.js";
 
@@ -32,6 +42,13 @@ export interface ServerOptions {
   port: number;
   /** Env to pass through to provider clients. Defaults to process.env. */
   env?: Record<string, string | undefined>;
+  /**
+   * Export adapters by target. Used by `/v1/plugins/sync` to write rule/prompt files into
+   * each connected coding agent's directory format. Without adapters provided, sync will
+   * skip every target it doesn't have one for. The CLI and VS Code extension wire all
+   * three (roo/cline/continue) here.
+   */
+  adapters?: Partial<Record<Target, TierkitAdapter>>;
 }
 
 export interface RunningServer {
@@ -67,6 +84,23 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
       const method = (req.method ?? "GET").toUpperCase();
       const route = `${method} ${url.pathname}`;
+
+      // ── CORS ────────────────────────────────────────────────────────────────
+      // Daemon is loopback-only (127.0.0.1), so allowing any origin doesn't widen the
+      // attack surface — anyone who can already reach the daemon can already do anything
+      // it accepts. Without these headers, browser fetches from sandboxed contexts
+      // (VS Code webviews use the `vscode-webview://<id>` scheme, which the browser
+      // treats as cross-origin relative to `http://localhost:4101`) get blocked by CORS
+      // before the request even leaves the page.
+      res.setHeader("access-control-allow-origin", "*");
+      res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+      res.setHeader("access-control-allow-headers", "content-type, authorization");
+      res.setHeader("access-control-max-age", "600");
+      if (method === "OPTIONS") {
+        res.statusCode = 204;
+        res.end();
+        return;
+      }
 
       if (route === "GET /v1/health") {
         return sendJson(res, 200, { ok: true, version: VERSION, cwd: opts.cwd });
@@ -231,6 +265,158 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, r);
       }
 
+      // ── Config mutation: add/remove model profiles, scaffold workspace config ──
+      if (route === "POST /v1/config/profile") {
+        const body = await readJsonBody<{ id: string; profile: unknown; scope?: ProfileScope }>(req);
+        if (!body || typeof body.id !== "string" || typeof body.profile !== "object" || body.profile === null) {
+          return sendJson(res, 400, { error: "request must be { id: string, profile: ModelProfile, scope?: 'workspace'|'user' }" });
+        }
+        try {
+          const r = await addProfile({
+            cwd: opts.cwd,
+            id: body.id,
+            profile: body.profile as never,
+            ...(body.scope ? { scope: body.scope } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof ProfileCrudError) return sendJson(res, 400, { code: err.code, message: err.message });
+          if (err && typeof err === "object" && "issues" in (err as Record<string, unknown>)) {
+            return sendJson(res, 400, { code: "invalid-profile", message: (err as Error).message });
+          }
+          throw err;
+        }
+      }
+
+      if (method === "DELETE" && url.pathname.startsWith("/v1/config/profile/")) {
+        const id = decodeURIComponent(url.pathname.slice("/v1/config/profile/".length));
+        const scope = (url.searchParams.get("scope") === "user" ? "user" : "workspace") as ProfileScope;
+        if (!id) return sendJson(res, 400, { error: "missing profile id in path" });
+        try {
+          const r = await removeProfile({ cwd: opts.cwd, id, scope });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof ProfileCrudError) return sendJson(res, 400, { code: err.code, message: err.message });
+          throw err;
+        }
+      }
+
+      // ── Tool connection status (Mission Control reads this) ──
+      if (route === "GET /v1/connections") {
+        const r = await listConnections(opts.cwd);
+        return sendJson(res, 200, { connections: r });
+      }
+
+      // ── Plugin lifecycle (Mission Control toggles use these) ──
+      if (route === "POST /v1/plugins/enable") {
+        const body = await readJsonBody<{ pluginId: string }>(req);
+        if (!body || typeof body.pluginId !== "string") {
+          return sendJson(res, 400, { error: "request must be { pluginId: string }" });
+        }
+        try {
+          const r = await enablePlugin({
+            cwd: opts.cwd,
+            pluginId: body.pluginId,
+            ...(opts.adapters ? { adapters: opts.adapters } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof PluginLifecycleError) return sendJson(res, 400, { code: err.code, message: err.message });
+          throw err;
+        }
+      }
+
+      if (route === "POST /v1/plugins/disable") {
+        const body = await readJsonBody<{ pluginId: string }>(req);
+        if (!body || typeof body.pluginId !== "string") {
+          return sendJson(res, 400, { error: "request must be { pluginId: string }" });
+        }
+        try {
+          const r = await disablePlugin({
+            cwd: opts.cwd,
+            pluginId: body.pluginId,
+            ...(opts.adapters ? { adapters: opts.adapters } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof PluginLifecycleError) return sendJson(res, 400, { code: err.code, message: err.message });
+          throw err;
+        }
+      }
+
+      // ── Tool connection + plugin sync + plugin scaffold ──
+      if (route === "POST /v1/connect") {
+        const body = await readJsonBody<{ tool: ConnTool; tierkitBaseUrl?: string; defaultProfile?: string }>(req);
+        if (!body || !body.tool) {
+          return sendJson(res, 400, { error: "request must be { tool: 'roo'|'cline'|'continue', ... }" });
+        }
+        try {
+          const r = await connectTool({
+            cwd: opts.cwd,
+            tool: body.tool,
+            ...(body.tierkitBaseUrl ? { tierkitBaseUrl: body.tierkitBaseUrl } : {}),
+            ...(body.defaultProfile ? { defaultProfile: body.defaultProfile } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          return sendJson(res, 400, { code: "connect-failed", message: (err as Error).message });
+        }
+      }
+
+      if (route === "POST /v1/plugins/sync") {
+        const body = await readJsonBody<{ tools?: ConnTool[] }>(req);
+        const r = await syncPlugins({
+          cwd: opts.cwd,
+          adapters: opts.adapters ?? {},
+          ...(body?.tools ? { tools: body.tools } : {}),
+        });
+        return sendJson(res, 200, r);
+      }
+
+      if (route === "POST /v1/plugins/new") {
+        const body = await readJsonBody<{ id: string; name?: string; description?: string; author?: string; force?: boolean }>(req);
+        if (!body || typeof body.id !== "string") {
+          return sendJson(res, 400, { error: "request must be { id: string, ...optional fields }" });
+        }
+        try {
+          const r = await pluginNew({
+            cwd: opts.cwd,
+            id: body.id,
+            ...(body.name ? { name: body.name } : {}),
+            ...(body.description ? { description: body.description } : {}),
+            ...(body.author ? { author: body.author } : {}),
+            ...(body.force ? { force: body.force } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof PluginNewError) return sendJson(res, 400, { code: err.code, message: err.message });
+          throw err;
+        }
+      }
+
+      // ── OpenAI-compatible inbound endpoint ──
+      // Two paths cover both "configure base_url=http://127.0.0.1:4101/v1/openai" (we get
+      // /v1/openai/chat/completions) and tools that strip the /openai segment expecting
+      // standard /v1/chat/completions. Both land here.
+      if (
+        route === "POST /v1/openai/chat/completions" ||
+        route === "POST /v1/chat/completions"
+      ) {
+        const body = await readJsonBody<unknown>(req);
+        await handleOpenAIChatCompletions(req, res, body, { cwd: opts.cwd, env });
+        return;
+      }
+
+      if (route === "POST /v1/config/init") {
+        const body = await readJsonBody<{ force?: boolean; defaultTarget?: "roo" | "zoo" | "cline" | "continue" | "claude-code" | "generic" }>(req);
+        const r = await initProject({
+          cwd: opts.cwd,
+          ...(body?.force !== undefined ? { force: body.force } : {}),
+          ...(body?.defaultTarget !== undefined ? { defaultTarget: body.defaultTarget } : {}),
+        });
+        return sendJson(res, 200, r);
+      }
+
       // ── GUI ──
       if (route === "GET /v1/ui" || route === "GET /" || route === "GET /ui") {
         res.statusCode = 200;
@@ -256,7 +442,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((resolveClose, rejectClose) => {
-            server.close((err) => (err ? rejectClose(err) : resolveClose()));
+            server.close((err) => {
+              // Also tear down any Ollama daemon WE auto-launched. If the user had Ollama
+              // running before Tierkit started, this is a no-op — we only kill what we spawned.
+              void shutdownSpawnedOllama();
+              if (err) rejectClose(err);
+              else resolveClose();
+            });
           }),
       });
     });

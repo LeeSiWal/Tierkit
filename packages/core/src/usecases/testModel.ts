@@ -29,13 +29,10 @@ export async function testModel(input: TestModelInput): Promise<TestModelResult>
   const projectRoot = input.cwd ?? process.cwd();
   const env = input.env ?? (process.env as Record<string, string | undefined>);
 
+  // Bundled defaults make profile lookup work without a workspace config file. The
+  // `unknown-profile` branch below remains the canonical "you asked for something we
+  // don't have" error path.
   const cfg = await loadConfig(projectRoot);
-  if (!cfg.found) {
-    throw new TestModelError(
-      "no-config",
-      "no tierkit.config.json found in project. Run `tierkit init` first.",
-    );
-  }
   const profile = cfg.config.modelProfiles[input.profileId];
   if (!profile) {
     const known = Object.keys(cfg.config.modelProfiles);

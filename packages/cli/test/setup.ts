@@ -1,0 +1,2 @@
+process.env.TIERKIT_NO_BUNDLED_DEFAULTS = "1";
+process.env.TIERKIT_DISABLE_AUTO_LAUNCH = "1";

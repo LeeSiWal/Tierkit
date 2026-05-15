@@ -1,18 +1,95 @@
 import type { ModelProfile } from "../ModelProfile.js";
 import type { ProbeResult, ProviderClient } from "./types.js";
-import type { ChatRequest, ChatResult, ChatMessage, StreamEvent } from "./chatTypes.js";
+import type { ChatRequest, ChatResult, ChatMessage, StreamEvent, ToolDefinition, ToolCall } from "./chatTypes.js";
 import { iterSSE } from "./streamUtils.js";
 
 interface AnthropicSSEEvent {
   type?: string;
-  delta?: { type?: string; text?: string };
+  index?: number;
+  delta?: { type?: string; text?: string; partial_json?: string };
+  content_block?: { type?: string; id?: string; name?: string; input?: Record<string, unknown> };
   message?: { usage?: { input_tokens?: number; output_tokens?: number } };
   usage?: { input_tokens?: number; output_tokens?: number };
 }
 
+interface AnthropicContentBlock {
+  type: "text" | "tool_use" | "tool_result";
+  /** type=text */
+  text?: string;
+  /** type=tool_use */
+  id?: string;
+  name?: string;
+  input?: Record<string, unknown>;
+  /** type=tool_result */
+  tool_use_id?: string;
+  content?: string;
+}
+
 interface AnthropicMessagesResponse {
-  content?: { type: string; text?: string }[];
+  content?: AnthropicContentBlock[];
   usage?: { input_tokens?: number; output_tokens?: number };
+  stop_reason?: string;
+}
+
+/**
+ * Convert Tierkit/OpenAI tool format to Anthropic's. Mostly identical except:
+ *   - Anthropic: `input_schema` (not `parameters`)
+ *   - Anthropic: no `type: "function"` wrapper
+ */
+function toAnthropicTools(tools: ToolDefinition[]): Array<{ name: string; description?: string; input_schema: Record<string, unknown> }> {
+  return tools.map((t) => ({
+    name: t.function.name,
+    ...(t.function.description !== undefined ? { description: t.function.description } : {}),
+    input_schema: t.function.parameters ?? { type: "object", properties: {} },
+  }));
+}
+
+/**
+ * Convert a Tierkit message into Anthropic's wire shape. Anthropic doesn't have a separate
+ * "tool" role — tool results are sent as a user message whose content is an array
+ * containing one tool_result block per response. Assistant turns with tool_calls become
+ * assistant messages with content arrays of tool_use blocks.
+ */
+function toAnthropicMessages(messages: ChatMessage[]): Array<{ role: "user" | "assistant"; content: string | AnthropicContentBlock[] }> {
+  const out: Array<{ role: "user" | "assistant"; content: string | AnthropicContentBlock[] }> = [];
+  for (const m of messages) {
+    if (m.role === "system") continue; // pulled out separately by caller
+    if (m.role === "tool") {
+      // OpenAI's tool message → Anthropic's user message containing a tool_result block.
+      out.push({
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: m.toolCallId ?? "unknown", content: m.content }],
+      });
+      continue;
+    }
+    if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
+      const blocks: AnthropicContentBlock[] = [];
+      if (m.content && m.content.length > 0) blocks.push({ type: "text", text: m.content });
+      for (const tc of m.toolCalls) {
+        let input: Record<string, unknown> = {};
+        try { input = JSON.parse(tc.function.arguments); } catch { /* leave empty */ }
+        blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
+      }
+      out.push({ role: "assistant", content: blocks });
+      continue;
+    }
+    out.push({ role: m.role as "user" | "assistant", content: m.content });
+  }
+  return out;
+}
+
+/** Extract OpenAI-shape tool_calls from Anthropic's response content blocks. */
+function anthropicContentToToolCalls(blocks: AnthropicContentBlock[]): ToolCall[] {
+  return blocks
+    .filter((b) => b.type === "tool_use" && b.name)
+    .map((b) => ({
+      id: b.id ?? `call_${Date.now().toString(36)}`,
+      type: "function" as const,
+      function: {
+        name: b.name!,
+        arguments: JSON.stringify(b.input ?? {}),
+      },
+    }));
 }
 
 /**
@@ -113,21 +190,32 @@ export class AnthropicClient implements ProviderClient {
 
     // Anthropic separates "system" from "messages" — pull system out of the array.
     const systemParts: string[] = [];
-    const messages: ChatMessage[] = [];
+    const nonSystem: ChatMessage[] = [];
     for (const m of request.messages) {
       if (m.role === "system") systemParts.push(m.content);
-      else messages.push(m);
+      else nonSystem.push(m);
     }
+    const messages = toAnthropicMessages(nonSystem);
 
     const base = profile.baseUrl ?? "https://api.anthropic.com";
     const url = `${base.endsWith("/") ? base.slice(0, -1) : base}/v1/messages`;
-    const body = {
+    const body: Record<string, unknown> = {
       model: profile.model,
       max_tokens: request.maxTokens ?? 1024,
       messages,
       ...(systemParts.length > 0 ? { system: systemParts.join("\n\n") } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     };
+    if (request.tools && request.tools.length > 0) {
+      body.tools = toAnthropicTools(request.tools);
+      // Anthropic supports tool_choice with the same auto/any/tool shapes.
+      if (request.toolChoice === "required") body.tool_choice = { type: "any" };
+      else if (request.toolChoice === "none") body.tool_choice = { type: "none" };
+      else if (typeof request.toolChoice === "object" && request.toolChoice?.type === "function") {
+        body.tool_choice = { type: "tool", name: request.toolChoice.function.name };
+      }
+      // "auto" or undefined → leave unset (Anthropic's default)
+    }
     const start = performance.now();
     try {
       const res = await fetch(url, {
@@ -160,7 +248,16 @@ export class AnthropicClient implements ProviderClient {
         };
       }
       const parsed = (await res.json()) as AnthropicMessagesResponse;
-      const text = (parsed.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
+      const blocks = parsed.content ?? [];
+      const text = blocks.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
+      const toolCalls = anthropicContentToToolCalls(blocks);
+      const finishReason = parsed.stop_reason === "tool_use"
+        ? "tool_calls"
+        : parsed.stop_reason === "max_tokens"
+          ? "length"
+          : parsed.stop_reason === "end_turn"
+            ? "stop"
+            : undefined;
       return {
         ok: true,
         text,
@@ -170,6 +267,8 @@ export class AnthropicClient implements ProviderClient {
         },
         latencyMs,
         model: profile.model,
+        ...(toolCalls.length > 0 ? { toolCalls } : {}),
+        ...(finishReason ? { finishReason: finishReason as "stop" | "length" | "tool_calls" } : {}),
       };
     } catch (err) {
       return {
@@ -208,14 +307,15 @@ export class AnthropicClient implements ProviderClient {
     yield { type: "start", model: profile.model, provider: "anthropic" };
 
     const systemParts: string[] = [];
-    const messages: ChatMessage[] = [];
+    const nonSystem: ChatMessage[] = [];
     for (const m of request.messages) {
       if (m.role === "system") systemParts.push(m.content);
-      else messages.push(m);
+      else nonSystem.push(m);
     }
+    const messages = toAnthropicMessages(nonSystem);
     const base = profile.baseUrl ?? "https://api.anthropic.com";
     const url = `${base.endsWith("/") ? base.slice(0, -1) : base}/v1/messages`;
-    const body = {
+    const body: Record<string, unknown> = {
       model: profile.model,
       max_tokens: request.maxTokens ?? 1024,
       messages,
@@ -223,6 +323,14 @@ export class AnthropicClient implements ProviderClient {
       ...(systemParts.length > 0 ? { system: systemParts.join("\n\n") } : {}),
       ...(request.temperature !== undefined ? { temperature: request.temperature } : {}),
     };
+    if (request.tools && request.tools.length > 0) {
+      body.tools = toAnthropicTools(request.tools);
+      if (request.toolChoice === "required") body.tool_choice = { type: "any" };
+      else if (request.toolChoice === "none") body.tool_choice = { type: "none" };
+      else if (typeof request.toolChoice === "object" && request.toolChoice?.type === "function") {
+        body.tool_choice = { type: "tool", name: request.toolChoice.function.name };
+      }
+    }
 
     const start = performance.now();
     let res: Response;
@@ -269,10 +377,35 @@ export class AnthropicClient implements ProviderClient {
 
     let inputTokens: number | undefined;
     let outputTokens: number | undefined;
+    // Anthropic streams tool_use as: content_block_start (with name/id) → multiple
+    // input_json_delta partial_json strings → content_block_stop. We accumulate.
+    const toolBlocks: Record<number, { id: string; name: string; args: string }> = {};
     try {
       for await (const evt of iterSSE<AnthropicSSEEvent>(res.body)) {
         if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta" && evt.delta.text) {
           yield { type: "delta", text: evt.delta.text };
+        } else if (evt.type === "content_block_start" && evt.content_block?.type === "tool_use" && evt.index !== undefined) {
+          toolBlocks[evt.index] = {
+            id: evt.content_block.id ?? `call_${Date.now().toString(36)}_${evt.index}`,
+            name: evt.content_block.name ?? "",
+            args: "",
+          };
+        } else if (evt.type === "content_block_delta" && evt.delta?.type === "input_json_delta" && evt.index !== undefined) {
+          const buf = toolBlocks[evt.index];
+          if (buf && evt.delta.partial_json) buf.args += evt.delta.partial_json;
+        } else if (evt.type === "content_block_stop" && evt.index !== undefined) {
+          const buf = toolBlocks[evt.index];
+          if (buf && buf.name) {
+            yield {
+              type: "tool_call",
+              toolCall: {
+                id: buf.id,
+                type: "function",
+                function: { name: buf.name, arguments: buf.args || "{}" },
+              },
+            };
+            delete toolBlocks[evt.index];
+          }
         } else if (evt.type === "message_start" && evt.message?.usage) {
           inputTokens = evt.message.usage.input_tokens;
         } else if (evt.type === "message_delta" && evt.usage) {

@@ -18,5 +18,20 @@
   "autoStart disabled: tierkit.autoStartDaemon is false": "autoStart disabled: tierkit.autoStartDaemon is false",
   "No folder is open. Tierkit needs a workspace folder to know where to read tierkit.config.json. Open a folder, then run \"Tierkit: Restart daemon\".": "No folder is open. Tierkit needs a workspace folder to know where to read tierkit.config.json. Open a folder, then run \"Tierkit: Restart daemon\".",
   "Could not auto-start the Tierkit daemon: {0}. Run \"Tierkit: Show diagnostic output\" for details.": "Could not auto-start the Tierkit daemon: {0}. Run \"Tierkit: Show diagnostic output\" for details.",
-  "Open output": "Open output"
+  "Open output": "Open output",
+  "Local — no API key needed (auto-launches Ollama)": "Local — no API key needed (auto-launches Ollama)",
+  "Claude API — needs ANTHROPIC_API_KEY": "Claude API — needs ANTHROPIC_API_KEY",
+  "OpenAI / GPT — needs OPENAI_API_KEY (public-cloud, requires approval)": "OpenAI / GPT — needs OPENAI_API_KEY (public-cloud, requires approval)",
+  "Pick a provider for the new model profile": "Pick a provider for the new model profile",
+  "Profile id": "Profile id",
+  "must start with a letter; letters/digits/_/- only": "must start with a letter; letters/digits/_/- only",
+  "Model name": "Model name",
+  "API key env var": "API key env var",
+  "Base URL": "Base URL",
+  "workspace": "workspace",
+  "user": "user",
+  "this project only — ./tierkit.config.json": "this project only — ./tierkit.config.json",
+  "all folders — ~/.tierkit/config.json": "all folders — ~/.tierkit/config.json",
+  "Save profile to": "Save profile to",
+  "Tierkit: added profile {0} ({1})": "Tierkit: added profile {0} ({1})"
 }

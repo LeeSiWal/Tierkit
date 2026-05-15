@@ -93,10 +93,8 @@ export async function runRoute(input: RunRouteInput): Promise<RunRouteResult> {
   const env = input.env ?? (process.env as Record<string, string | undefined>);
   const mode: RunMode = input.mode ?? "execute";
 
+  // With bundled defaults, profile lookup can succeed even without a workspace config file.
   const cfg = await loadConfig(projectRoot);
-  if (!cfg.found) {
-    return { ok: false, code: "no-config", message: "no tierkit.config.json — run `tierkit init` first" };
-  }
 
   // v1.2 — workflow gate. Computed before profile resolution so a blocked session refuses
   // before we waste any provider calls or token budget.

@@ -18,5 +18,20 @@
   "autoStart disabled: tierkit.autoStartDaemon is false": "자동 시작이 꺼져 있음: tierkit.autoStartDaemon 설정이 false 입니다.",
   "No folder is open. Tierkit needs a workspace folder to know where to read tierkit.config.json. Open a folder, then run \"Tierkit: Restart daemon\".": "열려 있는 폴더가 없습니다. Tierkit은 tierkit.config.json을 읽을 위치를 알기 위해 워크스페이스 폴더가 필요합니다. 폴더를 연 뒤 \"Tierkit: 데몬 재시작\"을 실행하세요.",
   "Could not auto-start the Tierkit daemon: {0}. Run \"Tierkit: Show diagnostic output\" for details.": "Tierkit 데몬을 자동 시작하지 못했습니다: {0}. 자세한 내용은 \"Tierkit: 진단 로그 보기\"를 실행하세요.",
-  "Open output": "로그 열기"
+  "Open output": "로그 열기",
+  "Local — no API key needed (auto-launches Ollama)": "로컬 — API 키 불필요 (Ollama 자동 실행)",
+  "Claude API — needs ANTHROPIC_API_KEY": "Claude API — ANTHROPIC_API_KEY 환경변수 필요",
+  "OpenAI / GPT — needs OPENAI_API_KEY (public-cloud, requires approval)": "OpenAI / GPT — OPENAI_API_KEY 필요 (퍼블릭 클라우드, 승인 필요)",
+  "Pick a provider for the new model profile": "새 모델 프로파일의 프로바이더를 선택하세요",
+  "Profile id": "프로파일 ID",
+  "must start with a letter; letters/digits/_/- only": "문자로 시작 · 영문/숫자/_/- 만 허용",
+  "Model name": "모델 이름",
+  "API key env var": "API 키 환경변수",
+  "Base URL": "Base URL",
+  "workspace": "워크스페이스",
+  "user": "사용자",
+  "this project only — ./tierkit.config.json": "이 프로젝트만 — ./tierkit.config.json",
+  "all folders — ~/.tierkit/config.json": "모든 폴더 공통 — ~/.tierkit/config.json",
+  "Save profile to": "저장 위치",
+  "Tierkit: added profile {0} ({1})": "Tierkit: 프로파일 추가됨 {0} ({1})"
 }

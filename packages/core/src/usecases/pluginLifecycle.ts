@@ -8,6 +8,9 @@ import {
   TIERKIT_DIR,
 } from "../plugin/PluginRegistry.js";
 import { TierkitError } from "../errors/TierkitError.js";
+import { syncPlugins, type SyncPluginsResult } from "./syncPlugins.js";
+import type { TierkitAdapter } from "../adapter/TierkitAdapter.js";
+import type { Target } from "../plugin/PluginManifest.js";
 
 export class PluginLifecycleError extends TierkitError {
   public readonly code: string;
@@ -21,6 +24,13 @@ export class PluginLifecycleError extends TierkitError {
 export interface PluginLifecycleInput {
   pluginId: string;
   cwd?: string;
+  /**
+   * Export adapters to pass to `syncPlugins` after the lifecycle change. When provided,
+   * the plugin update propagates automatically to every connected coding agent (Roo/
+   * Cline/Continue). Omit to skip auto-sync (the CLI does this for tests; users can
+   * always re-sync manually with `tierkit plugin sync`).
+   */
+  adapters?: Partial<Record<Target, TierkitAdapter>>;
 }
 
 export interface PluginLifecycleResult {
@@ -29,6 +39,8 @@ export interface PluginLifecycleResult {
   activePlugins: string[];
   /** "enable" | "disable" | "remove". */
   action: string;
+  /** Sync result if `adapters` was provided; undefined otherwise. */
+  sync?: SyncPluginsResult;
 }
 
 async function writeConfig(projectRoot: string, raw: unknown): Promise<void> {
@@ -58,7 +70,10 @@ export async function enablePlugin(input: PluginLifecycleInput): Promise<PluginL
   active.add(input.pluginId);
   const next = { ...cfg.config, activePlugins: [...active].sort() };
   await writeConfig(projectRoot, next);
-  return { pluginId: input.pluginId, activePlugins: next.activePlugins, action: "enable" };
+  const sync = input.adapters
+    ? await syncPlugins({ cwd: projectRoot, adapters: input.adapters })
+    : undefined;
+  return { pluginId: input.pluginId, activePlugins: next.activePlugins, action: "enable", ...(sync ? { sync } : {}) };
 }
 
 export async function disablePlugin(input: PluginLifecycleInput): Promise<PluginLifecycleResult> {
@@ -71,7 +86,10 @@ export async function disablePlugin(input: PluginLifecycleInput): Promise<Plugin
     activePlugins: cfg.config.activePlugins.filter((id) => id !== input.pluginId),
   };
   await writeConfig(projectRoot, next);
-  return { pluginId: input.pluginId, activePlugins: next.activePlugins, action: "disable" };
+  const sync = input.adapters
+    ? await syncPlugins({ cwd: projectRoot, adapters: input.adapters })
+    : undefined;
+  return { pluginId: input.pluginId, activePlugins: next.activePlugins, action: "disable", ...(sync ? { sync } : {}) };
 }
 
 export async function removePlugin(input: PluginLifecycleInput): Promise<PluginLifecycleResult> {

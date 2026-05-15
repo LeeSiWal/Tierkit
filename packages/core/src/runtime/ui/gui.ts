@@ -1,19 +1,21 @@
 /**
- * Single-file browser UI for the Tierkit runtime daemon.
+ * Single-file browser UI for the Tierkit runtime daemon — Mission Control.
  *
- * Inlined as a TypeScript string so the runtime ships as one self-contained build artifact —
- * no asset bundling, no path resolution, no template engine. The page uses vanilla JS via
- * `fetch` against the same `/v1/*` endpoints the CLI and `@tierkit/client` SDK use.
+ * Tierkit's role is a routing/policy layer behind agents (Roo Code, Cline, Continue, etc.),
+ * not a chat agent itself. This UI reflects that: it's a control panel that shows which
+ * tools are connected, what plugins are active, and what calls are flowing through, with
+ * inline actions for connecting tools / managing plugins / adding profiles.
+ *
+ * Inlined as a TypeScript string so the runtime ships as one self-contained build artifact.
  *
  * Works in two contexts:
  *   - Direct browser: served by the daemon at `/`; fetch uses relative paths.
- *   - VS Code sidebar webview: the host extension injects `window.__TIERKIT_BASE_URL__`
- *     before the script runs; fetch prepends that to every path.
+ *   - VS Code sidebar webview: the host extension injects `window.__TIERKIT_BASE_URL__`,
+ *     `window.__TIERKIT_HOST__ = "vscode"`, and optionally `window.__TIERKIT_DAEMON_ERROR__`.
  *
- * Localization (v1.7): every user-facing string carries `data-i18n="<key>"` (or
- * `data-i18n-placeholder` / `data-i18n-title`). At load time we look at `navigator.language`
- * and swap to Korean if it starts with `ko`. Default is English. The LOCALES table sits at
- * the top of the inline script — adding a language is just adding one entry.
+ * Localization: `data-i18n="<key>"` on default-rendered strings. At load time we look at
+ * `navigator.language`; `ko` → Korean labels. Runtime-built strings come from the `i18n`
+ * runtime object (parallel English/Korean tables).
  */
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
@@ -37,649 +39,678 @@ export const GUI_HTML = `<!doctype html>
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
+  html, body { margin: 0; }
   body {
-    margin: 0;
-    padding: 12px;
     background: var(--bg);
     color: var(--fg);
     font: 13px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
-    max-width: 1100px;
-    margin: 0 auto;
+    padding-bottom: 24px;
   }
-  h1 { font-size: 16px; margin: 4px 0 12px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  h2 { font-size: 11px; margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--fg-dim); }
-  .grid { display: grid; gap: 10px; grid-template-columns: 1fr; }
-  @media (min-width: 800px) { .grid-2 { grid-template-columns: 2fr 1fr; } }
+  /* ── Top bar ─────────────────────────────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 5;
+  }
+  .brand { font-size: 13px; font-weight: 600; letter-spacing: 0.01em; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .pill-ok    { background: rgba(158, 206, 106, 0.12); color: var(--ok); }
+  .pill-warn  { background: rgba(224, 175, 104, 0.12); color: var(--warn); }
+  .pill-err   { background: rgba(247, 118, 142, 0.12); color: var(--err); }
+  .pill-accent{ background: rgba(122, 162, 247, 0.12); color: var(--accent); }
+  .pill-dim   { background: var(--bg-input); color: var(--fg-dim); }
+  .topbar .spacer { flex: 1; }
+  /* ── Inputs / buttons ────────────────────────────────────────────────────── */
+  button, input, select {
+    font: inherit;
+    color: var(--fg);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    cursor: pointer;
+    font-size: 12px;
+  }
+  button:hover { background: var(--bg-hover); }
+  button.tiny    { padding: 2px 6px; font-size: 11px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #0f1115; font-weight: 600; }
+  button.primary:hover { filter: brightness(1.1); }
+  button.ghost   { background: transparent; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  input { cursor: text; }
+  /* ── Banner ──────────────────────────────────────────────────────────────── */
+  .err-banner {
+    background: rgba(247, 118, 142, 0.12);
+    color: var(--err);
+    padding: 8px 12px;
+    font-family: var(--mono);
+    font-size: 11px;
+    border-bottom: 1px solid rgba(247, 118, 142, 0.3);
+  }
+  .err-banner button { margin-top: 6px; }
+  /* ── Layout / cards ──────────────────────────────────────────────────────── */
+  main {
+    max-width: 880px;
+    margin: 0 auto;
+    padding: 14px 12px;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  @media (min-width: 720px) {
+    main { grid-template-columns: 1fr 1fr; }
+    .card.full { grid-column: 1 / -1; }
+  }
   .card {
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
   }
-  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
-  .pill-ok { background: rgba(158, 206, 106, 0.12); color: var(--ok); }
-  .pill-warn { background: rgba(224, 175, 104, 0.12); color: var(--warn); }
-  .pill-err { background: rgba(247, 118, 142, 0.12); color: var(--err); }
-  .pill-accent { background: rgba(122, 162, 247, 0.12); color: var(--accent); }
-  label { display: block; font-size: 11px; color: var(--fg-dim); margin-bottom: 4px; }
-  input, textarea, select, button {
-    font: inherit;
-    color: var(--fg);
-    background: var(--bg-input);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 8px;
-    width: 100%;
+  .card h2 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
   }
-  textarea { resize: vertical; min-height: 70px; font-family: var(--mono); font-size: 12px; }
-  button {
-    cursor: pointer;
-    width: auto;
-    font-weight: 500;
+  .card h2 .h2-actions { margin-left: auto; display: flex; gap: 6px; }
+  .row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .row:last-child { border-bottom: none; }
+  .row.dense { padding: 4px 0; }
+  .row .col-grow { flex: 1; min-width: 0; }
+  .row .mono { font-family: var(--mono); font-size: 12px; }
+  .row .dim { color: var(--fg-dim); font-size: 11px; }
+  .row .nowrap { white-space: nowrap; }
+  .empty {
+    color: var(--fg-dim);
     font-size: 12px;
+    font-style: italic;
+    padding: 8px 0;
+    text-align: center;
   }
-  button:hover { background: var(--bg-hover); }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #0f1115; }
-  button.primary:hover { filter: brightness(1.1); }
-  button.danger { color: var(--err); border-color: rgba(247, 118, 142, 0.4); }
-  button.tiny { padding: 2px 6px; font-size: 11px; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  pre {
+  /* ── Activity feed ───────────────────────────────────────────────────────── */
+  .activity-row { padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
+  .activity-row:last-child { border-bottom: none; }
+  .activity-line1 { display: flex; align-items: baseline; gap: 8px; font-family: var(--mono); }
+  .activity-line2 { color: var(--fg-dim); font-size: 10.5px; margin-top: 2px; font-family: var(--mono); }
+  /* ── Stat blocks ─────────────────────────────────────────────────────────── */
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .stat { background: var(--bg-input); padding: 8px; border-radius: 6px; text-align: center; }
+  .stat-label { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat-value { font-size: 14px; font-weight: 600; font-family: var(--mono); margin-top: 2px; }
+  /* ── Inline forms (profile add, plugin new) ──────────────────────────────── */
+  .inline-form {
     background: var(--bg-input);
-    border: 1px solid var(--border);
+    border: 1px dashed var(--border);
     border-radius: 6px;
     padding: 10px;
-    overflow-x: auto;
-    font-family: var(--mono);
-    font-size: 12px;
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 320px;
-    overflow-y: auto;
-    margin: 0;
+    margin-top: 8px;
   }
-  .row { display: flex; gap: 8px; align-items: end; flex-wrap: wrap; }
-  .row > * { flex: 1 1 0; min-width: 0; }
-  .row > button { flex: 0 0 auto; }
-  .mono { font-family: var(--mono); font-size: 12px; }
-  .dim { color: var(--fg-dim); }
-  .small { font-size: 11px; color: var(--fg-dim); }
-  table { width: 100%; border-collapse: collapse; font-size: 11px; }
-  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--border); }
-  th { color: var(--fg-dim); font-weight: 500; font-size: 10px; text-transform: uppercase; }
-  td .pill { font-size: 10px; padding: 1px 6px; }
-  .stat-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 10px; }
-  .stat { background: var(--bg-input); padding: 8px; border-radius: 6px; }
-  .stat-label { font-size: 10px; color: var(--fg-dim); text-transform: uppercase; }
-  .stat-value { font-size: 15px; font-weight: 600; font-family: var(--mono); }
-  .session-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
-  .session-actions button { flex: 0 1 auto; font-size: 11px; padding: 4px 8px; }
-  .history-list { font-size: 10px; font-family: var(--mono); max-height: 120px; overflow-y: auto; padding: 6px; background: var(--bg-input); border-radius: 4px; }
-  .history-list div { padding: 2px 0; }
-  .empty { color: var(--fg-dim); font-style: italic; font-size: 11px; }
-  .err-banner { background: rgba(247, 118, 142, 0.12); color: var(--err); padding: 8px 10px; border-radius: 6px; margin-bottom: 10px; font-family: var(--mono); font-size: 11px; }
-  .tabs { display: flex; gap: 2px; margin-bottom: 8px; border-bottom: 1px solid var(--border); }
-  .tabs button { background: none; border: none; padding: 6px 10px; color: var(--fg-dim); border-bottom: 2px solid transparent; border-radius: 0; width: auto; font-size: 11px; }
-  .tabs button.active { color: var(--fg); border-bottom-color: var(--accent); }
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
+  .inline-form .form-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; font-size: 12px; }
+  .inline-form label { font-size: 11px; color: var(--fg-dim); }
+  .inline-form input, .inline-form select { width: 100%; padding: 4px 6px; }
+  .inline-form .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
+  .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg-card); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: fadeIn 0.2s; z-index: 10; }
+  .toast.err { color: var(--err); border-color: rgba(247, 118, 142, 0.4); }
+  .toast.ok { color: var(--ok); border-color: rgba(158, 206, 106, 0.4); }
+  @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
 </style>
 </head>
 <body>
 
-<h1>
-  <span>Tierkit</span>
+<div class="topbar">
+  <span class="brand">Tierkit</span>
   <span id="health-pill" class="pill pill-warn">…</span>
   <span id="freedom-pill" class="pill pill-accent">freedom: …</span>
-  <span style="flex:1"></span>
-  <button id="btn-refresh" class="tiny" data-i18n-title="refresh" title="Reload all panels">↻</button>
-</h1>
+  <span class="spacer"></span>
+  <button id="btn-refresh" class="tiny" title="refresh all panels">↻</button>
+</div>
 
-<div id="err-banner" class="err-banner" style="display:none"></div>
 <div id="host-banner" class="err-banner" style="display:none"></div>
 
-<div class="grid grid-2">
+<main>
 
-  <!-- LEFT COLUMN -->
-  <div class="grid">
+  <section class="card full">
+    <h2>
+      <span data-i18n="cardTools">Connected tools</span>
+      <span class="h2-actions">
+        <button id="btn-sync" class="tiny" data-i18n="sync">Sync plugins</button>
+      </span>
+    </h2>
+    <div id="tools-list"><div class="empty" data-i18n="loading">loading…</div></div>
+  </section>
 
-    <div class="card">
-      <h2 data-i18n="run">Run a task</h2>
-      <label for="t-task" data-i18n="task">Task</label>
-      <textarea id="t-task" data-i18n-placeholder="taskPlaceholder" placeholder="Summarize this project's plugin format."></textarea>
-      <div style="height:8px"></div>
-      <div class="row">
-        <div>
-          <label for="t-profile" data-i18n="profile">Profile</label>
-          <select id="t-profile"></select>
-        </div>
-        <div>
-          <label for="t-mode" data-i18n="mode">Mode</label>
-          <select id="t-mode">
-            <option value="execute" selected>execute</option>
-            <option value="plan">plan</option>
-            <option value="review">review</option>
-          </select>
-        </div>
-        <button id="btn-run" class="primary" data-i18n="btnRun">Run</button>
-      </div>
-      <div style="height:10px"></div>
-      <div id="run-meta" class="small"></div>
-      <pre id="run-output" class="empty" data-i18n="outputPlaceholder">(output appears here)</pre>
+  <section class="card">
+    <h2>
+      <span data-i18n="cardPlugins">Active plugins</span>
+      <span class="h2-actions">
+        <button id="btn-plugin-new" class="tiny" data-i18n="pluginNew">+ New</button>
+      </span>
+    </h2>
+    <div id="plugins-list"><div class="empty" data-i18n="loading">loading…</div></div>
+    <div id="plugin-new-form" style="display:none"></div>
+  </section>
+
+  <section class="card">
+    <h2>
+      <span data-i18n="cardActivity">Recent activity</span>
+      <span id="activity-dot" class="pill pill-dim" style="font-size:10px">●</span>
+    </h2>
+    <div id="activity-list"><div class="empty" data-i18n="loading">loading…</div></div>
+  </section>
+
+  <section class="card">
+    <h2><span data-i18n="cardUsage">Today's usage</span></h2>
+    <div class="stats">
+      <div class="stat"><div class="stat-label" data-i18n="calls">calls</div><div class="stat-value" id="stat-calls">—</div></div>
+      <div class="stat"><div class="stat-label" data-i18n="tokens">tokens</div><div class="stat-value" id="stat-tokens">—</div></div>
+      <div class="stat"><div class="stat-label" data-i18n="cost">cost</div><div class="stat-value" id="stat-cost">—</div></div>
     </div>
+    <div id="usage-by-profile" style="margin-top:10px"></div>
+  </section>
 
-    <div class="card">
-      <h2 data-i18n="securityCheck">Security check</h2>
-      <div class="tabs">
-        <button class="tab-btn active" data-tab="redact" data-i18n="tabRedact">Redact</button>
-        <button class="tab-btn" data-tab="command" data-i18n="tabCommand">Command</button>
-        <button class="tab-btn" data-tab="path" data-i18n="tabPath">Path</button>
-      </div>
-      <div class="tab-panel active" data-tab="redact">
-        <label for="c-redact-text" data-i18n="textToRedact">Text to redact</label>
-        <textarea id="c-redact-text" data-i18n-placeholder="redactPlaceholder" placeholder="key=sk-abcdef..."></textarea>
-        <div style="height:6px"></div>
-        <button id="btn-redact" data-i18n="btnRedact">Redact</button>
-        <div id="c-redact-out" class="small" style="margin-top:8px"></div>
-      </div>
-      <div class="tab-panel" data-tab="command">
-        <label for="c-cmd" data-i18n="shellCommand">Shell command</label>
-        <input id="c-cmd" data-i18n-placeholder="cmdPlaceholder" placeholder='rm -rf /' />
-        <div style="height:6px"></div>
-        <button id="btn-cmd" data-i18n="btnClassify">Classify</button>
-        <div id="c-cmd-out" class="small" style="margin-top:8px"></div>
-      </div>
-      <div class="tab-panel" data-tab="path">
-        <label for="c-path" data-i18n="filePath">File path</label>
-        <input id="c-path" data-i18n-placeholder="pathPlaceholder" placeholder=".env or rules/foo.md" />
-        <div style="height:6px"></div>
-        <button id="btn-path" data-i18n="btnCheck">Check</button>
-        <div id="c-path-out" class="small" style="margin-top:8px"></div>
-      </div>
-    </div>
+  <section class="card">
+    <h2>
+      <span data-i18n="cardModels">Model profiles</span>
+      <span class="h2-actions">
+        <button id="btn-profile-add" class="tiny" data-i18n="profileAdd">+ Add</button>
+      </span>
+    </h2>
+    <div id="models-list"><div class="empty" data-i18n="loading">loading…</div></div>
+    <div id="profile-add-form" style="display:none"></div>
+  </section>
 
-    <div class="card">
-      <h2 data-i18n="usage">Usage</h2>
-      <div class="stat-row">
-        <div class="stat"><div class="stat-label" data-i18n="calls">Calls</div><div class="stat-value" id="u-calls">—</div></div>
-        <div class="stat"><div class="stat-label" data-i18n="tokens">Tokens</div><div class="stat-value" id="u-tokens">—</div></div>
-        <div class="stat"><div class="stat-label" data-i18n="cost">Cost</div><div class="stat-value" id="u-cost">—</div></div>
-      </div>
-      <div id="u-by-profile" class="small dim" data-i18n="usageLoading">Per-profile breakdown loads…</div>
-    </div>
+  <section class="card">
+    <h2><span data-i18n="cardDaemon">Daemon</span></h2>
+    <div id="daemon-info" class="row mono dim" data-i18n="loading">loading…</div>
+  </section>
 
-    <div class="card">
-      <h2 data-i18n="models">Models</h2>
-      <div id="m-list"><span class="empty" data-i18n="loading">loading…</span></div>
-    </div>
-
-  </div>
-
-  <!-- RIGHT COLUMN -->
-  <div class="grid">
-
-    <div class="card">
-      <h2 data-i18n="session">Session</h2>
-      <div id="s-status"><span class="empty" data-i18n="noSession">no current session</span></div>
-      <div class="session-actions" id="s-actions">
-        <input id="s-new-task" data-i18n-placeholder="newSessionPlaceholder" placeholder="task for a new session…" style="flex:1 1 200px" />
-        <button id="btn-session-start" data-i18n="btnStart">Start</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h2 data-i18n="daemon">Daemon</h2>
-      <div id="d-info" class="mono dim" data-i18n="loading">loading…</div>
-    </div>
-
-  </div>
-
-</div>
+</main>
 
 <script>
 (function () {
-  // ── Localization ────────────────────────────────────────────────────────────
-  // Default labels live in the HTML (English). When the browser locale starts with "ko",
-  // we swap them via the LOCALES.ko table. Adding a new language = adding one entry below.
+  // ── Localization tables ────────────────────────────────────────────────────
   const LOCALES = {
     ko: {
-      run: '작업 실행',
-      task: '작업 내용',
-      profile: '프로파일',
-      mode: '모드',
-      btnRun: '실행',
-      taskPlaceholder: '예: 이 프로젝트의 플러그인 포맷 요약',
-      outputPlaceholder: '(여기에 응답이 표시됩니다)',
-      securityCheck: '보안 검사',
-      tabRedact: '시크릿 가리기',
-      tabCommand: '명령어',
-      tabPath: '경로',
-      textToRedact: '가릴 텍스트',
-      redactPlaceholder: '예: key=sk-abcdef...',
-      btnRedact: '가리기',
-      shellCommand: '쉘 명령어',
-      cmdPlaceholder: '예: rm -rf /',
-      btnClassify: '위험도 분류',
-      filePath: '파일 경로',
-      pathPlaceholder: '예: .env 또는 rules/foo.md',
-      btnCheck: '검사',
-      usage: '사용량',
-      calls: '호출',
-      tokens: '토큰',
-      cost: '비용',
-      usageLoading: '프로파일별 내역 불러오는 중…',
-      models: '모델',
-      session: '세션',
-      noSession: '활성 세션 없음',
-      newSessionPlaceholder: '새 세션에 사용할 작업 내용…',
-      btnStart: '시작',
-      daemon: '데몬',
+      cardTools: '연결된 도구', cardPlugins: '활성 플러그인', cardActivity: '최근 활동',
+      cardUsage: '오늘 사용량', cardModels: '모델 프로파일', cardDaemon: '데몬',
+      sync: '플러그인 동기화', pluginNew: '+ 새 플러그인', profileAdd: '+ 추가',
+      calls: '호출', tokens: '토큰', cost: '비용',
       loading: '불러오는 중…',
-      refresh: '모든 패널 새로고침',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
   if (lang !== 'en' && LOCALES[lang]) {
     const t = LOCALES[lang];
-    const apply = (sel, attr, key) => {
-      document.querySelectorAll('[data-i18n' + sel + ']').forEach((el) => {
-        const k = el.getAttribute('data-i18n' + sel);
-        if (t[k]) attr ? el.setAttribute(attr, t[k]) : (el.textContent = t[k]);
-      });
-    };
-    apply('', null, null);
-    apply('-placeholder', 'placeholder', null);
-    apply('-title', 'title', null);
+    document.querySelectorAll('[data-i18n]').forEach((el) => {
+      const k = el.getAttribute('data-i18n');
+      if (t[k]) el.textContent = t[k];
+    });
     document.documentElement.setAttribute('lang', lang);
   }
-  // i18n helper for runtime-built strings (used by renderSession etc.)
-  const i18n = lang === 'ko' && LOCALES.ko
-    ? {
-        plan: '계획',
-        approveBtn: '계획 승인',
-        toImplementing: '→ 구현 단계로',
-        toReviewing: '→ 리뷰 단계로',
-        toDone: '→ 완료',
-        abandon: '중단',
-        noSessionHint: '활성 세션 없음 — 아래에서 시작하세요',
-        history: '히스토리',
-        events: '건',
-        idLabel: 'id',
-        plannedOk: '계획 ✓',
-        plannedPending: '계획 대기 중',
-        noProfiles: 'tierkit.config.json에 프로파일이 없습니다 — modelProfiles를 추가하세요',
-        autoRoute: '(자동 라우팅)',
-        thId: 'id', thTier: '계층', thProvider: '프로바이더', thModel: '모델', thCost: '비용', thTest: '',
-        btnTest: '테스트',
-        modelsErr: '모델 정보 오류',
-        usageNone: '(호출 기록 없음 — 위에서 작업을 실행해보세요)',
-        usageErr: '사용량 오류',
-        sessionErr: '세션 오류',
-        budgetWarn: '예산 경고',
-        modelAvailable: '구성된 모델 사용 가능',
-        modelUnavailable: '구성된 모델 사용 불가',
-        modelOf: '개 모델',
-        enterTask: '먼저 작업 내용을 입력하세요',
-        selectProfile: '프로파일을 선택하세요 (자동 라우팅은 향후 지원)',
-        sending: '전송 중…',
-        network: '네트워크 오류',
-        probing: '확인 중',
-        clean: '깨끗함',
-        rulesHit: '개 규칙 매칭',
-        rulesMatched: '개 규칙 매칭됨:',
-        noRules: '매칭된 규칙 없음',
-        sensitive: '민감',
-        sensitiveMatches: '매칭 패턴',
-        notInBlocklist: '블록리스트에 없음',
-        daemonUnreachable: '데몬에 연결할 수 없습니다',
-        offline: '오프라인',
-      }
-    : {
-        plan: 'plan',
-        approveBtn: 'Approve plan',
-        toImplementing: '→ implementing',
-        toReviewing: '→ reviewing',
-        toDone: '→ done',
-        abandon: 'Abandon',
-        noSessionHint: 'no current session — start one below',
-        history: 'History',
-        events: 'events',
-        idLabel: 'id',
-        plannedOk: 'plan ✓',
-        plannedPending: 'plan pending',
-        noProfiles: 'no profiles in tierkit.config.json — add modelProfiles',
-        autoRoute: '(auto-route)',
-        thId: 'id', thTier: 'tier', thProvider: 'provider', thModel: 'model', thCost: 'cost', thTest: '',
-        btnTest: 'Test',
-        modelsErr: 'models error',
-        usageNone: '(no calls yet — run a task above)',
-        usageErr: 'usage error',
-        sessionErr: 'session error',
-        budgetWarn: 'budget warn',
-        modelAvailable: 'configured model available',
-        modelUnavailable: 'configured model NOT available',
-        modelOf: 'model(s)',
-        enterTask: 'enter a task first',
-        selectProfile: 'select a profile (auto-route through daemon is a follow-up)',
-        sending: 'sending…',
-        network: 'network',
-        probing: 'probing',
-        clean: 'clean',
-        rulesHit: 'rule(s) hit',
-        rulesMatched: 'rule(s):',
-        noRules: 'no rules matched',
-        sensitive: 'SENSITIVE',
-        sensitiveMatches: 'matches',
-        notInBlocklist: 'not in blocklist',
-        daemonUnreachable: 'Daemon unreachable',
-        offline: 'offline',
-      };
+  const RUNTIME = {
+    en: {
+      offline: 'offline',
+      routed: 'routed to Tierkit',
+      notRouted: 'not routed',
+      present: 'detected',
+      notPresent: 'not installed',
+      connect: 'Connect',
+      reconnect: 'Re-connect',
+      enable: 'Enable',
+      disable: 'Disable',
+      remove: 'Remove',
+      noActivity: 'no calls yet — use Roo / Cline / Continue (or call /v1/openai) to see them here',
+      noPlugins: 'no plugins active. + New to author one, or install one from a directory.',
+      pluginIdLabel: 'plugin id',
+      modelLabel: 'model',
+      providerLabel: 'provider',
+      tierLabel: 'tier',
+      apiKeyLabel: 'API key env',
+      baseUrlLabel: 'base URL',
+      idLabel: 'profile id',
+      scopeLabel: 'save to',
+      scopeWorkspace: 'workspace (this project only)',
+      scopeUser: 'user (all folders)',
+      saveBtn: 'Save',
+      cancelBtn: 'Cancel',
+      added: 'added',
+      enabled: 'enabled',
+      disabled: 'disabled',
+      synced: 'sync complete',
+      newCreated: 'plugin scaffolded',
+      failed: 'failed',
+      runTaskHint: 'Run a task in Roo Code (or another connected tool) to see entries here',
+      configHintWorkspace: '~/.workspace/tierkit.config.json',
+      configHintUser: '~/.tierkit/config.json',
+      configHintBundled: 'bundled default',
+      activityFrom: 'from',
+      activityRedactions: 'redacted',
+      activityBlocked: 'BLOCKED',
+      profilePromptName: 'Profile id (e.g. claudeCustom)',
+    },
+    ko: {
+      offline: '오프라인',
+      routed: 'Tierkit으로 라우팅됨',
+      notRouted: '라우팅 안 됨',
+      present: '설치 감지됨',
+      notPresent: '미설치',
+      connect: '연결',
+      reconnect: '재연결',
+      enable: '활성',
+      disable: '비활성',
+      remove: '제거',
+      noActivity: '아직 호출 기록 없음 — Roo/Cline/Continue 사용(또는 /v1/openai 호출) 시 여기 표시',
+      noPlugins: '활성 플러그인 없음. + 새 플러그인으로 만들거나 디렉토리에서 install 하세요.',
+      pluginIdLabel: '플러그인 id',
+      modelLabel: '모델',
+      providerLabel: '프로바이더',
+      tierLabel: '계층',
+      apiKeyLabel: 'API 키 env',
+      baseUrlLabel: 'Base URL',
+      idLabel: '프로파일 id',
+      scopeLabel: '저장 위치',
+      scopeWorkspace: '워크스페이스 (이 프로젝트만)',
+      scopeUser: '사용자 (모든 폴더)',
+      saveBtn: '저장',
+      cancelBtn: '취소',
+      added: '추가됨',
+      enabled: '활성화됨',
+      disabled: '비활성화됨',
+      synced: '동기화 완료',
+      newCreated: '플러그인 생성됨',
+      failed: '실패',
+      runTaskHint: 'Roo Code(또는 다른 연결 도구)에서 작업 실행 시 여기 표시됩니다',
+      configHintWorkspace: '워크스페이스 설정',
+      configHintUser: '사용자 설정',
+      configHintBundled: '번들 기본값',
+      activityFrom: '호출자',
+      activityRedactions: '마스킹',
+      activityBlocked: '차단됨',
+      profilePromptName: '프로파일 id (예: claudeCustom)',
+    },
+  };
+  const i18n = RUNTIME[lang] || RUNTIME.en;
 
-  // ── App ──
+  // ── State + helpers ────────────────────────────────────────────────────────
   const BASE = (typeof window !== 'undefined' && window.__TIERKIT_BASE_URL__) || '';
   const $ = (id) => document.getElementById(id);
-  const banner = $('err-banner');
-
-  function showError(msg) {
-    banner.textContent = msg;
-    banner.style.display = 'block';
+  function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }
+  function fmtTime(iso) {
+    try {
+      const d = new Date(iso);
+      const hh = String(d.getHours()).padStart(2, '0');
+      const mm = String(d.getMinutes()).padStart(2, '0');
+      const ss = String(d.getSeconds()).padStart(2, '0');
+      return hh + ':' + mm + ':' + ss;
+    } catch { return iso; }
   }
-  function clearError() { banner.style.display = 'none'; }
-
-  async function jget(path) {
-    const res = await fetch(BASE + path);
-    const body = await res.json();
-    if (!res.ok && res.status !== 400) throw new Error(body?.error || body?.message || res.status);
-    return body;
-  }
-  async function jpost(path, body) {
-    const res = await fetch(BASE + path, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-    const data = await res.json();
-    if (!res.ok && res.status !== 400) throw new Error(data?.error || data?.message || res.status);
-    return { ok: res.ok, status: res.status, data };
+  async function jget(p) { const r = await fetch(BASE + p); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }
+  async function jpost(p, b) {
+    const r = await fetch(BASE + p, { method: 'POST', headers: {'content-type':'application/json'}, body: b !== undefined ? JSON.stringify(b) : undefined });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok && r.status !== 400) throw new Error(d?.error || d?.message || ('HTTP ' + r.status));
+    return { ok: r.ok, status: r.status, data: d };
   }
 
+  function toast(msg, kind) {
+    const el = document.createElement('div');
+    el.className = 'toast ' + (kind || '');
+    el.textContent = msg;
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 2500);
+  }
+
+  // ── Card: Connected tools ──────────────────────────────────────────────────
+  async function refreshTools() {
+    try {
+      const r = await jget('/v1/connections');
+      const list = r.connections || [];
+      const root = $('tools-list');
+      root.innerHTML = '';
+      for (const c of list) {
+        const row = document.createElement('div');
+        row.className = 'row';
+        const statusPill = c.routed
+          ? '<span class="pill pill-ok">' + escapeHtml(i18n.routed) + '</span>'
+          : c.present
+            ? '<span class="pill pill-warn">' + escapeHtml(i18n.present) + '</span>'
+            : '<span class="pill pill-dim">' + escapeHtml(i18n.notPresent) + '</span>';
+        const modelHint = c.modelId ? '<span class="dim mono">model: ' + escapeHtml(c.modelId) + '</span>' : '';
+        const btnLabel = c.routed ? i18n.reconnect : i18n.connect;
+        row.innerHTML =
+          '<div class="col-grow">' +
+            '<div><b>' + escapeHtml(c.tool) + '</b> ' + statusPill + '</div>' +
+            (modelHint ? '<div style="margin-top:2px">' + modelHint + '</div>' : '') +
+          '</div>' +
+          '<button class="tiny" data-action="connect" data-tool="' + escapeHtml(c.tool) + '">' + escapeHtml(btnLabel) + '</button>';
+        root.appendChild(row);
+      }
+      root.querySelectorAll('button[data-action="connect"]').forEach((b) => {
+        b.onclick = async () => {
+          const tool = b.getAttribute('data-tool');
+          b.disabled = true;
+          try {
+            const resp = await jpost('/v1/connect', { tool });
+            if (!resp.ok) { toast((resp.data?.code || 'err') + ': ' + (resp.data?.message || i18n.failed), 'err'); return; }
+            toast(tool + ' ✓ ' + i18n.routed, 'ok');
+            await refreshTools();
+          } finally { b.disabled = false; }
+        };
+      });
+    } catch (e) {
+      $('tools-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  // ── Card: Plugins ──────────────────────────────────────────────────────────
+  async function refreshPlugins() {
+    try {
+      const r = await jget('/v1/plugins');
+      const list = r.plugins || [];
+      const root = $('plugins-list');
+      root.innerHTML = '';
+      if (list.length === 0) {
+        root.innerHTML = '<div class="empty">' + escapeHtml(i18n.noPlugins) + '</div>';
+        return;
+      }
+      for (const p of list) {
+        const row = document.createElement('div');
+        row.className = 'row dense';
+        const statusPill = p.enabled
+          ? '<span class="pill pill-ok" style="font-size:10px">' + escapeHtml(i18n.enabled) + '</span>'
+          : '<span class="pill pill-dim" style="font-size:10px">' + escapeHtml(i18n.disabled) + '</span>';
+        row.innerHTML =
+          '<div class="col-grow"><div><b>' + escapeHtml(p.id) + '</b> ' + statusPill +
+            (p.manifest?.freedom?.level ? ' <span class="pill pill-accent" style="font-size:10px">' + escapeHtml(p.manifest.freedom.level) + '</span>' : '') +
+            '</div>' +
+            (p.manifest?.description ? '<div class="dim" style="margin-top:2px">' + escapeHtml(p.manifest.description) + '</div>' : '') +
+          '</div>' +
+          (p.enabled
+            ? '<button class="tiny" data-action="disable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.disable) + '</button>'
+            : '<button class="tiny primary" data-action="enable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.enable) + '</button>');
+        root.appendChild(row);
+      }
+      root.querySelectorAll('button[data-action="enable"]').forEach((b) => {
+        b.onclick = async () => {
+          const id = b.getAttribute('data-id'); b.disabled = true;
+          try {
+            const resp = await jpost('/v1/plugins/enable', { pluginId: id });
+            if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
+            toast(id + ' ✓ ' + i18n.enabled, 'ok');
+            await Promise.all([refreshPlugins(), refreshTools()]);
+          } finally { b.disabled = false; }
+        };
+      });
+      root.querySelectorAll('button[data-action="disable"]').forEach((b) => {
+        b.onclick = async () => {
+          const id = b.getAttribute('data-id'); b.disabled = true;
+          try {
+            const resp = await jpost('/v1/plugins/disable', { pluginId: id });
+            if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
+            toast(id + ' ✓ ' + i18n.disabled, 'ok');
+            await refreshPlugins();
+          } finally { b.disabled = false; }
+        };
+      });
+    } catch (e) {
+      $('plugins-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  $('btn-plugin-new').onclick = () => {
+    const host = $('plugin-new-form');
+    host.style.display = 'block';
+    host.innerHTML =
+      '<div class="inline-form">' +
+        '<div class="form-grid">' +
+          '<label>' + escapeHtml(i18n.pluginIdLabel) + '</label>' +
+          '<input id="pn-id" placeholder="my-team-rules" />' +
+        '</div>' +
+        '<div class="actions">' +
+          '<button id="pn-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
+          '<button id="pn-save" class="primary">' + escapeHtml(i18n.saveBtn) + '</button>' +
+        '</div>' +
+      '</div>';
+    $('pn-cancel').onclick = () => { host.style.display = 'none'; host.innerHTML = ''; };
+    $('pn-save').onclick = async () => {
+      const id = ($('pn-id').value || '').trim();
+      if (!id) return;
+      const resp = await jpost('/v1/plugins/new', { id });
+      if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
+      toast(id + ' ✓ ' + i18n.newCreated, 'ok');
+      host.style.display = 'none'; host.innerHTML = '';
+      await refreshPlugins();
+    };
+  };
+
+  $('btn-sync').onclick = async () => {
+    const btn = $('btn-sync');
+    btn.disabled = true;
+    try {
+      const r = await jpost('/v1/plugins/sync', {});
+      if (!r.ok) { toast(r.data?.message || i18n.failed, 'err'); return; }
+      const d = r.data || { synced: [] };
+      const count = (d.synced || []).reduce((s, x) => s + (x.filesWritten || 0), 0);
+      toast(i18n.synced + ' (' + count + ' files)', 'ok');
+      await refreshTools();
+    } finally { btn.disabled = false; }
+  };
+
+  // ── Card: Recent activity ──────────────────────────────────────────────────
+  async function refreshActivity() {
+    try {
+      const r = await jget('/v1/usage');
+      const records = r.records || [];
+      const last = records.slice(-12).reverse();
+      const root = $('activity-list');
+      if (last.length === 0) {
+        root.innerHTML = '<div class="empty">' + escapeHtml(i18n.noActivity) + '</div>';
+        return;
+      }
+      root.innerHTML = '';
+      for (const rec of last) {
+        const row = document.createElement('div');
+        row.className = 'activity-row';
+        const statusColor = rec.ok ? 'var(--accent)' : 'var(--err)';
+        const profileSpan = '<span style="color:' + statusColor + '">' + escapeHtml(rec.profileId) + '</span>';
+        const latency = rec.latencyMs ? rec.latencyMs + 'ms' : '';
+        const tokens = (rec.inputTokens || rec.outputTokens)
+          ? (rec.inputTokens || 0) + '↑/' + (rec.outputTokens || 0) + '↓'
+          : '';
+        const cost = rec.costUsd ? fmtCost(rec.costUsd) : (rec.ok ? 'free' : '');
+        const meta = [latency, tokens, cost].filter(Boolean).join(' · ');
+        row.innerHTML =
+          '<div class="activity-line1">' +
+            '<span class="dim">' + escapeHtml(fmtTime(rec.timestamp)) + '</span>' +
+            profileSpan +
+            (rec.tier ? ' <span class="dim">(' + escapeHtml(rec.tier) + ')</span>' : '') +
+            (rec.ok ? '' : ' <span style="color:var(--err)">✗ ' + escapeHtml(rec.failureCode || 'err') + '</span>') +
+          '</div>' +
+          (meta ? '<div class="activity-line2">' + escapeHtml(meta) + '</div>' : '');
+        root.appendChild(row);
+      }
+    } catch (e) {
+      $('activity-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  // ── Card: Usage summary ────────────────────────────────────────────────────
+  async function refreshUsage() {
+    try {
+      const r = await jget('/v1/usage');
+      const s = r.summary || {};
+      $('stat-calls').textContent = String(s.totalCalls || 0);
+      $('stat-tokens').textContent = String((s.totalInputTokens || 0) + (s.totalOutputTokens || 0));
+      $('stat-cost').textContent = fmtCost(s.totalCostUsd);
+      const byp = $('usage-by-profile');
+      const entries = Object.entries(s.byProfile || {});
+      if (entries.length === 0) {
+        byp.innerHTML = '<div class="empty" style="font-size:11px">' + escapeHtml(i18n.runTaskHint) + '</div>';
+      } else {
+        byp.innerHTML = entries.map(([id, v]) =>
+          '<div class="row dense" style="font-size:11px"><div class="col-grow"><span class="mono" style="color:var(--accent)">' + escapeHtml(id) + '</span></div>' +
+          '<span class="nowrap dim">' + (v.calls || 0) + ' calls · ' + fmtCost(v.costUsd) + '</span></div>',
+        ).join('');
+      }
+    } catch (e) {
+      $('stat-calls').textContent = '—';
+      $('stat-tokens').textContent = '—';
+      $('stat-cost').textContent = '—';
+    }
+  }
+
+  // ── Card: Models ───────────────────────────────────────────────────────────
+  async function refreshModels() {
+    try {
+      const r = await jget('/v1/models');
+      const entries = r.entries || [];
+      const root = $('models-list');
+      root.innerHTML = '';
+      if (entries.length === 0) {
+        root.innerHTML = '<div class="empty">no profiles</div>';
+        return;
+      }
+      const srcLabel = lang === 'ko'
+        ? { bundled: '기본', user: '사용자', workspace: '워크스페이스' }
+        : { bundled: 'bundled', user: 'user', workspace: 'workspace' };
+      for (const e of entries) {
+        const p = e.profile || {};
+        const row = document.createElement('div');
+        row.className = 'row dense';
+        row.innerHTML =
+          '<div class="col-grow">' +
+            '<div><span class="mono" style="color:var(--accent)">' + escapeHtml(e.id) + '</span>' +
+              ' <span class="dim">(' + escapeHtml(p.kind || '?') + ')</span></div>' +
+            '<div class="dim mono" style="margin-top:2px;font-size:10.5px">' +
+              escapeHtml(p.provider || '') + ' · ' + escapeHtml(p.model || '') +
+              ' · <span style="color:var(--fg-dim)">' + escapeHtml(srcLabel[e.source] || e.source) + '</span>' +
+              (p.requiresApproval ? ' · <span style="color:var(--warn)">⚠</span>' : '') +
+            '</div>' +
+          '</div>' +
+          '<button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>';
+        root.appendChild(row);
+      }
+      root.querySelectorAll('button[data-action="test"]').forEach((b) => {
+        b.onclick = async () => {
+          const id = b.getAttribute('data-id'); b.disabled = true; b.textContent = '...';
+          try {
+            const resp = await jpost('/v1/models/test', { profileId: id });
+            const d = resp.data || {};
+            if (resp.ok) toast(id + ' ✓ ' + (d.modelAvailable === false ? 'reachable, model missing' : 'reachable'), d.modelAvailable === false ? 'err' : 'ok');
+            else toast(id + ': ' + (d.code || 'err'), 'err');
+          } finally { b.disabled = false; b.textContent = 'test'; }
+        };
+      });
+    } catch (e) {
+      $('models-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  $('btn-profile-add').onclick = () => {
+    const host = $('profile-add-form');
+    host.style.display = 'block';
+    const PROVIDERS = {
+      anthropic: { kind: 'private-remote', apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrl: '', model: 'claude-sonnet-4-6', idHint: 'claudeCustom' },
+      openai:    { kind: 'public-cloud',   apiKeyEnv: 'OPENAI_API_KEY',    baseUrl: '', model: 'gpt-4o', idHint: 'gptCustom' },
+      ollama:    { kind: 'local-device',   apiKeyEnv: '',                  baseUrl: 'http://127.0.0.1:11434', model: 'qwen2.5-coder:7b', idHint: 'localCustom' },
+    };
+
+    function render(provider) {
+      const tpl = PROVIDERS[provider];
+      const isLocal = tpl.kind === 'local-device';
+      host.innerHTML =
+        '<div class="inline-form">' +
+          '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">' +
+            ['anthropic', 'openai', 'ollama'].map((p) =>
+              '<button data-prov="' + p + '" style="' + (p === provider ? 'background:var(--accent);color:#0f1115;border-color:var(--accent)' : '') + '">' + p + '</button>'
+            ).join('') +
+          '</div>' +
+          '<div class="form-grid">' +
+            '<label>' + escapeHtml(i18n.idLabel) + '</label>' +
+            '<input id="pa-id" placeholder="' + escapeHtml(tpl.idHint) + '" />' +
+            '<label>' + escapeHtml(i18n.modelLabel) + '</label>' +
+            '<input id="pa-model" value="' + escapeHtml(tpl.model) + '" />' +
+            (isLocal
+              ? '<label>' + escapeHtml(i18n.baseUrlLabel) + '</label>' +
+                '<input id="pa-baseUrl" value="' + escapeHtml(tpl.baseUrl) + '" />'
+              : '<label>' + escapeHtml(i18n.apiKeyLabel) + '</label>' +
+                '<input id="pa-apiKey" value="' + escapeHtml(tpl.apiKeyEnv) + '" />') +
+            '<label>' + escapeHtml(i18n.scopeLabel) + '</label>' +
+            '<select id="pa-scope">' +
+              '<option value="workspace">' + escapeHtml(i18n.scopeWorkspace) + '</option>' +
+              '<option value="user">' + escapeHtml(i18n.scopeUser) + '</option>' +
+            '</select>' +
+          '</div>' +
+          '<div class="actions">' +
+            '<button id="pa-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
+            '<button id="pa-save" class="primary">' + escapeHtml(i18n.saveBtn) + '</button>' +
+          '</div>' +
+        '</div>';
+      host.querySelectorAll('button[data-prov]').forEach((b) => {
+        b.onclick = () => render(b.getAttribute('data-prov'));
+      });
+      $('pa-cancel').onclick = () => { host.style.display = 'none'; host.innerHTML = ''; };
+      $('pa-save').onclick = async () => {
+        const id = ($('pa-id').value || '').trim();
+        const model = ($('pa-model').value || '').trim();
+        const scope = $('pa-scope').value;
+        const apiKey = $('pa-apiKey') ? $('pa-apiKey').value.trim() : '';
+        const baseUrl = $('pa-baseUrl') ? $('pa-baseUrl').value.trim() : '';
+        if (!id || !model) { toast('id + model required', 'err'); return; }
+        const profile = { kind: tpl.kind, provider, model, roles: [] };
+        if (apiKey) profile.apiKeyEnv = apiKey;
+        if (baseUrl) profile.baseUrl = baseUrl;
+        if (tpl.kind === 'public-cloud') { profile.requiresApproval = true; profile.defaultMode = 'review-only'; }
+        const resp = await jpost('/v1/config/profile', { id, profile, scope });
+        if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
+        toast(id + ' ✓ ' + i18n.added, 'ok');
+        host.style.display = 'none'; host.innerHTML = '';
+        await refreshModels();
+      };
+    }
+    render('anthropic');
+  };
+
+  // ── Card: Daemon ───────────────────────────────────────────────────────────
   async function refreshHealth() {
     try {
       const h = await jget('/v1/health');
       $('health-pill').textContent = 'v' + h.version;
       $('health-pill').className = 'pill pill-ok';
-      $('d-info').textContent = h.cwd;
+      $('daemon-info').textContent = h.cwd;
     } catch (e) {
       $('health-pill').textContent = i18n.offline;
       $('health-pill').className = 'pill pill-err';
-      showError(i18n.daemonUnreachable + ': ' + e.message);
+      $('daemon-info').textContent = e.message;
     }
   }
-
-  async function refreshSession() {
+  async function refreshFreedom() {
     try {
       const r = await jget('/v1/session');
-      $('freedom-pill').textContent = 'freedom: ' + r.freedom;
-      $('freedom-pill').className = 'pill pill-' + (r.freedom === 'strict' ? 'err' : r.freedom === 'balanced' ? 'warn' : 'accent');
-      renderSession(r.session);
-    } catch (e) {
-      $('s-status').innerHTML = '<span class="empty">' + i18n.sessionErr + ': ' + e.message + '</span>';
+      const pill = $('freedom-pill');
+      pill.textContent = 'freedom: ' + r.freedom;
+      pill.className = 'pill pill-' + (r.freedom === 'strict' ? 'err' : r.freedom === 'balanced' ? 'warn' : 'accent');
+    } catch {
+      $('freedom-pill').textContent = 'freedom: ?';
+      $('freedom-pill').className = 'pill pill-warn';
     }
   }
 
-  function renderSession(s) {
-    const status = $('s-status');
-    const actions = $('s-actions');
-    if (!s) {
-      status.innerHTML = '<span class="empty">' + i18n.noSessionHint + '</span>';
-      actions.innerHTML = '<input id="s-new-task" placeholder="' + escapeHtml(LOCALES[lang]?.newSessionPlaceholder || 'task for a new session…') + '" style="flex:1 1 200px" />' +
-        '<button id="btn-session-start">' + (lang === 'ko' ? '시작' : 'Start') + '</button>';
-      $('btn-session-start').onclick = startSession;
-      return;
-    }
-    const state = s.state;
-    const stateClass = state === 'done' ? 'ok' : state === 'abandoned' ? 'err' : 'accent';
-    status.innerHTML =
-      '<div style="display:flex;gap:6px;align-items:baseline;margin-bottom:6px;flex-wrap:wrap"><span class="pill pill-' + stateClass + '">' + state + '</span>' +
-      (s.planApproved ? '<span class="pill pill-ok">' + i18n.plannedOk + '</span>' : '<span class="pill pill-warn">' + i18n.plannedPending + '</span>') +
-      '</div>' +
-      '<div class="small dim">' + i18n.idLabel + ' ' + s.id.slice(0, 8) + ' · ' + s.createdAt.replace('T', ' ').slice(0, 19) + '</div>' +
-      '<div class="mono" style="margin:6px 0;font-weight:500;font-size:12px;word-break:break-word">' + escapeHtml(s.task) + '</div>' +
-      '<div class="small dim" style="margin-bottom:4px">' + i18n.history + ' (' + s.history.length + ' ' + i18n.events + ')</div>' +
-      '<div class="history-list">' + s.history.map(h =>
-        '<div><span class="dim">' + h.timestamp.slice(11, 19) + '</span> ' +
-        (h.from ? escapeHtml(h.from) + ' → ' : '') + '<b>' + escapeHtml(h.to) + '</b>' +
-        (h.reason ? ' <span class="dim">(' + escapeHtml(h.reason) + ')</span>' : '') + '</div>'
-      ).join('') + '</div>';
-
-    const buttons = [];
-    if (state === 'planning' && !s.planApproved) buttons.push([i18n.approveBtn, () => post('/v1/session/approve-plan')]);
-    if (state === 'planning') buttons.push([i18n.toImplementing, () => post('/v1/session/advance', { toState: 'implementing' })]);
-    if (state === 'implementing') buttons.push([i18n.toReviewing, () => post('/v1/session/advance', { toState: 'reviewing' })]);
-    if (state === 'reviewing') buttons.push([i18n.toDone, () => post('/v1/session/advance', { toState: 'done' })]);
-    if (state !== 'done' && state !== 'abandoned') buttons.push([i18n.abandon, () => post('/v1/session/abandon'), 'danger']);
-
-    actions.innerHTML = '';
-    for (const [label, fn, cls] of buttons) {
-      const btn = document.createElement('button');
-      btn.textContent = label;
-      if (cls) btn.className = cls;
-      btn.onclick = async () => { btn.disabled = true; await fn(); };
-      actions.appendChild(btn);
-    }
-  }
-
-  async function post(path, body) {
-    clearError();
-    try {
-      const r = await jpost(path, body);
-      if (r.status === 400) showError(r.data.code + ': ' + r.data.message);
-      await refreshSession();
-    } catch (e) {
-      showError(e.message);
-    }
-  }
-
-  async function startSession() {
-    const task = ($('s-new-task').value || '').trim();
-    if (!task) return showError(i18n.enterTask);
-    clearError();
-    try {
-      await jpost('/v1/session/start', { task });
-      $('s-new-task').value = '';
-      await refreshSession();
-    } catch (e) {
-      showError(e.message);
-    }
-  }
-
-  async function refreshModels() {
-    try {
-      const r = await jget('/v1/models');
-      const sel = $('t-profile');
-      const cur = sel.value;
-      sel.innerHTML = '<option value="">' + i18n.autoRoute + '</option>' + r.entries.map(e =>
-        '<option value="' + e.id + '">' + e.id + ' — ' + e.profile.kind + '/' + e.profile.provider + '/' + e.profile.model + '</option>'
-      ).join('');
-      if (cur) sel.value = cur;
-
-      if (r.entries.length === 0) {
-        $('m-list').innerHTML = '<span class="empty">' + i18n.noProfiles + '</span>';
-      } else {
-        const rows = r.entries.map(e =>
-          '<tr><td class="mono">' + escapeHtml(e.id) + '</td><td><span class="pill pill-' +
-          (e.profile.kind === 'public-cloud' ? 'err' : e.profile.kind === 'private-remote' ? 'warn' : 'ok') +
-          '">' + e.profile.kind + '</span></td><td>' + escapeHtml(e.profile.provider) + '</td><td class="mono">' +
-          escapeHtml(e.profile.model) + '</td><td>' + fmtCost(e.profile.cost) +
-          '</td><td><button class="tiny" data-test-id="' + escapeHtml(e.id) + '">' + i18n.btnTest + '</button></td></tr>'
-        ).join('');
-        $('m-list').innerHTML =
-          '<table><thead><tr><th>' + i18n.thId + '</th><th>' + i18n.thTier + '</th><th>' + i18n.thProvider + '</th><th>' + i18n.thModel + '</th><th>' + i18n.thCost + '</th><th></th></tr></thead><tbody>' +
-          rows + '</tbody></table><div id="m-test-out" class="small dim" style="margin-top:8px"></div>';
-        document.querySelectorAll('[data-test-id]').forEach(btn => {
-          btn.onclick = () => testModel(btn.getAttribute('data-test-id'), btn);
-        });
-      }
-    } catch (e) {
-      $('m-list').innerHTML = '<span class="empty">' + i18n.modelsErr + ': ' + e.message + '</span>';
-    }
-  }
-
-  async function testModel(profileId, btn) {
-    const out = $('m-test-out');
-    out.innerHTML = '<span class="dim">' + i18n.probing + ' ' + escapeHtml(profileId) + '…</span>';
-    btn.disabled = true;
-    try {
-      const r = await jpost('/v1/models/test', { profileId });
-      if (r.status === 400) {
-        out.innerHTML = '<span class="pill pill-err">' + r.data.code + '</span> ' + escapeHtml(r.data.message);
-      } else {
-        const result = r.data.result;
-        if (result.ok) {
-          out.innerHTML = '<span class="pill pill-ok">' + escapeHtml(profileId) + '</span> ' +
-            result.latencyMs + 'ms' +
-            (result.modelCount !== undefined ? ' · ' + result.modelCount + ' ' + i18n.modelOf : '') +
-            (result.modelAvailable !== undefined ? ' · ' + (result.modelAvailable ? i18n.modelAvailable : i18n.modelUnavailable) : '') +
-            (result.note ? '<br><span class="dim">' + escapeHtml(result.note) + '</span>' : '');
-        } else {
-          out.innerHTML = '<span class="pill pill-err">' + escapeHtml(profileId) + ' / ' + result.code + '</span> ' + escapeHtml(result.message);
-        }
-      }
-    } catch (e) {
-      out.innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  function fmtCost(c) {
-    if (!c) return '<span class="dim">—</span>';
-    if (c.type === 'free') return 'free';
-    if (c.type === 'flat') return '$' + c.monthlyUsd + '/mo';
-    return '$' + c.inputUsdPerMillion + '/M in';
-  }
-
-  async function refreshUsage() {
-    try {
-      const r = await jget('/v1/usage');
-      $('u-calls').textContent = r.summary.totalCalls + ' (' + r.summary.successfulCalls + '✓ ' + r.summary.failedCalls + '✗)';
-      $('u-tokens').textContent = r.summary.totalInputTokens + '/' + r.summary.totalOutputTokens;
-      $('u-cost').textContent = '$' + r.summary.totalCostUsd.toFixed(4);
-      const byProfile = r.summary.byProfile || {};
-      const keys = Object.keys(byProfile);
-      $('u-by-profile').innerHTML = keys.length === 0
-        ? i18n.usageNone
-        : keys.map(k => k + ': ' + byProfile[k].calls + (lang === 'ko' ? '회, ' : ' calls, ') + '$' + byProfile[k].costUsd.toFixed(4)).join(' · ');
-    } catch (e) {
-      $('u-by-profile').innerHTML = '<span class="empty">' + i18n.usageErr + ': ' + e.message + '</span>';
-    }
-  }
-
-  $('btn-run').onclick = async () => {
-    const task = ($('t-task').value || '').trim();
-    if (!task) return showError(i18n.enterTask);
-    const profileId = $('t-profile').value;
-    const mode = $('t-mode').value;
-    if (!profileId) return showError(i18n.selectProfile);
-
-    clearError();
-    $('btn-run').disabled = true;
-    $('run-output').textContent = '';
-    $('run-output').classList.remove('empty');
-    $('run-meta').textContent = i18n.sending;
-    try {
-      const messages = [
-        { role: 'user', content: (mode === 'plan' ? '(plan mode) ' : mode === 'review' ? '(review mode) ' : '') + task },
-      ];
-      const r = await jpost('/v1/llm-call', { profileId, messages });
-      if (r.data.ok) {
-        $('run-output').textContent = r.data.text;
-        $('run-meta').innerHTML = '<span class="pill pill-ok">ok</span> ' +
-          r.data.inputTokens + ' in / ' + r.data.outputTokens + ' out · ' + r.data.latencyMs + 'ms · $' + r.data.costUsd.toFixed(6) +
-          (r.data.budget?.status === 'warn' ? ' <span class="pill pill-warn">' + i18n.budgetWarn + '</span>' : '');
-      } else {
-        $('run-output').textContent = '';
-        $('run-meta').innerHTML = '<span class="pill pill-err">' + r.data.code + '</span> ' + escapeHtml(r.data.message);
-      }
-      await refreshUsage();
-      await refreshSession();
-    } catch (e) {
-      $('run-meta').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
-    } finally {
-      $('btn-run').disabled = false;
-    }
-  };
-
-  // Security check panel
-  document.querySelectorAll('.tab-btn').forEach(btn => {
-    btn.onclick = () => {
-      const tab = btn.getAttribute('data-tab');
-      document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-      document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.getAttribute('data-tab') === tab));
-    };
-  });
-
-  $('btn-redact').onclick = async () => {
-    const text = ($('c-redact-text').value || '').trim();
-    if (!text) return;
-    try {
-      const r = await jpost('/v1/redact', { text });
-      const hits = r.data.hits || [];
-      $('c-redact-out').innerHTML = hits.length === 0
-        ? '<span class="pill pill-ok">' + i18n.clean + '</span>'
-        : '<span class="pill pill-err">' + hits.length + ' ' + i18n.rulesHit + '</span> ' +
-          hits.map(h => h.ruleId + ' × ' + h.count).join(', ') +
-          '<pre style="margin-top:6px">' + escapeHtml(r.data.text) + '</pre>';
-    } catch (e) {
-      $('c-redact-out').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
-    }
-  };
-
-  $('btn-cmd').onclick = async () => {
-    const command = ($('c-cmd').value || '').trim();
-    if (!command) return;
-    try {
-      const r = await jpost('/v1/check/command', { command });
-      const sev = r.data.severity;
-      const cls = sev === 'block' ? 'err' : sev === 'warn' ? 'warn' : 'ok';
-      const matched = r.data.matched || [];
-      $('c-cmd-out').innerHTML = '<span class="pill pill-' + cls + '">' + sev.toUpperCase() + '</span> ' +
-        (matched.length === 0 ? i18n.noRules : matched.length + ' ' + i18n.rulesMatched) +
-        (matched.length > 0 ? '<ul style="margin:4px 0 0;padding-left:16px">' +
-          matched.map(m => '<li><b>' + escapeHtml(m.id) + '</b> — ' + escapeHtml(m.description) + '</li>').join('') + '</ul>' : '');
-    } catch (e) {
-      $('c-cmd-out').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
-    }
-  };
-
-  $('btn-path').onclick = async () => {
-    const p = ($('c-path').value || '').trim();
-    if (!p) return;
-    try {
-      const r = await jpost('/v1/check/path', { path: p });
-      $('c-path-out').innerHTML = r.data.sensitive
-        ? '<span class="pill pill-err">' + i18n.sensitive + '</span> ' + i18n.sensitiveMatches + ': ' + (r.data.matchedPatterns || []).join(', ')
-        : '<span class="pill pill-ok">ok</span> ' + i18n.notInBlocklist;
-    } catch (e) {
-      $('c-path-out').innerHTML = '<span class="pill pill-err">' + i18n.network + '</span> ' + e.message;
-    }
-  };
-
-  $('btn-session-start').onclick = startSession;
-  $('btn-refresh').onclick = refreshAll;
-
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-  }
-
-  async function refreshAll() {
-    await Promise.all([refreshHealth(), refreshSession(), refreshModels(), refreshUsage()]);
-  }
-
-  // ── Host-banner: when running inside the VS Code webview AND the host extension flagged
-  // a daemon auto-start failure, show a clear actionable banner instead of letting the user
-  // hunt through 5 separate "Failed to fetch" messages. The buttons postMessage back to the
-  // host, which is wired in extension.ts to open the diagnostic Output channel / restart.
+  // ── Host banner (VS Code auto-start failure) ───────────────────────────────
   (function maybeRenderHostBanner() {
     const host = (typeof window !== 'undefined' && window.__TIERKIT_HOST__) || '';
     const errMsg = (typeof window !== 'undefined' && window.__TIERKIT_DAEMON_ERROR__) || '';
@@ -704,8 +735,15 @@ export const GUI_HTML = `<!doctype html>
     $('btn-host-restart').onclick = () => post('restartDaemon');
   })();
 
+  // ── Wire-up ────────────────────────────────────────────────────────────────
+  async function refreshAll() {
+    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels()]);
+  }
+  $('btn-refresh').onclick = refreshAll;
+
   refreshAll();
-  setInterval(() => { refreshHealth(); refreshUsage(); }, 30_000);
+  // Auto-refresh activity + usage every 5s — the user wants to see Roo's calls appear live.
+  setInterval(() => { refreshActivity(); refreshUsage(); refreshHealth(); }, 5_000);
 })();
 </script>
 

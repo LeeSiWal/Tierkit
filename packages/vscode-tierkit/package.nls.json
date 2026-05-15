@@ -14,5 +14,6 @@
   "commands.usage": "Tierkit: Show usage summary",
   "commands.sessionStatus": "Tierkit: Show workflow session status",
   "commands.restartDaemon": "Tierkit: Restart daemon",
-  "commands.showOutput": "Tierkit: Show diagnostic output"
+  "commands.showOutput": "Tierkit: Show diagnostic output",
+  "commands.addModelProfile": "Tierkit: Add model profile"
 }

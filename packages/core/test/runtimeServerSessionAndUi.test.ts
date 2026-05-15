@@ -150,8 +150,13 @@ describe("runtime Server — session endpoints + GUI", () => {
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
     expect(html).toMatch(/<title>Tierkit<\/title>/);
-    expect(html).toContain("/v1/session");
-    expect(html).toContain("/v1/llm-call");
+    // The Mission Control UI hits these endpoints (no chat input — Tierkit is a policy
+    // layer, not an agent). If you remove one of these the panel disappears, so the
+    // test pinning them is intentional.
+    expect(html).toContain("/v1/connections");
+    expect(html).toContain("/v1/plugins");
+    expect(html).toContain("/v1/usage");
+    expect(html).toContain("/v1/models");
   });
 
   it("GET / also serves the GUI HTML (no need to type /v1/ui)", async () => {

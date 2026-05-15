@@ -14,5 +14,6 @@
   "commands.usage": "Tierkit: 사용량 요약 보기",
   "commands.sessionStatus": "Tierkit: 워크플로 세션 상태 보기",
   "commands.restartDaemon": "Tierkit: 데몬 재시작",
-  "commands.showOutput": "Tierkit: 진단 로그 보기"
+  "commands.showOutput": "Tierkit: 진단 로그 보기",
+  "commands.addModelProfile": "Tierkit: 모델 프로파일 추가"
 }

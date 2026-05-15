@@ -22,11 +22,14 @@ describe("testModel", () => {
     if (root) await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("throws TestModelError when no config", async () => {
+  it("throws TestModelError unknown-profile when there is no config AND the id is unknown (bundled defaults reduce this surface)", async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-testmodel-noconfig-"));
+    // With bundled defaults disabled by the test setup, an unknown profile id with no config
+    // file present yields `unknown-profile` (not `no-config`). The error is now driven by
+    // "we have no profile of this name" rather than "no file on disk".
     await expect(testModel({ cwd: root, profileId: "x" })).rejects.toMatchObject({
       name: "TestModelError",
-      code: "no-config",
+      code: "unknown-profile",
     });
   });
 

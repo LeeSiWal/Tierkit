@@ -29,6 +29,11 @@ import { SessionStatusCommand } from "./commands/session/SessionStatusCommand.js
 import { SessionAdvanceCommand } from "./commands/session/SessionAdvanceCommand.js";
 import { SessionApprovePlanCommand } from "./commands/session/SessionApprovePlanCommand.js";
 import { SessionAbandonCommand } from "./commands/session/SessionAbandonCommand.js";
+import { ProfileAddCommand } from "./commands/profile/ProfileAddCommand.js";
+import { ProfileRemoveCommand } from "./commands/profile/ProfileRemoveCommand.js";
+import { ConnectCommand } from "./commands/ConnectCommand.js";
+import { PluginSyncCommand } from "./commands/plugin/PluginSyncCommand.js";
+import { PluginNewCommand } from "./commands/plugin/PluginNewCommand.js";
 
 export function buildCli(): Cli<CliContext> {
   const cli = new Cli<CliContext>({
@@ -69,6 +74,11 @@ export function buildCli(): Cli<CliContext> {
   cli.register(SessionAdvanceCommand);
   cli.register(SessionApprovePlanCommand);
   cli.register(SessionAbandonCommand);
+  cli.register(ProfileAddCommand);
+  cli.register(ProfileRemoveCommand);
+  cli.register(ConnectCommand);
+  cli.register(PluginSyncCommand);
+  cli.register(PluginNewCommand);
 
   return cli;
 }

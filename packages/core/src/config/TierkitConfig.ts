@@ -51,6 +51,18 @@ export const RuntimeConfigSchema = z
     dataDir: z.string().min(1).default(".tierkit/runtime"),
     /** Bind address. Defaults to localhost-only; never change without explicit user consent — see SECURITY.md. */
     host: z.string().min(1).default("127.0.0.1"),
+    /**
+     * When true (default), the daemon prepends the rules of every active Tierkit plugin
+     * as a system message before forwarding to the provider. This is how plugin rules
+     * (e.g. `superpowers-strict`'s plan-approval-gate, tests-first) actually influence
+     * model behavior — without injection, plugin rules only show up in EXPORTED tool
+     * configs (.roomodes, .clinerules/, .continue/), but never in Tierkit's own
+     * `/v1/openai/chat/completions` path.
+     *
+     * Set false if you handle rule injection at the client side (some workflows want to
+     * see plain user messages on the wire for debugging).
+     */
+    injectPluginRules: z.boolean().default(true),
   })
   .strict();
 

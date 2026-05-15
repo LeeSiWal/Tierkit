@@ -20,6 +20,9 @@
 import * as vscode from "vscode";
 import { TierkitClient, TierkitClientError } from "@tierkit/client";
 import { GUI_HTML, startServer, type RunningServer } from "@tierkit/core";
+import { RooAdapter } from "@tierkit/adapter-roo";
+import { ClineAdapter } from "@tierkit/adapter-cline";
+import { ContinueAdapter } from "@tierkit/adapter-continue";
 
 let statusItem: vscode.StatusBarItem | undefined;
 let serverHandle: RunningServer | undefined;
@@ -121,14 +124,24 @@ async function maybeStartDaemon(): Promise<void> {
 
   log(`auto-start: trying startServer({port:${port}})`);
   try {
-    serverHandle = await startServer({ cwd: workspace.uri.fsPath, host: "127.0.0.1", port });
+    serverHandle = await startServer({
+      cwd: workspace.uri.fsPath,
+      host: "127.0.0.1",
+      port,
+      adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
+    });
     effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
     log(`auto-start: started on ${effectiveBaseUrl}`);
   } catch (err) {
     log(`auto-start: startServer({port:${port}}) failed: ${(err as Error).message}`);
     log(`auto-start: trying startServer({port:0}) (OS-assigned free port)`);
     try {
-      serverHandle = await startServer({ cwd: workspace.uri.fsPath, host: "127.0.0.1", port: 0 });
+      serverHandle = await startServer({
+        cwd: workspace.uri.fsPath,
+        host: "127.0.0.1",
+        port: 0,
+        adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
+      });
       effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
       log(`auto-start: started on ${effectiveBaseUrl} (fallback)`);
       void vscode.window.showInformationMessage(
@@ -196,8 +209,32 @@ class TierkitSidebarProvider implements vscode.WebviewViewProvider {
 
   render(): void {
     if (!this.current) return;
-    this.current.webview.options = { enableScripts: true, localResourceRoots: [] };
-    this.current.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl(), lastDaemonError);
+    // ── portMapping: critical for Windows sandboxed webviews. Without this, the webview
+    // iframe's fetch to 127.0.0.1:PORT is blocked by the OS network sandbox (UWP AppContainer,
+    // some AV products, certain enterprise security configs), even when the daemon is fully
+    // running and reachable from a regular browser on the same machine. portMapping tells
+    // VS Code to proxy fetches from the webview to the extension host machine's loopback,
+    // bypassing the sandbox. The webview then uses `http://localhost:PORT` (must be
+    // `localhost`, not `127.0.0.1` — the mapping keys off that hostname).
+    const port = portFromBaseUrl(baseUrl());
+    this.current.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [],
+      portMapping: port ? [{ webviewPort: port, extensionHostPort: port }] : [],
+    };
+    const webviewBase = port ? `http://localhost:${port}` : baseUrl();
+    log(`render: webviewBase=${webviewBase} portMapping=${port ?? "none"} daemonError=${lastDaemonError ?? "none"}`);
+    this.current.webview.html = wrapHtmlForWebview(GUI_HTML, webviewBase, lastDaemonError);
+  }
+}
+
+function portFromBaseUrl(url: string): number | undefined {
+  try {
+    const u = new URL(url);
+    const n = Number.parseInt(u.port, 10);
+    return Number.isFinite(n) && n > 0 ? n : 4101;
+  } catch {
+    return undefined;
   }
 }
 
@@ -394,6 +431,87 @@ export function activate(context: vscode.ExtensionContext): void {
         ),
       );
       await vscode.commands.executeCommand("tierkit.focusSidebar");
+    }),
+
+    vscode.commands.registerCommand("tierkit.addModelProfile", async () => {
+      const provider = await vscode.window.showQuickPick(
+        [
+          { label: "ollama", description: vscode.l10n.t("Local — no API key needed (auto-launches Ollama)"), value: "ollama" },
+          { label: "anthropic", description: vscode.l10n.t("Claude API — needs ANTHROPIC_API_KEY"), value: "anthropic" },
+          { label: "openai", description: vscode.l10n.t("OpenAI / GPT — needs OPENAI_API_KEY (public-cloud, requires approval)"), value: "openai" },
+        ],
+        { placeHolder: vscode.l10n.t("Pick a provider for the new model profile") },
+      );
+      if (!provider) return;
+
+      const tplByProvider: Record<string, { tier: "local-device" | "private-remote" | "public-cloud"; apiKeyEnv: string; baseUrl: string; modelExample: string; idHint: string }> = {
+        ollama:    { tier: "local-device",   apiKeyEnv: "",                  baseUrl: "http://127.0.0.1:11434", modelExample: "qwen2.5-coder:7b", idHint: "localCustom" },
+        anthropic: { tier: "private-remote", apiKeyEnv: "ANTHROPIC_API_KEY", baseUrl: "",                       modelExample: "claude-sonnet-4-6", idHint: "claudeCustom" },
+        openai:    { tier: "public-cloud",   apiKeyEnv: "OPENAI_API_KEY",    baseUrl: "",                       modelExample: "gpt-4o", idHint: "gptCustom" },
+      };
+      const tpl = tplByProvider[provider.value]!;
+
+      const id = await vscode.window.showInputBox({
+        prompt: vscode.l10n.t("Profile id"),
+        placeHolder: tpl.idHint,
+        validateInput: (v) => (/^[A-Za-z][A-Za-z0-9_-]*$/.test(v.trim()) ? null : vscode.l10n.t("must start with a letter; letters/digits/_/- only")),
+      });
+      if (!id) return;
+
+      const model = await vscode.window.showInputBox({
+        prompt: vscode.l10n.t("Model name"),
+        value: tpl.modelExample,
+      });
+      if (!model) return;
+
+      let apiKeyEnv: string | undefined;
+      if (tpl.tier !== "local-device") {
+        apiKeyEnv = await vscode.window.showInputBox({
+          prompt: vscode.l10n.t("API key env var"),
+          value: tpl.apiKeyEnv,
+        });
+        if (apiKeyEnv === undefined) return;
+      }
+
+      let baseUrl: string | undefined;
+      if (tpl.tier === "local-device") {
+        baseUrl = await vscode.window.showInputBox({
+          prompt: vscode.l10n.t("Base URL"),
+          value: tpl.baseUrl,
+        });
+        if (baseUrl === undefined) return;
+      }
+
+      const scopePick = await vscode.window.showQuickPick(
+        [
+          { label: vscode.l10n.t("workspace"), description: vscode.l10n.t("this project only — ./tierkit.config.json"), value: "workspace" as const },
+          { label: vscode.l10n.t("user"), description: vscode.l10n.t("all folders — ~/.tierkit/config.json"), value: "user" as const },
+        ],
+        { placeHolder: vscode.l10n.t("Save profile to") },
+      );
+      if (!scopePick) return;
+
+      const profile: Record<string, unknown> = {
+        kind: tpl.tier,
+        provider: provider.value,
+        model: model.trim(),
+        roles: [],
+      };
+      if (apiKeyEnv) profile.apiKeyEnv = apiKeyEnv.trim();
+      if (baseUrl) profile.baseUrl = baseUrl.trim();
+      if (tpl.tier === "public-cloud") {
+        profile.requiresApproval = true;
+        profile.defaultMode = "review-only";
+      }
+
+      const r = await withClient((c) =>
+        c.configAddProfile({ id: id.trim(), profile, scope: scopePick.value }),
+      );
+      if (!r) return;
+      void vscode.window.showInformationMessage(
+        vscode.l10n.t("Tierkit: added profile {0} ({1})", r.id, r.scope),
+      );
+      sidebarRef?.render();
     }),
   );
 }
