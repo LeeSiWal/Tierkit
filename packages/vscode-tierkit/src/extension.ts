@@ -13,12 +13,72 @@
  */
 import * as vscode from "vscode";
 import { TierkitClient, TierkitClientError } from "@tierkit/client";
+import { GUI_HTML } from "@tierkit/core";
 
 let statusItem: vscode.StatusBarItem | undefined;
 
 function makeClient(): TierkitClient {
   const config = vscode.workspace.getConfiguration("tierkit");
   return new TierkitClient({ baseUrl: config.get<string>("baseUrl") ?? "http://127.0.0.1:4101" });
+}
+
+function baseUrl(): string {
+  const config = vscode.workspace.getConfiguration("tierkit");
+  return config.get<string>("baseUrl") ?? "http://127.0.0.1:4101";
+}
+
+/**
+ * Renders the Tierkit dashboard inside VS Code's sidebar (activity bar → Tierkit).
+ *
+ * The webview embeds the same `GUI_HTML` the daemon serves directly to a browser. We inject
+ * two things at the top of the document:
+ *
+ *   1. A CSP meta tag that allows inline scripts/styles (the GUI is single-file) and
+ *      explicitly permits `connect-src` to `http://127.0.0.1:*` so the in-page `fetch` can
+ *      reach the daemon. VS Code webviews default to a very restrictive CSP otherwise.
+ *
+ *   2. A tiny bootstrap script that sets `window.__TIERKIT_BASE_URL__` from VS Code config —
+ *      the GUI's `fetch` then prepends that to every request. Same HTML works in browser
+ *      (BASE = "") and in the webview (BASE = "http://127.0.0.1:4101").
+ *
+ * The webview is `retainContextWhenHidden: true` so flipping to another sidebar view and
+ * back doesn't reset the panel state.
+ */
+class TierkitSidebarProvider implements vscode.WebviewViewProvider {
+  public static readonly viewType = "tierkit.sidebar";
+
+  resolveWebviewView(webviewView: vscode.WebviewView): void {
+    webviewView.webview.options = {
+      enableScripts: true,
+      localResourceRoots: [],
+    };
+    webviewView.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl());
+
+    // Re-render when the user changes `tierkit.baseUrl` so the next page load uses it.
+    const sub = vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("tierkit.baseUrl")) {
+        webviewView.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl());
+      }
+    });
+    webviewView.onDidDispose(() => sub.dispose());
+  }
+}
+
+function wrapHtmlForWebview(html: string, base: string): string {
+  // Allowed connect targets — keep narrow. We support 127.0.0.1 and localhost on any port
+  // so users who run the daemon on a non-default port still work.
+  const csp =
+    `<meta http-equiv="Content-Security-Policy" content="` +
+    `default-src 'none'; ` +
+    `style-src 'unsafe-inline'; ` +
+    `script-src 'unsafe-inline'; ` +
+    `connect-src http://127.0.0.1:* http://localhost:*; ` +
+    `img-src data: https:; ` +
+    `font-src data:;` +
+    `">`;
+  const bootstrap = `<script>window.__TIERKIT_BASE_URL__ = ${JSON.stringify(base)};</script>`;
+  // Inject right after <head> so CSP applies before the GUI's inline <script> runs.
+  return html.replace(/<head>/i, `<head>\n${csp}\n${bootstrap}`);
 }
 
 async function withClient<T>(action: (c: TierkitClient) => Promise<T>): Promise<T | undefined> {
@@ -37,6 +97,17 @@ async function withClient<T>(action: (c: TierkitClient) => Promise<T>): Promise<
 }
 
 export function activate(context: vscode.ExtensionContext): void {
+  // ── Sidebar dashboard webview ──
+  const sidebar = new TierkitSidebarProvider();
+  context.subscriptions.push(
+    vscode.window.registerWebviewViewProvider(TierkitSidebarProvider.viewType, sidebar, {
+      webviewOptions: { retainContextWhenHidden: true },
+    }),
+    vscode.commands.registerCommand("tierkit.focusSidebar", () => {
+      void vscode.commands.executeCommand("workbench.view.extension.tierkit");
+    }),
+  );
+
   // ── Status bar ──
   const config = vscode.workspace.getConfiguration("tierkit");
   if (config.get<boolean>("statusBar") !== false) {
@@ -136,10 +207,21 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
 
     vscode.commands.registerCommand("tierkit.sessionStatus", async () => {
-      // The runtime daemon doesn't expose /v1/session yet in this scaffold; surface a hint.
+      // The sidebar dashboard surfaces the current session. Point users there.
+      const r = await withClient((c) => c.session());
+      if (!r) return;
+      if (!r.session) {
+        void vscode.window.showInformationMessage(
+          `Tierkit: no current session (freedom=${r.freedom}). Open the Tierkit sidebar to start one.`,
+        );
+        return;
+      }
       void vscode.window.showInformationMessage(
-        "Tierkit: session status is currently CLI-only. Run `tierkit session status` in a terminal. A /v1/session endpoint is on the v1.x roadmap.",
+        `Tierkit session ${r.session.id.slice(0, 8)} — state=${r.session.state}` +
+          (r.session.planApproved ? ", plan ✓" : "") +
+          ` — open the Tierkit sidebar for full controls.`,
       );
+      await vscode.commands.executeCommand("tierkit.focusSidebar");
     }),
   );
 }

@@ -4,9 +4,9 @@ Tierkit is a local-first hybrid plugin runtime for AI coding agents.
 
 It lets you write one plugin format and adapt it to tools like Cline, Zoo/Roo Code, and Continue — while routing work across local models, private remote models, and public cloud models based on risk, cost, and workflow policy.
 
-> Status: **v1.5 alpha.** Browser GUI + workflow sessions + 4 export adapters + HTTP daemon shipped. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
+> Status: **v1.6 alpha.** Browser GUI **+ VS Code sidebar embedding the same GUI** + workflow sessions + 4 export adapters + HTTP daemon shipped. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
 
-> 🇰🇷 **한글 시작 가이드:** [docs/GUIDE.ko.md](docs/GUIDE.ko.md) — 설치부터 첫 모델 호출까지 4단계.
+> 🇰🇷 **한글 가이드:** [docs/GUIDE.ko.md](docs/GUIDE.ko.md) (설치부터 첫 모델 호출) · [docs/PUBLISH.ko.md](docs/PUBLISH.ko.md) (VS Code 확장 마켓플레이스 publish).
 
 ## What's in this monorepo
 
@@ -75,10 +75,14 @@ node packages/cli/dist/index.js plugin remove superpowers-free
 #   POST /v1/session/advance          { toState: planning|implementing|reviewing|done|abandoned, reason? }
 #   POST /v1/session/abandon          { reason? }
 #   GET  /v1/models                   ← list configured profiles
+#   POST /v1/models/test              { profileId }      ← probe reachability + model availability
 #   GET  /v1/plugins                  ← list installed plugins
 
 # Browser GUI — once `tierkit runtime start` is up:
 #   open http://127.0.0.1:4101/       # run tasks, drive sessions, watch usage, no terminal
+#
+# Or install the VS Code companion (`packages/vscode-tierkit/tierkit-vscode-*.vsix`)
+# and pin the Tierkit sidebar — the same GUI lives in the activity bar.
 
 # v1.1 — actually run the model (streaming)
 node packages/cli/dist/index.js route run "summarize this project"

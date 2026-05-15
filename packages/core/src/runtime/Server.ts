@@ -18,6 +18,7 @@ import {
   SessionError,
 } from "../usecases/session.js";
 import { listModels } from "../usecases/listModels.js";
+import { testModel, TestModelError } from "../usecases/testModel.js";
 import { listPlugins } from "../usecases/listPlugins.js";
 import { GUI_HTML } from "./ui/gui.js";
 import type { SessionState } from "./session/ExecutionSession.js";
@@ -207,6 +208,22 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       if (route === "GET /v1/models") {
         const r = await listModels({ cwd: opts.cwd });
         return sendJson(res, 200, r);
+      }
+
+      if (route === "POST /v1/models/test") {
+        const body = await readJsonBody<{ profileId: string }>(req);
+        if (!body || typeof body.profileId !== "string") {
+          return sendJson(res, 400, { error: "request must be { profileId: string }" });
+        }
+        try {
+          const r = await testModel({ cwd: opts.cwd, profileId: body.profileId, env });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof TestModelError) {
+            return sendJson(res, 400, { code: err.code, message: err.message });
+          }
+          throw err;
+        }
       }
 
       if (route === "GET /v1/plugins") {

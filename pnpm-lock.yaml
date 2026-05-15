@@ -163,6 +163,9 @@ importers:
       '@tierkit/client':
         specifier: workspace:*
         version: link:../client
+      '@tierkit/core':
+        specifier: workspace:*
+        version: link:../core
     devDependencies:
       '@types/node':
         specifier: ^20.14.10

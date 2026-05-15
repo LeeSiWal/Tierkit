@@ -184,6 +184,10 @@ export class TierkitClient {
     return this.get("/v1/models");
   }
 
+  async modelsTest(profileId: string): Promise<unknown> {
+    return this.post("/v1/models/test", { profileId });
+  }
+
   async plugins(): Promise<ListPluginsResult> {
     return this.get("/v1/plugins");
   }

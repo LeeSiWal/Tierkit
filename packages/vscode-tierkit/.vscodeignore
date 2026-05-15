@@ -1,13 +1,14 @@
 # Ignore everything by default and re-include only what the extension actually needs.
 **
 
-# Re-include the compiled extension + manifest + license + readme + icon.
+# Re-include the compiled extension + manifest + license + readme + icon + media (sidebar icon).
 !dist/**
 !package.json
 !LICENSE
 !README.md
 !icon.png
 !CHANGELOG.md
+!media/**
 
 # Exclude sourcemaps from the published .vsix (keep dist/extension.js only).
 dist/**/*.map

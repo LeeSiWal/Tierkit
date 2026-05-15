@@ -295,6 +295,9 @@ export {
 // Runtime config schema (added in v1.0)
 export { RuntimeConfigSchema } from "./config/TierkitConfig.js";
 
+// v1.6: GUI HTML asset (used by direct browser serve + by host extensions embedding a webview)
+export { GUI_HTML } from "./runtime/ui/gui.js";
+
 // Model provider clients
 export {
   pickProviderClient,

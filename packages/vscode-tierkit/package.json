@@ -27,20 +27,40 @@
     "local-first"
   ],
   "main": "./dist/extension.js",
+  "icon": "icon.png",
   "repository": {
     "type": "git",
-    "url": "https://example.com/tierkit.git",
+    "url": "https://github.com/LeeSiWal/Tierkit.git",
     "directory": "packages/vscode-tierkit"
   },
   "bugs": {
-    "url": "https://example.com/tierkit/issues"
+    "url": "https://github.com/LeeSiWal/Tierkit/issues"
   },
-  "homepage": "https://example.com/tierkit",
+  "homepage": "https://github.com/LeeSiWal/Tierkit#readme",
   "activationEvents": [
     "onStartupFinished"
   ],
   "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "tierkit",
+          "title": "Tierkit",
+          "icon": "media/tierkit.svg"
+        }
+      ]
+    },
+    "views": {
+      "tierkit": [
+        {
+          "type": "webview",
+          "id": "tierkit.sidebar",
+          "name": "Dashboard"
+        }
+      ]
+    },
     "commands": [
+      { "command": "tierkit.focusSidebar",  "title": "Tierkit: Focus dashboard sidebar" },
       { "command": "tierkit.health",        "title": "Tierkit: Check runtime health" },
       { "command": "tierkit.routeExplain",  "title": "Tierkit: Explain route for current task" },
       { "command": "tierkit.routeRun",      "title": "Tierkit: Run task through Tierkit (streamed)" },
@@ -70,13 +90,15 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist *.vsix .tsbuildinfo",
-    "package": "vsce package --no-dependencies --out tierkit-vscode-${npm_package_version}.vsix",
-    "package:dry-run": "vsce package --no-dependencies --no-yarn --no-update-package-json --out /tmp/tierkit-vscode-dryrun.vsix && unzip -l /tmp/tierkit-vscode-dryrun.vsix",
-    "publish:vsix": "vsce publish --no-dependencies",
+    "prepublish:check": "node -e \"const p=require('./package.json'); if(p.publisher==='tierkit-placeholder'){console.error('ABORT: package.json::publisher is still the placeholder. Edit it to your actual VS Code Marketplace publisher id before publishing.'); process.exit(1)} if(!require('fs').existsSync('./icon.png')){console.error('ABORT: icon.png is missing. Generate one from media/tierkit.svg with: rsvg-convert -w 128 -h 128 media/tierkit.svg -o icon.png'); process.exit(1)} console.log('prepublish check ok: publisher=' + p.publisher + ', icon=icon.png present')\"",
+    "package": "pnpm run prepublish:check && vsce package --no-dependencies --out tierkit-vscode-${npm_package_version}.vsix",
+    "package:sideload": "vsce package --no-dependencies --allow-missing-repository --skip-license --out tierkit-vscode-${npm_package_version}.vsix",
+    "publish:vsix": "pnpm run prepublish:check && vsce publish --no-dependencies",
     "vsix:install": "code --install-extension tierkit-vscode-${npm_package_version}.vsix"
   },
   "dependencies": {
-    "@tierkit/client": "workspace:*"
+    "@tierkit/client": "workspace:*",
+    "@tierkit/core": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",
