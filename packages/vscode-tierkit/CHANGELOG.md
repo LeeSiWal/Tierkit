@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.6.0 — 2026-05-16
+
+**Daily-driver polish.** 0.4.3 → 0.6.0 in one release (the smaller versions were planned increments — they all ship together here). Adds observability, file-aware composer, two new tools, history compression, git checkpoints, drag-drop, settings panel, and per-session approval whitelisting.
+
+### Composer / agent panel
+- **Token meter** in the panel header shows cumulative session tokens. Per-turn breakdown (`X in / Y out tok · profile`) renders inline as a meta line.
+- **Export / Import / Clear** buttons next to the panel header — conversations round-trip as `tierkit-agent-*.json` (schema `tierkit-agent-conversation@1`).
+- **@filename autocomplete** — typing `@` in the composer queries `/v1/workspace/files?prefix=` and shows up to 8 matches in a floating dropdown. Picking one inserts `@path/to/file ` into the input; on submit, `[Files referenced by user: ...]` is appended to the task so the agent knows which files the user pointed at.
+- **/cmd autocomplete** and **mode picker** (carried over from 0.4.2) refined.
+- **Drag-drop**: drag files from the VS Code Explorer or your OS file manager into the composer to insert `@path` tokens for each.
+
+### Approval flow
+- **Session whitelist**: the Approve prompt now has a `remember for this session (tool_name)` checkbox. Once checked + approved, further calls of the same tool auto-resolve for the lifetime of the page; clearing the thread resets the whitelist.
+- **Native VS Code diff preview**: write_file tool cards in the agent panel get a `Preview` button that opens a side-by-side diff against the existing workspace file using `vscode.diff`. apply_diff cards get an `Open` button that focuses the target file in the editor.
+- **Stop button now kills running shell commands**: the SSE abort fires an `AbortSignal` plumbed through `AgentContext` into `execute_command`, which SIGTERMs the child and reports `aborted` as the tool result.
+
+### New tools
+- **search_and_replace** — regex-based replace-all in a single file. Requires approval. Use this when apply_diff would need multiple identical edits.
+- **codebase_search** — natural-language query → BM25-ish keyword + locality ranking → top 20 file:line snippets. No embedding store required. Use this when you don't know exact symbol names. For exact substring matches, prefer `search_files`.
+
+### Reliability
+- **History compression**: after 40 messages, older tool-result messages get elided to a 1-line summary (`first line\n[…N bytes elided by history compression…]`). System + initial user message + the latest 16 messages are always kept verbatim. Keeps context budget sane on long sessions.
+- **Git checkpoints**: before any destructive tool runs (`write_file`, `apply_diff`, `search_and_replace`), the agent calls `git stash create` and stores the resulting commit under `refs/tierkit-checkpoints/<id>`. The ref name surfaces in the panel so you can restore with `git checkout refs/tierkit-checkpoints/<id> -- <path>`. Best-effort: non-git workspaces silently skip.
+
+### Settings panel
+- New **Settings** card in Mission Control shows the resolved config: workspace + user config paths, `found: yes/no`, and a table of model profiles with their source (`bundled` / `user` / `workspace` / `discovered`). API keys are redacted server-side.
+
+### Daemon endpoints added
+- `GET /v1/config` — sanitized config snapshot (API keys redacted)
+- `GET /v1/workspace/files?prefix=&limit=` — workspace file listing for `@` autocomplete
+
+### Webview ↔ extension host messages
+- `previewDiff { path, proposed }` — open vscode.diff against `tierkit-preview:` virtual doc
+- `openFile { path }` — open file in editor
+
+### Tests
+- 5 new tool tests (search_and_replace, codebase_search). 27/27 agent + 243/243 core pass.
+
+### Skipped to 0.7.0 (need external runtime/provider work)
+- `browser_action` — needs Playwright integration
+- semantic `codebase_search` — needs embeddings provider
+- image input — needs multimodal provider passthrough
+- voice input — needs Whisper or similar STT
+
 ## 0.4.2 — 2026-05-16
 
 **Interactive approval, slash commands, mode picker, new tools.** 0.4.1 shipped the sidebar agent chat but auto-approved every dangerous tool call. 0.4.2 closes that gap and adds the polish needed for daily use.

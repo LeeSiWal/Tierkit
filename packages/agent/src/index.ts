@@ -17,6 +17,8 @@ export {
   executeCommandTool,
   applyDiffTool,
   askFollowupQuestionTool,
+  searchAndReplaceTool,
+  codebaseSearchTool,
 } from "./tools/index.js";
 export {
   createAgentRouteExtension,

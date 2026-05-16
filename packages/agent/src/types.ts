@@ -86,6 +86,12 @@ export interface AgentContext {
    * If `undefined`, default behavior is "auto-approve" (suited for headless / test runs).
    */
   approve?: (toolCall: AgentToolCall) => Promise<boolean>;
+  /**
+   * Optional cancellation signal. Long-running tools (execute_command, search_files, etc.)
+   * should check this and abort cleanly. The daemon-side route wires this to the HTTP
+   * request's `close` event so clicking Stop in the sidebar aborts in-flight commands.
+   */
+  abortSignal?: AbortSignal;
 }
 
 /**
@@ -95,6 +101,12 @@ export interface AgentContext {
 export type AgentEvent =
   | { type: "task_start"; taskId: string; task: string }
   | { type: "assistant_text"; text: string }
+  | {
+      type: "model_usage";
+      turn: number;
+      usage: { promptTokens: number; completionTokens: number; totalTokens: number };
+      profileId?: string;
+    }
   | { type: "tool_call"; call: AgentToolCall }
   | { type: "tool_approval_pending"; call: AgentToolCall }
   | { type: "tool_approval_resolved"; call: AgentToolCall; approved: boolean }
@@ -142,4 +154,7 @@ export interface AgentRunInput {
    * Passing both `approve` and `approvalMode` is allowed; `approve` wins.
    */
   approvalMode?: "auto" | "interactive";
+  /** Optional abort signal — propagated into tool execution. The daemon route wires this
+   * to the HTTP request's `close` event so clicking Stop kills any running execute_command. */
+  abortSignal?: AbortSignal;
 }

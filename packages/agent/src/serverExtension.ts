@@ -135,9 +135,12 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
       }
       send({ type: "stream_open" });
 
-      // If client aborts, ensure any pending approvals get auto-denied so the loop unblocks.
+      // If client aborts, ensure any pending approvals get auto-denied so the loop unblocks
+      // AND fire an AbortSignal that the tool layer can use to kill running subprocesses.
       const callIdsForThisRun = new Set<string>();
+      const runAbort = new AbortController();
       req.on("close", () => {
+        runAbort.abort();
         for (const id of callIdsForThisRun) {
           resolveApproval(id, false);
         }
@@ -153,6 +156,7 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
           ...(body.mode ? { mode: body.mode } : {}),
           ...(body.maxTurns !== undefined ? { maxTurns: body.maxTurns } : {}),
           approve: approveImpl,
+          abortSignal: runAbort.signal,
         };
         for await (const event of runAgent(input)) {
           if (event.type === "tool_approval_pending") {

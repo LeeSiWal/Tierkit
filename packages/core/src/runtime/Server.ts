@@ -1,5 +1,6 @@
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { explainRoute } from "../usecases/explainRoute.js";
 import { checkCommand } from "../usecases/checkCommand.js";
@@ -337,6 +338,40 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, { connections: r });
       }
 
+      // ── Resolved config snapshot (read-only). Sensitive fields (API key envs/values) are
+      // returned by name, not value — the daemon never echoes secrets back over HTTP. ──
+      if (route === "GET /v1/config") {
+        try {
+          const cfg = await loadConfig(opts.cwd);
+          const sanitized = JSON.parse(JSON.stringify(cfg.config)) as Record<string, unknown>;
+          const profiles = (sanitized.modelProfiles as Record<string, Record<string, unknown>> | undefined) ?? {};
+          for (const p of Object.values(profiles)) {
+            if ("apiKey" in p) p.apiKey = "[redacted]";
+          }
+          return sendJson(res, 200, {
+            configPath: cfg.configPath,
+            userConfigPath: cfg.userConfigPath,
+            found: cfg.found,
+            profileSources: cfg.profileSources,
+            config: sanitized,
+          });
+        } catch (err) {
+          return sendJson(res, 500, { code: "config-load-failed", message: (err as Error).message });
+        }
+      }
+
+      // ── Workspace file listing (used by @filename autocomplete in the GUI) ──
+      if (route === "GET /v1/workspace/files") {
+        const prefix = (url.searchParams.get("prefix") ?? "").slice(0, 200);
+        const limit = Math.min(Math.max(parseInt(url.searchParams.get("limit") ?? "30", 10) || 30, 1), 200);
+        try {
+          const r = await listWorkspaceFiles(opts.cwd, prefix, limit);
+          return sendJson(res, 200, { files: r });
+        } catch (err) {
+          return sendJson(res, 500, { code: "list-failed", message: (err as Error).message });
+        }
+      }
+
       // ── Plugin lifecycle (Mission Control toggles use these) ──
       if (route === "POST /v1/plugins/enable") {
         const body = await readJsonBody<{ pluginId: string }>(req);
@@ -505,6 +540,62 @@ async function readJsonBody<T>(req: http.IncomingMessage): Promise<T | undefined
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Walks the workspace once (BFS) and returns up to `limit` paths whose substring matches
+ * `prefix` (case-insensitive). Skips well-known noise dirs and any path with a leading dot
+ * past the first component to keep the result list small and useful for autocomplete.
+ *
+ * Bounded by ~30k stat()s — enough for typical monorepos, refuses to recurse past 5k entries
+ * to avoid runaway scans.
+ */
+const FILE_SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", ".next", ".turbo", ".cache",
+  "coverage", ".pnpm-store", ".tierkit", ".vscode", "out", "target",
+]);
+const FILE_MAX_VISITED = 5_000;
+async function listWorkspaceFiles(root: string, prefix: string, limit: number): Promise<string[]> {
+  const needle = prefix.toLowerCase();
+  const results: string[] = [];
+  const queue: string[] = [root];
+  let visited = 0;
+  while (queue.length > 0 && results.length < limit && visited < FILE_MAX_VISITED) {
+    const dir = queue.shift() ?? root;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const ent of entries) {
+      visited++;
+      if (visited > FILE_MAX_VISITED) break;
+      if (ent.name.startsWith(".") && ent.name !== ".env.example") continue; // skip dotfiles past root
+      if (ent.isDirectory()) {
+        if (FILE_SKIP_DIRS.has(ent.name)) continue;
+        queue.push(path.join(dir, ent.name));
+        continue;
+      }
+      if (!ent.isFile()) continue;
+      const full = path.join(dir, ent.name);
+      const rel = path.relative(root, full);
+      if (!needle || rel.toLowerCase().includes(needle)) {
+        results.push(rel);
+        if (results.length >= limit) break;
+      }
+    }
+  }
+  // Prefer matches where the basename starts with the prefix.
+  results.sort((a, b) => {
+    const aName = path.basename(a).toLowerCase();
+    const bName = path.basename(b).toLowerCase();
+    const aHit = aName.startsWith(needle) ? 0 : 1;
+    const bHit = bName.startsWith(needle) ? 0 : 1;
+    if (aHit !== bHit) return aHit - bHit;
+    return a.length - b.length;
+  });
+  return results;
 }
 
 function serializeSummary(s: ReturnType<typeof summarizeUsage>): object {

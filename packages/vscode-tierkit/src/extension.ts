@@ -205,6 +205,12 @@ class TierkitSidebarProvider implements vscode.WebviewViewProvider {
     webviewView.webview.onDidReceiveMessage((msg) => {
       if (msg?.type === "showOutput") outputChannel?.show(true);
       else if (msg?.type === "restartDaemon") void restartDaemon();
+      else if (msg?.type === "previewDiff" && typeof msg.path === "string" && typeof msg.proposed === "string") {
+        void previewDiff(msg.path, msg.proposed);
+      }
+      else if (msg?.type === "openFile" && typeof msg.path === "string") {
+        void openFile(msg.path);
+      }
     });
     this.render();
 
@@ -265,6 +271,54 @@ function wrapHtmlForWebview(html: string, base: string, errorMessage?: string): 
   return html.replace(/<head>/i, `<head>\n${csp}\n${bootstrap}`);
 }
 
+/**
+ * Show a side-by-side diff of an existing workspace file against the proposed new content.
+ * Used by the agent panel's tool_call(apply_diff/write_file) preview button. The proposed
+ * content lives in a virtual `tierkit-preview:` document so it survives until the user
+ * dismisses the diff view.
+ */
+async function previewDiff(relPath: string, proposed: string): Promise<void> {
+  const workspace = vscode.workspace.workspaceFolders?.[0];
+  if (!workspace) {
+    void vscode.window.showErrorMessage("Tierkit: no workspace open");
+    return;
+  }
+  // Path traversal guard — the agent only edits inside workspace, but a malicious tool
+  // arg could try to escape. Strip leading /, .. components.
+  const normalized = relPath.replace(/^\/+/, "").split(/[\/\\]/).filter((p) => p !== ".." && p !== "").join("/");
+  const existing = vscode.Uri.joinPath(workspace.uri, normalized);
+  // Stash the proposed content on a virtual document by writing to a temp untitled.
+  const proposedUri = existing.with({ scheme: "tierkit-preview", path: existing.path + ".proposed" });
+  proposedContentByUri.set(proposedUri.toString(), proposed);
+  try {
+    await vscode.commands.executeCommand(
+      "vscode.diff",
+      existing,
+      proposedUri,
+      `Tierkit: ${normalized} (proposed)`,
+      { preview: true },
+    );
+  } catch (err) {
+    void vscode.window.showErrorMessage(`Tierkit: failed to open diff — ${(err as Error).message}`);
+  }
+}
+
+const proposedContentByUri = new Map<string, string>();
+
+class TierkitPreviewProvider implements vscode.TextDocumentContentProvider {
+  provideTextDocumentContent(uri: vscode.Uri): string {
+    return proposedContentByUri.get(uri.toString()) ?? "";
+  }
+}
+
+async function openFile(relPath: string): Promise<void> {
+  const workspace = vscode.workspace.workspaceFolders?.[0];
+  if (!workspace) return;
+  const normalized = relPath.replace(/^\/+/, "").split(/[\/\\]/).filter((p) => p !== ".." && p !== "").join("/");
+  const uri = vscode.Uri.joinPath(workspace.uri, normalized);
+  try { await vscode.window.showTextDocument(uri, { preview: true }); } catch { /* ignore */ }
+}
+
 async function restartDaemon(): Promise<void> {
   log("restart: closing existing in-process server (if any)");
   if (serverHandle) {
@@ -310,6 +364,7 @@ export function activate(context: vscode.ExtensionContext): void {
   // ── Sidebar dashboard webview ──
   sidebarRef = new TierkitSidebarProvider();
   context.subscriptions.push(
+    vscode.workspace.registerTextDocumentContentProvider("tierkit-preview", new TierkitPreviewProvider()),
     vscode.window.registerWebviewViewProvider(TierkitSidebarProvider.viewType, sidebarRef, {
       webviewOptions: { retainContextWhenHidden: true },
     }),

@@ -310,6 +310,12 @@ export const GUI_HTML = `<!doctype html>
     <h2>
       <span data-i18n="cardAgent">Agent</span>
       <span id="agent-status" class="agent-status pill pill-dim">idle</span>
+      <span id="agent-usage-meter" class="pill pill-dim" style="font-size:10px;font-family:var(--mono);display:none">0 tok</span>
+      <span class="h2-actions">
+        <button id="btn-agent-export" class="tiny" title="export conversation" data-i18n="exportBtn">Export</button>
+        <button id="btn-agent-import" class="tiny" title="import conversation" data-i18n="importBtn">Import</button>
+        <button id="btn-agent-clear" class="tiny" title="clear thread" data-i18n="clearBtn">Clear</button>
+      </span>
     </h2>
     <div id="agent-thread" class="agent-thread">
       <div class="agent-empty" data-i18n="agentEmpty">Type a task below to run the Tierkit agent. Every model call goes through the same routing + policy stack as the rest of Tierkit.</div>
@@ -393,6 +399,16 @@ export const GUI_HTML = `<!doctype html>
     <div id="daemon-info" class="row mono dim" data-i18n="loading">loading…</div>
   </section>
 
+  <section class="card full">
+    <h2>
+      <span data-i18n="cardSettings">Settings</span>
+      <span class="h2-actions">
+        <button id="btn-settings-reload" class="tiny" data-i18n="reloadBtn">Reload</button>
+      </span>
+    </h2>
+    <div id="settings-view" class="row mono dim" data-i18n="loading">loading…</div>
+  </section>
+
 </main>
 
 <script>
@@ -416,6 +432,12 @@ export const GUI_HTML = `<!doctype html>
       approveBtn: '승인',
       denyBtn: '거부',
       modeAll: '(모든 도구)',
+      exportBtn: '내보내기',
+      importBtn: '불러오기',
+      clearBtn: '비우기',
+      cardSettings: '설정',
+      reloadBtn: '다시 불러오기',
+      sessionApproveAll: '이번 세션 동안 모두 승인',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -919,6 +941,7 @@ export const GUI_HTML = `<!doctype html>
   const agentModeSelect = $('agent-mode-select');
   const agentApprovalSelect = $('agent-approval-select');
   const agentSlashSuggest = $('agent-slash-suggest');
+  const agentUsageMeter = $('agent-usage-meter');
   let agentController = null; // AbortController for in-flight run
   // Map call.id → DOM node so tool_result can update the card created by tool_call.
   const toolNodesById = new Map();
@@ -926,6 +949,34 @@ export const GUI_HTML = `<!doctype html>
   const modesByName = new Map();
   // Map command name → command markdown content (loaded from /v1/plugins).
   const commandsByName = new Map();
+  // Cumulative token total across the active thread (resets on Clear / new Import).
+  let agentSessionTokens = 0;
+  // All events seen in this session — used by Export.
+  const agentEventLog = [];
+  // Tool names the user has whitelisted for this browser session via the "remember for this
+  // session" checkbox on the approval prompt. Resets on page reload / explicit Clear.
+  const sessionApprovedTools = new Set();
+  function updateUsageMeter() {
+    if (agentSessionTokens === 0) {
+      agentUsageMeter.style.display = 'none';
+      return;
+    }
+    agentUsageMeter.style.display = '';
+    const k = agentSessionTokens >= 1000 ? (agentSessionTokens / 1000).toFixed(1) + 'k' : String(agentSessionTokens);
+    agentUsageMeter.textContent = k + ' tok';
+  }
+  function resetAgentSession() {
+    agentSessionTokens = 0;
+    agentEventLog.length = 0;
+    toolNodesById.clear();
+    sessionApprovedTools.clear();
+    agentThread.innerHTML = '<div class="agent-empty" data-i18n="agentEmpty">' +
+      (lang === 'ko'
+        ? '아래 입력창에 작업을 입력하면 Tierkit 에이전트가 실행됩니다. 모든 모델 호출은 Tierkit 라우팅·정책 스택을 거칩니다.'
+        : 'Type a task below to run the Tierkit agent. Every model call goes through the same routing + policy stack as the rest of Tierkit.') +
+      '</div>';
+    updateUsageMeter();
+  }
 
   function setAgentRunning(running) {
     if (running) {
@@ -954,6 +1005,20 @@ export const GUI_HTML = `<!doctype html>
   }
   function renderAgentEvent(evt) {
     if (evt.type === 'stream_open') return; // silent
+    if (evt.type === 'model_usage') {
+      agentSessionTokens += evt.usage.totalTokens || ((evt.usage.promptTokens || 0) + (evt.usage.completionTokens || 0));
+      updateUsageMeter();
+      // Inline meta line so the user can see per-turn cost trickle in.
+      const el = document.createElement('div');
+      el.className = 'agent-msg-meta';
+      el.style.fontSize = '10.5px';
+      const profile = evt.profileId ? ' · ' + evt.profileId : '';
+      el.textContent = '· turn ' + evt.turn + ': ' + (evt.usage.promptTokens || 0) + ' in / ' + (evt.usage.completionTokens || 0) + ' out tok' + profile;
+      appendAgent(el);
+      agentEventLog.push(evt);
+      return;
+    }
+    agentEventLog.push(evt);
     if (evt.type === 'task_start') {
       const el = document.createElement('div');
       el.className = 'agent-msg agent-msg-user';
@@ -989,6 +1054,35 @@ export const GUI_HTML = `<!doctype html>
         isAsk_qBody;
       appendAgent(el);
       toolNodesById.set(evt.call.id, el);
+      // VS Code-only: offer a Preview link for write_file / apply_diff so the user can
+      // review the proposed change in a real diff editor before approving. The extension
+      // host listens for previewDiff postMessage.
+      if (vsApi) {
+        const head = el.querySelector('.agent-tool-head');
+        const a = evt.call.args || {};
+        if (evt.call.name === 'write_file' && typeof a.path === 'string' && typeof a.content === 'string') {
+          const link = document.createElement('button');
+          link.className = 'tiny';
+          link.style.marginLeft = '8px';
+          link.textContent = lang === 'ko' ? '미리보기' : 'Preview';
+          link.onclick = () => vsApi.postMessage({ type: 'previewDiff', path: a.path, proposed: a.content });
+          head.appendChild(link);
+        }
+        if (evt.call.name === 'apply_diff' && typeof a.path === 'string' && typeof a.search === 'string' && typeof a.replace === 'string') {
+          const link = document.createElement('button');
+          link.className = 'tiny';
+          link.style.marginLeft = '8px';
+          link.textContent = lang === 'ko' ? '미리보기' : 'Preview';
+          link.onclick = async () => {
+            // Fetch the current file via read_file proxy? We don't have that; instead just
+            // post the path + a placeholder. Real preview needs the proposed-after content,
+            // which we can't compute without reading the file. Fall back to opening the
+            // file so the user at least sees the target.
+            vsApi.postMessage({ type: 'openFile', path: a.path });
+          };
+          head.appendChild(link);
+        }
+      }
       return;
     }
     if (evt.type === 'tool_result') {
@@ -1037,6 +1131,18 @@ export const GUI_HTML = `<!doctype html>
       return;
     }
     if (evt.type === 'tool_approval_pending') {
+      // Session whitelist (resets on page reload / Clear): if the user previously checked
+      // "approve this tool for the rest of the session", auto-resolve and skip the prompt.
+      if (sessionApprovedTools.has(evt.call.name)) {
+        void jpost('/v1/agent/approval', { callId: evt.call.id, approved: true }).catch(() => {});
+        // Render a small meta line so the user knows it was auto-approved.
+        const meta = document.createElement('div');
+        meta.className = 'agent-msg-meta';
+        meta.style.fontSize = '10.5px';
+        meta.textContent = '· ' + (lang === 'ko' ? '세션 자동 승인' : 'session auto-approved') + ': ' + evt.call.name;
+        appendAgent(meta);
+        return;
+      }
       // Find the tool card created by the preceding tool_call event and replace its
       // pending body with [Approve][Deny] buttons that POST /v1/agent/approval.
       const el = toolNodesById.get(evt.call.id);
@@ -1046,22 +1152,32 @@ export const GUI_HTML = `<!doctype html>
       body.removeAttribute('data-pending');
       body.innerHTML = '';
       const wrap = document.createElement('div');
-      wrap.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 0';
+      wrap.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 0;flex-wrap:wrap';
       const approve = document.createElement('button');
       approve.className = 'primary tiny';
       approve.textContent = lang === 'ko' ? '승인' : 'Approve';
       const deny = document.createElement('button');
       deny.className = 'tiny';
       deny.textContent = lang === 'ko' ? '거부' : 'Deny';
+      const persistLabel = document.createElement('label');
+      persistLabel.style.cssText = 'font-size:10.5px;color:var(--fg-dim);display:flex;align-items:center;gap:4px';
+      const persistCb = document.createElement('input');
+      persistCb.type = 'checkbox';
+      persistCb.style.margin = '0';
+      persistLabel.appendChild(persistCb);
+      const persistText = document.createElement('span');
+      persistText.textContent = (lang === 'ko' ? '이번 세션 동안 모두 승인' : 'remember for this session') + ' (' + evt.call.name + ')';
+      persistLabel.appendChild(persistText);
       const msg = document.createElement('span');
       msg.className = 'dim';
       msg.style.fontSize = '11px';
       msg.style.marginLeft = '6px';
       msg.textContent = lang === 'ko' ? '승인 대기 중…' : 'awaiting approval…';
-      wrap.append(approve, deny, msg);
+      wrap.append(approve, deny, persistLabel, msg);
       body.appendChild(wrap);
       async function send(approved) {
-        approve.disabled = true; deny.disabled = true;
+        approve.disabled = true; deny.disabled = true; persistCb.disabled = true;
+        if (approved && persistCb.checked) sessionApprovedTools.add(evt.call.name);
         try {
           await jpost('/v1/agent/approval', { callId: evt.call.id, approved });
         } catch (e) {
@@ -1150,13 +1266,113 @@ export const GUI_HTML = `<!doctype html>
       };
     });
   }
+  // Detect the in-progress @token (the @word at the caret).
+  function currentAtToken() {
+    const v = agentInput.value;
+    const caret = agentInput.selectionStart ?? v.length;
+    const head = v.slice(0, caret);
+    const m = /(?:^|\s)@([\w\-./]*)$/.exec(head);
+    return m ? { match: m[1], start: caret - m[1].length - 1 } : null;
+  }
+  let atSuggestEl = null;
+  let atSuggestAbort = null;
+  function hideAtSuggest() {
+    if (atSuggestEl) { atSuggestEl.remove(); atSuggestEl = null; }
+    if (atSuggestAbort) { atSuggestAbort.abort(); atSuggestAbort = null; }
+  }
+  async function renderAtSuggest(prefix) {
+    hideAtSuggest();
+    atSuggestAbort = new AbortController();
+    let files = [];
+    try {
+      const r = await fetch(BASE + '/v1/workspace/files?prefix=' + encodeURIComponent(prefix) + '&limit=8', { signal: atSuggestAbort.signal });
+      const body = await r.json();
+      files = body.files || [];
+    } catch { return; }
+    if (files.length === 0) return;
+    atSuggestEl = document.createElement('div');
+    atSuggestEl.style.cssText = 'position:absolute;left:6px;right:60px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);max-height:200px;overflow-y:auto;font-family:var(--mono);font-size:11.5px;z-index:5';
+    const inputRect = agentInput.getBoundingClientRect();
+    const meta = $('agent-composer-meta');
+    const metaRect = meta.getBoundingClientRect();
+    atSuggestEl.style.position = 'fixed';
+    atSuggestEl.style.left = (inputRect.left + 4) + 'px';
+    atSuggestEl.style.top = (metaRect.bottom + 4) + 'px';
+    atSuggestEl.style.width = (inputRect.width - 70) + 'px';
+    atSuggestEl.innerHTML = files.map((f) =>
+      '<div class="at-item" data-path="' + escapeHtml(f) + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border)">' +
+        escapeHtml(f) +
+      '</div>',
+    ).join('');
+    document.body.appendChild(atSuggestEl);
+    atSuggestEl.querySelectorAll('.at-item').forEach((it) => {
+      it.onclick = () => {
+        const tok = currentAtToken();
+        if (!tok) { hideAtSuggest(); return; }
+        const v = agentInput.value;
+        const p = it.getAttribute('data-path');
+        agentInput.value = v.slice(0, tok.start) + '@' + p + ' ' + v.slice((agentInput.selectionStart ?? v.length));
+        hideAtSuggest();
+        agentInput.focus();
+      };
+    });
+  }
   agentInput.addEventListener('input', () => {
     const v = agentInput.value;
     if (v.startsWith('/') && !v.includes(' ')) {
       renderSlashSuggest(v.slice(1));
-    } else {
-      agentSlashSuggest.style.display = 'none';
+      hideAtSuggest();
+      return;
     }
+    agentSlashSuggest.style.display = 'none';
+    const tok = currentAtToken();
+    if (tok && tok.match.length >= 1) void renderAtSuggest(tok.match);
+    else hideAtSuggest();
+  });
+  agentInput.addEventListener('blur', () => setTimeout(hideAtSuggest, 150));
+
+  // ── Drag-and-drop: dropping files into the composer inserts @path tokens for each. ───
+  function setDragOver(on) {
+    agentInput.style.outline = on ? '2px dashed var(--accent)' : '';
+    agentInput.style.outlineOffset = on ? '-2px' : '';
+  }
+  agentInput.addEventListener('dragover', (e) => { e.preventDefault(); setDragOver(true); });
+  agentInput.addEventListener('dragleave', () => setDragOver(false));
+  agentInput.addEventListener('drop', (e) => {
+    e.preventDefault();
+    setDragOver(false);
+    const dt = e.dataTransfer;
+    if (!dt) return;
+    // Prefer text/uri-list (file:// URIs from the OS file manager / VS Code explorer).
+    let paths = [];
+    const uriList = dt.getData('text/uri-list');
+    if (uriList) {
+      for (const raw of uriList.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#')) continue;
+        try {
+          const u = new URL(line);
+          if (u.protocol === 'file:') paths.push(decodeURIComponent(u.pathname));
+        } catch { /* ignore */ }
+      }
+    }
+    // VS Code's webview-internal drag also sets text/plain to the path.
+    if (paths.length === 0) {
+      const t = dt.getData('text/plain');
+      if (t) paths.push(t);
+    }
+    if (paths.length === 0) return;
+    // Convert absolute paths under the workspace to workspace-relative form. Without the
+    // workspace root we just drop the path as-is; the @ token resolver below tolerates that.
+    const inserted = paths.map((p) => {
+      // Heuristic: anything starting with / is absolute. If the page knows its workspace
+      // base URL we could ask the daemon for it, but for now keep it simple.
+      const basename = p.split('/').filter(Boolean).slice(-3).join('/');
+      return '@' + basename;
+    }).join(' ');
+    const at = agentInput.selectionStart ?? agentInput.value.length;
+    agentInput.value = agentInput.value.slice(0, at) + (at > 0 && !/\s$/.test(agentInput.value.slice(0, at)) ? ' ' : '') + inserted + ' ' + agentInput.value.slice(at);
+    agentInput.focus();
   });
 
   async function submitAgentTask(task) {
@@ -1179,6 +1395,14 @@ export const GUI_HTML = `<!doctype html>
       finalTask =
         '[Plugin command: /' + cmd.name + ' from ' + cmd.pluginId + ' — ' + (cmd.description || '') + ']\n' +
         (rest ? rest : (lang === 'ko' ? '명령에 추가 인자 없음. 명령의 본래 의도대로 수행해.' : 'No additional args provided. Carry out the command according to its description.'));
+    }
+    // Collect @path references and surface them so the agent knows the user mentioned them.
+    // We don't pre-read the files — the agent's read_file tool exists for that. But by
+    // listing the paths up front we save a round-trip on small contexts.
+    const atRefs = [];
+    finalTask.replace(/(?:^|\s)@([\w\-./]+)/g, (_, p) => { if (p && !atRefs.includes(p)) atRefs.push(p); return _; });
+    if (atRefs.length > 0) {
+      finalTask = finalTask + '\n\n[Files referenced by user: ' + atRefs.join(', ') + '. Read them with the read_file tool if needed.]';
     }
     try {
       const res = await fetch(BASE + '/v1/agent/run', {
@@ -1231,6 +1455,55 @@ export const GUI_HTML = `<!doctype html>
   agentStop.onclick = () => {
     if (agentController) agentController.abort();
   };
+
+  // ── Export / Import / Clear ────────────────────────────────────────────────
+  $('btn-agent-clear').onclick = () => {
+    if (agentController) {
+      toast(lang === 'ko' ? '실행 중에는 비울 수 없음' : 'cannot clear while running', 'err');
+      return;
+    }
+    resetAgentSession();
+  };
+  $('btn-agent-export').onclick = () => {
+    const blob = new Blob(
+      [JSON.stringify({ schema: 'tierkit-agent-conversation@1', exportedAt: new Date().toISOString(), events: agentEventLog }, null, 2)],
+      { type: 'application/json' },
+    );
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tierkit-agent-' + Date.now() + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  };
+  $('btn-agent-import').onclick = () => {
+    if (agentController) {
+      toast(lang === 'ko' ? '실행 중에는 불러올 수 없음' : 'cannot import while running', 'err');
+      return;
+    }
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/json,.json';
+    input.onchange = async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      try {
+        const text = await file.text();
+        const parsed = JSON.parse(text);
+        if (!parsed || parsed.schema !== 'tierkit-agent-conversation@1' || !Array.isArray(parsed.events)) {
+          throw new Error('unrecognized conversation file');
+        }
+        resetAgentSession();
+        for (const evt of parsed.events) renderAgentEvent(evt);
+        toast(lang === 'ko' ? '대화 복원됨' : 'conversation restored', 'ok');
+      } catch (e) {
+        toast((lang === 'ko' ? '불러오기 실패: ' : 'import failed: ') + e.message, 'err');
+      }
+    };
+    input.click();
+  };
   agentInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -1240,9 +1513,44 @@ export const GUI_HTML = `<!doctype html>
     }
   });
 
+  // ── Settings panel: read-only view of the resolved Tierkit config + source map. ───
+  async function refreshSettings() {
+    const host = $('settings-view');
+    try {
+      const r = await jget('/v1/config');
+      const profileEntries = Object.entries(r.config?.modelProfiles || {});
+      const sources = r.profileSources || {};
+      const rows = profileEntries.map(([id, p]) => {
+        const src = sources[id] || 'unknown';
+        const tier = p.tier ? '<span class="pill pill-accent" style="font-size:9px">' + escapeHtml(p.tier) + '</span>' : '';
+        return '<tr>' +
+          '<td><b>' + escapeHtml(id) + '</b> ' + tier + '</td>' +
+          '<td>' + escapeHtml(p.provider || '') + '</td>' +
+          '<td>' + escapeHtml(p.model || '') + '</td>' +
+          '<td><span class="pill pill-dim" style="font-size:9px">' + escapeHtml(src) + '</span></td>' +
+          '</tr>';
+      }).join('');
+      const cfgPath = r.configPath || (lang === 'ko' ? '없음' : 'none');
+      const userPath = r.userConfigPath || (lang === 'ko' ? '없음' : 'none');
+      host.innerHTML =
+        '<div style="margin-bottom:8px;font-family:var(--mono);font-size:11px">' +
+          '<div>workspace: <span class="dim">' + escapeHtml(cfgPath) + '</span></div>' +
+          '<div>user: <span class="dim">' + escapeHtml(userPath) + '</span></div>' +
+          '<div>found: <span class="dim">' + (r.found ? 'yes' : 'no (using bundled defaults)') + '</span></div>' +
+        '</div>' +
+        '<table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--mono)">' +
+        '<thead><tr style="text-align:left;border-bottom:1px solid var(--border)">' +
+          '<th>profile</th><th>provider</th><th>model</th><th>source</th></tr></thead>' +
+        '<tbody>' + (rows || '<tr><td colspan="4" class="dim">no profiles</td></tr>') + '</tbody></table>';
+    } catch (e) {
+      host.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+  $('btn-settings-reload').onclick = refreshSettings;
+
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
-    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), loadAgentModesAndCommands()]);
+    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), loadAgentModesAndCommands(), refreshSettings()]);
   }
   $('btn-refresh').onclick = refreshAll;
 

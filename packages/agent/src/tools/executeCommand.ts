@@ -79,13 +79,27 @@ export const executeCommandTool: Tool = {
         setTimeout(() => child.killed || child.kill("SIGKILL"), 1000);
       }, timeoutMs);
 
+      let userAborted = false;
+      const onAbort = (): void => {
+        userAborted = true;
+        child.kill("SIGTERM");
+        setTimeout(() => child.killed || child.kill("SIGKILL"), 1000);
+      };
+      const sig = ctx.abortSignal;
+      if (sig) {
+        if (sig.aborted) onAbort();
+        else sig.addEventListener("abort", onAbort, { once: true });
+      }
+
       child.on("error", (err) => {
         clearTimeout(timer);
+        sig?.removeEventListener("abort", onAbort);
         resolve(failed("spawn-error", err.message));
       });
 
       child.on("close", (code, signal) => {
         clearTimeout(timer);
+        sig?.removeEventListener("abort", onAbort);
         const elapsedMs = Date.now() - start;
         const stdout = Buffer.concat(stdoutChunks).toString("utf8").slice(0, MAX_OUTPUT_BYTES);
         const stderr = Buffer.concat(stderrChunks).toString("utf8").slice(0, MAX_OUTPUT_BYTES);
@@ -93,6 +107,7 @@ export const executeCommandTool: Tool = {
         banner.push(`Command: ${command}`);
         banner.push(`Exit: ${code ?? "(signal " + signal + ")"} in ${elapsedMs}ms`);
         if (timedOut) banner.push(`Timed out after ${timeoutMs}ms — killed`);
+        if (userAborted) banner.push("Aborted by user — killed");
         if (cls.severity === "warn" && cls.matched.length > 0) {
           banner.push(`Warning rules matched: ${cls.matched.map((m) => m.id).join(", ")}`);
         }
@@ -101,11 +116,11 @@ export const executeCommandTool: Tool = {
         const parts: string[] = [banner.join("\n")];
         if (stdout.length > 0) parts.push("--- stdout ---\n" + stdout);
         if (stderr.length > 0) parts.push("--- stderr ---\n" + stderr);
-        const ok = !timedOut && code === 0;
+        const ok = !timedOut && !userAborted && code === 0;
         resolve({
           ok,
           content: parts.join("\n\n"),
-          ...(ok ? {} : { error: { code: timedOut ? "timeout" : "non-zero-exit", message: `exit ${code}` } }),
+          ...(ok ? {} : { error: { code: userAborted ? "aborted" : timedOut ? "timeout" : "non-zero-exit", message: userAborted ? "user aborted" : `exit ${code}` } }),
         });
       });
     });

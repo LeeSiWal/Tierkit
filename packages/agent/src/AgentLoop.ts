@@ -27,9 +27,13 @@ import type {
 import { buildSystemPrompt } from "./systemPrompt.js";
 import { parseAgentResponse } from "./parseResponse.js";
 import { DEFAULT_TOOLS, findTool } from "./tools/index.js";
+import { createGitCheckpoint } from "./tools/gitCheckpoint.js";
 
 const DEFAULT_MAX_TURNS = 25;
 const DEFAULT_BASE_URL = "http://127.0.0.1:4101";
+
+/** Tool names that mutate the workspace — we snapshot via git stash create before running. */
+const DESTRUCTIVE_TOOLS = new Set(["write_file", "apply_diff", "search_and_replace"]);
 
 export interface RunAgentDeps {
   /**
@@ -53,6 +57,10 @@ export interface ModelCallResponse {
   text: string;
   /** Native structured tool_calls if the provider returned them. */
   toolCalls?: AgentToolCall[];
+  /** Token usage as returned by the Tierkit daemon (openai-compat shape). */
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
+  /** Profile id that actually served the call (router may pick something different from input). */
+  profileId?: string;
 }
 
 export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): AsyncIterable<AgentEvent> {
@@ -68,6 +76,7 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
     env,
     tierkitBaseUrl,
     ...(input.approve ? { approve: input.approve } : {}),
+    ...(input.abortSignal ? { abortSignal: input.abortSignal } : {}),
   };
 
   const taskId = `task_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -84,9 +93,22 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
   ];
   const knownToolNames = tools.map((t) => t.name);
 
+  // Threshold above which we start replacing older tool results with summaries. Conservative:
+  // we keep system + first user turn + the most recent COMPRESS_KEEP_TAIL messages
+  // verbatim, and replace tool messages older than that with a 1-line summary. The agent's
+  // own assistant narrative is preserved (it's relatively small and the model uses it for
+  // self-orientation).
+  const COMPRESS_AFTER_MESSAGES = 40;
+  const COMPRESS_KEEP_TAIL = 16;
+
   let turn = 0;
   while (turn < maxTurns) {
     turn++;
+
+    // History compression — trim large old tool results to keep context budget sane.
+    if (messages.length > COMPRESS_AFTER_MESSAGES) {
+      compressOldToolResults(messages, COMPRESS_KEEP_TAIL);
+    }
 
     // ── Call the model via Tierkit daemon ─────────────────────────────────
     let modelResponse: ModelCallResponse;
@@ -101,6 +123,16 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
       return;
     }
 
+    // Surface usage (if any) before the assistant text so the UI can attach token counts
+    // to the upcoming turn.
+    if (modelResponse.usage) {
+      yield {
+        type: "model_usage",
+        turn,
+        usage: modelResponse.usage,
+        ...(modelResponse.profileId ? { profileId: modelResponse.profileId } : {}),
+      };
+    }
     // Surface the raw text so the UI can show "thinking" even before tools fire.
     if (modelResponse.text && modelResponse.text.trim().length > 0) {
       yield { type: "assistant_text", text: modelResponse.text };
@@ -175,6 +207,13 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
         }
       }
 
+      // Git checkpoint — for destructive tools, snapshot the working tree first. Best-effort:
+      // failures (no git, permission, etc.) are silently ignored so they never block the loop.
+      if (DESTRUCTIVE_TOOLS.has(call.name)) {
+        const ref = await createGitCheckpoint(ctx.cwd, call.name);
+        if (ref) yield { type: "assistant_text", text: `[checkpoint] ${ref} — restore with: git checkout ${ref} -- <path>` };
+      }
+
       // Run the tool.
       let result: ToolResult;
       try {
@@ -193,6 +232,27 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
 
   // Hit the turn cap without completing.
   yield { type: "turn_end", reason: "max_turns" };
+}
+
+/**
+ * In-place mutates `messages`: keeps the first 2 messages (system + initial user) plus the
+ * last `keepTail` messages verbatim. Older `tool` messages with large content are replaced
+ * by a 1-line summary so the conversation stays within reasonable context budget across
+ * long multi-turn sessions.
+ *
+ * Why only tool messages: assistant narrative is small and helps the model maintain its
+ * plan; user messages are rare and load-bearing; tool messages are where bytes accumulate.
+ */
+function compressOldToolResults(messages: AgentMessage[], keepTail: number): void {
+  const tailStart = Math.max(2, messages.length - keepTail);
+  for (let i = 2; i < tailStart; i++) {
+    const m = messages[i]!;
+    if (m.role === "tool" && m.content.length > 240) {
+      const firstLine = m.content.split(/\r?\n/, 1)[0] ?? "";
+      const elided = m.content.length - firstLine.length;
+      m.content = `${firstLine}\n[…${elided} bytes elided by history compression…]`;
+    }
+  }
 }
 
 function toWireMessage(m: AgentMessage): {
@@ -233,12 +293,14 @@ function makeDefaultCallModel(tierkitBaseUrl: string) {
     }
     const body = (await res.json()) as {
       error?: { message: string; code?: string };
+      model?: string;
       choices?: {
         message?: {
           content?: string | null;
           tool_calls?: { id: string; function: { name: string; arguments: string } }[];
         };
       }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
     };
     if (body.error) {
       throw new Error(`${body.error.code ?? "error"}: ${body.error.message}`);
@@ -255,6 +317,18 @@ function makeDefaultCallModel(tierkitBaseUrl: string) {
       }
       return { id: tc.id, name: tc.function.name, args };
     });
-    return { text, ...(toolCalls.length > 0 ? { toolCalls } : {}) };
+    const usage = body.usage
+      ? {
+          promptTokens: body.usage.prompt_tokens ?? 0,
+          completionTokens: body.usage.completion_tokens ?? 0,
+          totalTokens: body.usage.total_tokens ?? (body.usage.prompt_tokens ?? 0) + (body.usage.completion_tokens ?? 0),
+        }
+      : undefined;
+    return {
+      text,
+      ...(toolCalls.length > 0 ? { toolCalls } : {}),
+      ...(usage ? { usage } : {}),
+      ...(body.model ? { profileId: body.model } : {}),
+    };
   };
 }
