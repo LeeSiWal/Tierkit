@@ -319,6 +319,20 @@ export const GUI_HTML = `<!doctype html>
       <button id="agent-send" class="primary" title="send (Enter)">→</button>
       <button id="agent-stop" title="stop" style="display:none">■</button>
     </div>
+    <div id="agent-composer-meta" style="display:flex;gap:8px;align-items:center;margin-top:6px;font-size:11px;color:var(--fg-dim);flex-wrap:wrap">
+      <span data-i18n="modeLabel">mode:</span>
+      <select id="agent-mode-select" style="padding:2px 6px;font-size:11px"></select>
+      <span data-i18n="approvalLabel">approval:</span>
+      <select id="agent-approval-select" style="padding:2px 6px;font-size:11px">
+        <option value="auto" data-i18n="approvalAuto">auto</option>
+        <option value="interactive" data-i18n="approvalInteractive">ask each</option>
+      </select>
+      <span class="spacer" style="flex:1"></span>
+      <span><span class="kbd" style="font-family:var(--mono);background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:10px">/</span> <span data-i18n="forSlash">for plugin commands</span></span>
+    </div>
+    <div id="agent-slash-suggest" style="display:none;position:relative">
+      <div style="position:absolute;left:0;right:60px;bottom:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);max-height:180px;overflow-y:auto;font-family:var(--mono);font-size:11.5px;z-index:5"></div>
+    </div>
   </div>
 </div>
 
@@ -394,6 +408,14 @@ export const GUI_HTML = `<!doctype html>
       loading: '불러오는 중…',
       agentEmpty: '아래 입력창에 작업을 입력하면 Tierkit 에이전트가 실행됩니다. 모든 모델 호출은 Tierkit 라우팅·정책 스택을 거칩니다.',
       agentPlaceholder: '예: src/ 폴더 구조를 분석하고 설명해줘',
+      modeLabel: '모드:',
+      approvalLabel: '승인:',
+      approvalAuto: '자동',
+      approvalInteractive: '매번 묻기',
+      forSlash: '플러그인 명령',
+      approveBtn: '승인',
+      denyBtn: '거부',
+      modeAll: '(모든 도구)',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -894,9 +916,16 @@ export const GUI_HTML = `<!doctype html>
   const agentSend = $('agent-send');
   const agentStop = $('agent-stop');
   const agentStatus = $('agent-status');
+  const agentModeSelect = $('agent-mode-select');
+  const agentApprovalSelect = $('agent-approval-select');
+  const agentSlashSuggest = $('agent-slash-suggest');
   let agentController = null; // AbortController for in-flight run
   // Map call.id → DOM node so tool_result can update the card created by tool_call.
   const toolNodesById = new Map();
+  // Map mode name → mode definition (loaded from /v1/plugins).
+  const modesByName = new Map();
+  // Map command name → command markdown content (loaded from /v1/plugins).
+  const commandsByName = new Map();
 
   function setAgentRunning(running) {
     if (running) {
@@ -945,12 +974,19 @@ export const GUI_HTML = `<!doctype html>
       const args = Object.entries(evt.call.args || {})
         .map(([k, v]) => k + '=' + (typeof v === 'string' ? JSON.stringify(v.slice(0, 60)) : JSON.stringify(v)))
         .join(', ');
+      // Special-case ask_followup_question: render the question prominently with an
+      // explanation that the user's next message becomes the answer.
+      const isAskFollowup = evt.call.name === 'ask_followup_question';
+      const isAsk_qBody = isAskFollowup
+        ? '<div style="padding:6px 0;font-style:italic">❓ ' + escapeHtml(String(evt.call.args?.question || '')) + '</div>' +
+          '<div class="dim" style="font-size:11px">' + (lang === 'ko' ? '아래 입력창에 답을 입력하세요. 다음 메시지가 응답으로 전달됩니다.' : 'Type your answer below — your next message will be sent as the response.') + '</div>'
+        : '<div class="agent-tool-result" data-pending="1">' + (lang === 'ko' ? '실행 중…' : 'running…') + '</div>';
       el.innerHTML =
         '<div class="agent-tool-head">' +
           '<span class="agent-tool-name">⚙ ' + escapeHtml(evt.call.name) + '</span>' +
           '<span class="agent-tool-args">' + escapeHtml(args) + '</span>' +
         '</div>' +
-        '<div class="agent-tool-result" data-pending="1">' + (lang === 'ko' ? '실행 중…' : 'running…') + '</div>';
+        isAsk_qBody;
       appendAgent(el);
       toolNodesById.set(evt.call.id, el);
       return;
@@ -1001,32 +1037,154 @@ export const GUI_HTML = `<!doctype html>
       return;
     }
     if (evt.type === 'tool_approval_pending') {
-      // 0.4.0/0.4.1: daemon auto-approves; UI prompt comes in a later pass. Render
-      // a hint so the user sees the gate fired.
-      const el = document.createElement('div');
-      el.className = 'agent-msg-meta';
-      el.textContent = '· ' + (lang === 'ko' ? '도구 승인 처리 중' : 'tool approval...') + ' ' + evt.call.name;
-      appendAgent(el);
+      // Find the tool card created by the preceding tool_call event and replace its
+      // pending body with [Approve][Deny] buttons that POST /v1/agent/approval.
+      const el = toolNodesById.get(evt.call.id);
+      if (!el) return;
+      const body = el.querySelector('.agent-tool-result');
+      if (!body) return;
+      body.removeAttribute('data-pending');
+      body.innerHTML = '';
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'display:flex;gap:6px;align-items:center;padding:4px 0';
+      const approve = document.createElement('button');
+      approve.className = 'primary tiny';
+      approve.textContent = lang === 'ko' ? '승인' : 'Approve';
+      const deny = document.createElement('button');
+      deny.className = 'tiny';
+      deny.textContent = lang === 'ko' ? '거부' : 'Deny';
+      const msg = document.createElement('span');
+      msg.className = 'dim';
+      msg.style.fontSize = '11px';
+      msg.style.marginLeft = '6px';
+      msg.textContent = lang === 'ko' ? '승인 대기 중…' : 'awaiting approval…';
+      wrap.append(approve, deny, msg);
+      body.appendChild(wrap);
+      async function send(approved) {
+        approve.disabled = true; deny.disabled = true;
+        try {
+          await jpost('/v1/agent/approval', { callId: evt.call.id, approved });
+        } catch (e) {
+          msg.textContent = '[' + (lang === 'ko' ? '오류' : 'error') + '] ' + e.message;
+        }
+      }
+      approve.onclick = () => void send(true);
+      deny.onclick = () => void send(false);
+      el.classList.add('pending-approval');
+      scrollAgentBottom();
       return;
     }
     if (evt.type === 'tool_approval_resolved') {
-      // Silent — the tool_result that follows already conveys outcome.
+      const el = toolNodesById.get(evt.call.id);
+      if (!el) return;
+      el.classList.remove('pending-approval');
+      const body = el.querySelector('.agent-tool-result');
+      if (body) {
+        body.innerHTML = '';
+        body.textContent = evt.approved
+          ? (lang === 'ko' ? '✓ 승인됨 — 실행 중…' : '✓ Approved — running…')
+          : (lang === 'ko' ? '✗ 거부됨' : '✗ Denied');
+      }
       return;
     }
   }
 
+  // ── Mode + slash command loading ────────────────────────────────────────────
+  async function loadAgentModesAndCommands() {
+    try {
+      const r = await jget('/v1/plugins');
+      const list = (r.plugins || []).filter((p) => p.enabled);
+      modesByName.clear();
+      commandsByName.clear();
+      for (const p of list) {
+        const comps = p.manifest?.components || {};
+        for (const m of (comps.modes || [])) {
+          modesByName.set(m.id, { ...m, pluginId: p.id });
+        }
+        for (const c of (comps.commands || [])) {
+          commandsByName.set(c.name, { ...c, pluginId: p.id });
+        }
+      }
+      const prev = agentModeSelect.value;
+      agentModeSelect.innerHTML = '';
+      const allOpt = document.createElement('option');
+      allOpt.value = '';
+      allOpt.textContent = lang === 'ko' ? '(모든 도구)' : '(all tools)';
+      agentModeSelect.appendChild(allOpt);
+      for (const m of modesByName.values()) {
+        const opt = document.createElement('option');
+        opt.value = m.id;
+        opt.textContent = m.name + ' (' + m.pluginId + ')';
+        agentModeSelect.appendChild(opt);
+      }
+      if (prev && modesByName.has(prev)) agentModeSelect.value = prev;
+    } catch (e) { /* leave defaults */ }
+  }
+  function renderSlashSuggest(filter) {
+    const inner = agentSlashSuggest.firstElementChild;
+    if (!inner) return;
+    const matches = [...commandsByName.entries()]
+      .filter(([name]) => name.startsWith(filter))
+      .slice(0, 8);
+    if (matches.length === 0) {
+      agentSlashSuggest.style.display = 'none';
+      return;
+    }
+    inner.innerHTML = matches.map(([name, cmd]) =>
+      '<div class="slash-item" data-name="' + escapeHtml(name) + '" style="padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--border)">' +
+        '<div><b>/' + escapeHtml(name) + '</b> <span class="dim" style="font-size:10px">' + escapeHtml(cmd.pluginId) + '</span></div>' +
+        '<div class="dim" style="font-size:10.5px;margin-top:1px">' + escapeHtml(cmd.description || '') + '</div>' +
+      '</div>',
+    ).join('');
+    agentSlashSuggest.style.display = '';
+    inner.querySelectorAll('.slash-item').forEach((it) => {
+      it.onclick = () => {
+        const name = it.getAttribute('data-name');
+        // Replace the in-progress slash token with /name + space.
+        const v = agentInput.value;
+        const tokenEnd = v.indexOf(' ');
+        const head = tokenEnd === -1 ? '' : v.slice(tokenEnd);
+        agentInput.value = '/' + name + (head.length === 0 ? ' ' : head);
+        agentSlashSuggest.style.display = 'none';
+        agentInput.focus();
+      };
+    });
+  }
+  agentInput.addEventListener('input', () => {
+    const v = agentInput.value;
+    if (v.startsWith('/') && !v.includes(' ')) {
+      renderSlashSuggest(v.slice(1));
+    } else {
+      agentSlashSuggest.style.display = 'none';
+    }
+  });
+
   async function submitAgentTask(task) {
     if (!task || !task.trim()) return;
     if (agentController) return; // already running
+    agentSlashSuggest.style.display = 'none';
     toolNodesById.clear();
     setAgentRunning(true);
     agentController = new AbortController();
     let aborted = false;
+    // Pick up mode + approval mode from composer dropdowns.
+    const selectedMode = agentModeSelect.value || undefined;
+    const approvalMode = agentApprovalSelect.value === 'interactive' ? 'interactive' : 'auto';
+    // Expand /cmdname args into a Command preamble + rest as the agent task.
+    let finalTask = task;
+    const slashMatch = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/i.exec(task.trim());
+    if (slashMatch && commandsByName.has(slashMatch[1])) {
+      const cmd = commandsByName.get(slashMatch[1]);
+      const rest = slashMatch[2] || '';
+      finalTask =
+        '[Plugin command: /' + cmd.name + ' from ' + cmd.pluginId + ' — ' + (cmd.description || '') + ']\n' +
+        (rest ? rest : (lang === 'ko' ? '명령에 추가 인자 없음. 명령의 본래 의도대로 수행해.' : 'No additional args provided. Carry out the command according to its description.'));
+    }
     try {
       const res = await fetch(BASE + '/v1/agent/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ task }),
+        body: JSON.stringify({ task: finalTask, mode: selectedMode, approvalMode }),
         signal: agentController.signal,
       });
       if (!res.ok) {
@@ -1084,7 +1242,7 @@ export const GUI_HTML = `<!doctype html>
 
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
-    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels()]);
+    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), loadAgentModesAndCommands()]);
   }
   $('btn-refresh').onclick = refreshAll;
 

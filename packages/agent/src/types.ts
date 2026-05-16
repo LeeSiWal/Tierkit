@@ -133,4 +133,13 @@ export interface AgentRunInput {
    * a real approval handler that surfaces UI prompts in the sidebar.
    */
   approve?: (toolCall: AgentToolCall) => Promise<boolean>;
+  /**
+   * How the daemon route handles approval requests when no explicit `approve` is passed.
+   *   - `"auto"` (default): auto-approve every tool — fastest, no user interaction
+   *   - `"interactive"`: wait for the client to POST /v1/agent/approval before running the tool.
+   *     Use this when a UI consumer can respond (e.g. the sidebar). Requests time out after
+   *     5 minutes and are auto-denied.
+   * Passing both `approve` and `approvalMode` is allowed; `approve` wins.
+   */
+  approvalMode?: "auto" | "interactive";
 }

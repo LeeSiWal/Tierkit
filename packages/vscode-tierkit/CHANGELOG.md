@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.4.2 — 2026-05-16
+
+**Interactive approval, slash commands, mode picker, new tools.** 0.4.1 shipped the sidebar agent chat but auto-approved every dangerous tool call. 0.4.2 closes that gap and adds the polish needed for daily use.
+
+### What's new
+
+- **Interactive approval** — Below the input you now have an `approval:` dropdown with **auto** (default; old behaviour) and **ask each**. In ask-each mode, `write_file` / `execute_command` / `apply_diff` tool calls pause and render `[Approve] [Deny]` buttons inline on the tool card. Stop button auto-denies pending approvals. 5-minute server-side timeout also auto-denies.
+- **Slash commands** — Type `/` in the input and an autocomplete dropdown appears with the active plugins' commands (name + description + plugin id). Pick one and `/cmdname` is inserted. On send, the slash command expands to a `[Plugin command: /name ...]` preamble + your free-form args, so the agent sees the command intent + plugin attribution.
+- **Mode picker** — A `mode:` dropdown next to approval lists every mode from active plugins (`name (plugin-id)`). Selecting one is sent as `mode` in the run request and threaded into the agent's system prompt so the model knows which role it's playing.
+- **Two new tools**:
+  - `apply_diff` — targeted edit by searching for a unique substring and replacing it. Cheaper + safer than rewriting the whole file with `write_file`. Refuses if the search anchor appears 0 or >1 times. Requires approval.
+  - `ask_followup_question` — the agent can pause and ask the user a clarifying question. The tool card renders the question in italics with a hint that the next user message will become the answer. Read-only — never gated by approval.
+
+### Approval flow (UI ↔ server)
+
+```
+agent loop → tool_call(name=write_file)
+           → tool_approval_pending  ── UI replaces "running…" with [Approve][Deny]
+                                        user clicks → POST /v1/agent/approval {callId, approved}
+           ← tool_approval_resolved
+           → tool_result (or skipped if denied)
+```
+
+If the client disconnects mid-approval (Stop button / closed sidebar), the server auto-denies every pending approval for that run so the agent loop unblocks.
+
+### Composer layout
+
+```
+┌──────────────────────────────────────────────────┐
+│ │ Type a task...                          [→] [■]│
+│ mode: [(all tools) ▾]  approval: [auto ▾]    / for plugin commands │
+└──────────────────────────────────────────────────┘
+```
+
 ## 0.4.1 — 2026-05-16
 
 **Sidebar agent chat UI.** 0.4.0 shipped the agent infrastructure (HTTP only). 0.4.1 wires it into the Tierkit sidebar so users can run agent tasks from the Mission Control view without leaving VS Code.

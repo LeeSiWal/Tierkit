@@ -131,9 +131,9 @@ async function maybeStartDaemon(): Promise<void> {
       port,
       adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
       routeExtensions: [
-        // Auto-approve all tool calls for 0.4.0-alpha; UI-driven approval comes in a
-        // follow-up. Single-user local context, daemon binds loopback — this is safe.
-        createAgentRouteExtension({ approve: async () => true }),
+        // 0.4.2: no forced approve handler — the daemon route picks `auto` vs `interactive`
+        // per-request from the `approvalMode` body field set by the GUI's composer dropdown.
+        createAgentRouteExtension(),
       ],
     });
     effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
@@ -147,7 +147,7 @@ async function maybeStartDaemon(): Promise<void> {
         host: "127.0.0.1",
         port: 0,
         adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
-        routeExtensions: [createAgentRouteExtension({ approve: async () => true })],
+        routeExtensions: [createAgentRouteExtension()],
       });
       effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
       log(`auto-start: started on ${effectiveBaseUrl} (fallback)`);
