@@ -1,0 +1,98 @@
+name: Release VSIX
+
+# Trigger: a v* tag is pushed to GitHub (e.g. v0.8.2).
+# Pipeline:
+#   1. Build the monorepo
+#   2. Run tests (regression gate)
+#   3. Package the VS Code extension into a .vsix
+#   4. Attach the .vsix to the GitHub Release for that tag
+#   5. Publish to VS Code Marketplace (vsce) if VSCE_PAT secret is configured
+#   6. Publish to OpenVSX (ovsx) if OVSX_PAT secret is configured
+#
+# Each marketplace step is skipped if its secret is missing — first-time
+# manual setup remains possible without breaking the pipeline.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write  # needed to upload assets to the matching GitHub Release
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # No `version:` here — pnpm/action-setup reads it from root package.json
+      # (packageManager: pnpm@9.0.0). Specifying both errors with
+      # ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test
+        run: pnpm run test
+
+      - name: Verify tag matches vscode-tierkit version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./packages/vscode-tierkit/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "ERROR: tag ($TAG_VERSION) does not match package version ($PKG_VERSION)"
+            echo "Bump packages/vscode-tierkit/package.json and re-tag."
+            exit 1
+          fi
+
+      - name: Package VSIX
+        run: |
+          cd packages/vscode-tierkit
+          pnpm exec vsce package --no-dependencies --out tierkit-vscode-${GITHUB_REF_NAME#v}.vsix
+
+      - name: Attach VSIX to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VSIX="packages/vscode-tierkit/tierkit-vscode-${GITHUB_REF_NAME#v}.vsix"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$VSIX" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "$VSIX" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "VSCE_PAT secret not set — skipping Marketplace publish."
+            exit 0
+          fi
+          cd packages/vscode-tierkit
+          pnpm exec vsce publish --no-dependencies --packagePath tierkit-vscode-${GITHUB_REF_NAME#v}.vsix
+
+      - name: Publish to OpenVSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "OVSX_PAT secret not set — skipping OpenVSX publish."
+            exit 0
+          fi
+          cd packages/vscode-tierkit
+          pnpm dlx ovsx publish tierkit-vscode-${GITHUB_REF_NAME#v}.vsix -p "$OVSX_PAT"
