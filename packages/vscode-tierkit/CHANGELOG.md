@@ -1,5 +1,68 @@
 # Changelog
 
+## 0.4.1 — 2026-05-16
+
+**Sidebar agent chat UI.** 0.4.0 shipped the agent infrastructure (HTTP only). 0.4.1 wires it into the Tierkit sidebar so users can run agent tasks from the Mission Control view without leaving VS Code.
+
+### Layout
+The sidebar now has an **Agent panel above the Mission Control cards**:
+
+```
+┌──────────────────────────────────┐
+│ Tierkit  v0.1  guided  ↻          │
+├──────────────────────────────────┤
+│ ╔══════════════════════════════╗ │
+│ ║ AGENT             idle       ║ │
+│ ║                              ║ │
+│ ║  (thread renders here)        ║ │
+│ ║  ▸ list files in src         ║ │
+│ ║  ⚙ list_files path=src       ║ │
+│ ║     src/main.ts              ║ │
+│ ║     src/utils/...            ║ │
+│ ║  ✓ Task complete · 2 turns   ║ │
+│ ║                              ║ │
+│ ║ ┌──────────────────────────┐ ║ │
+│ ║ │ Type a task...        [→]│ ║ │
+│ ║ └──────────────────────────┘ ║ │
+│ ╚══════════════════════════════╝ │
+├──────────────────────────────────┤
+│ Mission Control cards (unchanged)│
+└──────────────────────────────────┘
+```
+
+### Event rendering
+The panel subscribes to the `POST /v1/agent/run` SSE stream and renders each `AgentEvent`:
+
+| Event | Visual |
+|---|---|
+| `task_start` | User-style line with `▸` prefix |
+| `assistant_text` | Plain text line in fg color |
+| `tool_call` | Inline card with `⚙ tool_name args=...` + "running…" placeholder |
+| `tool_result` | The same card updates with the result body; success/fail border color; expandable when output > 800 chars |
+| `task_complete` | Green panel with turn count |
+| `turn_end` | Dim meta line with reason |
+| `error` | Red panel |
+| `tool_approval_pending/resolved` | Hint line (UI prompts come in 0.4.2) |
+
+### Controls
+- **Enter** submits, **Shift+Enter** adds a newline
+- **Stop button** (■) appears while running — aborts the SSE connection via AbortController
+- Status pill in the header flips between `idle` ↔ `running…`
+- Auto-scrolls to bottom on every event; manual scroll respected
+
+### Compatibility
+- Mission Control cards unchanged — connected tools / plugins / activity / usage / models / daemon panels all still work
+- Agent panel uses the same Tierkit daemon endpoint that powers Roo/Cline integration — every model call goes through the routing + viability + shim + plugin-rule stack
+- Auto-approve for destructive tools (write_file, execute_command) in 0.4.1; UI approval prompts ship in 0.4.2
+
+### Tests
+371 unchanged (no test changes — UI is verified by smoke test). New smoke confirms:
+- `class="agent-shell"` present
+- `id="agent-thread"` present
+- `/v1/agent/run` reference in JS
+- AbortController plumbing (`agentController`) wired
+- Mission Control `class="card full"` still renders
+
 ## 0.4.0 — 2026-05-16
 
 **Tierkit gets its own agent.** New `@tierkit/agent` package + `POST /v1/agent/run` endpoint = Tierkit can now drive end-to-end coding tasks itself, without needing Roo / Cline / Continue.

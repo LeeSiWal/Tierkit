@@ -166,6 +166,131 @@ export const GUI_HTML = `<!doctype html>
   .toast.err { color: var(--err); border-color: rgba(247, 118, 142, 0.4); }
   .toast.ok { color: var(--ok); border-color: rgba(158, 206, 106, 0.4); }
   @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  /* ── Agent chat panel ──────────────────────────────────────────────────── */
+  .agent-shell {
+    max-width: 880px;
+    margin: 14px auto 0;
+    padding: 0 12px;
+  }
+  .agent-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+  }
+  .agent-card h2 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--fg-dim);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+  }
+  .agent-card h2 .agent-status { margin-left: auto; font-size: 10px; }
+  .agent-thread {
+    min-height: 80px;
+    max-height: 360px;
+    overflow-y: auto;
+    padding: 6px 0;
+    font-size: 12.5px;
+    line-height: 1.5;
+  }
+  .agent-msg { margin-bottom: 10px; }
+  .agent-msg-user {
+    color: var(--accent);
+    font-family: var(--mono);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .agent-msg-user::before { content: "▸ "; opacity: 0.7; }
+  .agent-msg-assistant {
+    color: var(--fg);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .agent-msg-meta {
+    font-size: 10.5px;
+    color: var(--fg-dim);
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+  .agent-tool {
+    margin: 4px 0 4px 12px;
+    padding: 5px 8px;
+    background: var(--bg-input);
+    border-left: 2px solid var(--accent);
+    border-radius: 0 4px 4px 0;
+    font-family: var(--mono);
+    font-size: 11.5px;
+  }
+  .agent-tool.err { border-left-color: var(--err); }
+  .agent-tool.ok { border-left-color: var(--ok); }
+  .agent-tool-head { display: flex; gap: 6px; align-items: baseline; }
+  .agent-tool-name { color: var(--accent); }
+  .agent-tool-args { color: var(--fg-dim); }
+  .agent-tool-result {
+    margin-top: 4px;
+    color: var(--fg-dim);
+    font-size: 10.5px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 140px;
+    overflow-y: auto;
+  }
+  .agent-tool-result.expanded { max-height: none; }
+  .agent-tool-toggle {
+    color: var(--fg-dim);
+    cursor: pointer;
+    user-select: none;
+    margin-top: 2px;
+    font-size: 10px;
+  }
+  .agent-complete {
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: rgba(158, 206, 106, 0.08);
+    border-left: 2px solid var(--ok);
+    border-radius: 0 4px 4px 0;
+    color: var(--ok);
+    font-size: 12px;
+  }
+  .agent-error {
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: rgba(247, 118, 142, 0.08);
+    border-left: 2px solid var(--err);
+    border-radius: 0 4px 4px 0;
+    color: var(--err);
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .agent-composer {
+    margin-top: 8px;
+    display: flex;
+    gap: 6px;
+  }
+  .agent-composer textarea {
+    flex: 1 1 auto;
+    min-height: 36px;
+    max-height: 140px;
+    resize: none;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.45;
+  }
+  .agent-composer button { flex: 0 0 auto; padding: 0 12px; font-size: 14px; align-self: stretch; }
+  .agent-empty {
+    color: var(--fg-dim);
+    font-style: italic;
+    font-size: 12px;
+    padding: 18px 0;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
@@ -179,6 +304,23 @@ export const GUI_HTML = `<!doctype html>
 </div>
 
 <div id="host-banner" class="err-banner" style="display:none"></div>
+
+<div class="agent-shell">
+  <div class="agent-card">
+    <h2>
+      <span data-i18n="cardAgent">Agent</span>
+      <span id="agent-status" class="agent-status pill pill-dim">idle</span>
+    </h2>
+    <div id="agent-thread" class="agent-thread">
+      <div class="agent-empty" data-i18n="agentEmpty">Type a task below to run the Tierkit agent. Every model call goes through the same routing + policy stack as the rest of Tierkit.</div>
+    </div>
+    <div class="agent-composer">
+      <textarea id="agent-input" rows="2" data-i18n-placeholder="agentPlaceholder" placeholder="Describe what you want done. e.g. 'list files in src/ and explain the structure'"></textarea>
+      <button id="agent-send" class="primary" title="send (Enter)">→</button>
+      <button id="agent-stop" title="stop" style="display:none">■</button>
+    </div>
+  </div>
+</div>
 
 <main>
 
@@ -246,9 +388,12 @@ export const GUI_HTML = `<!doctype html>
     ko: {
       cardTools: '연결된 도구', cardPlugins: '활성 플러그인', cardActivity: '최근 활동',
       cardUsage: '오늘 사용량', cardModels: '모델 프로파일', cardDaemon: '데몬',
+      cardAgent: '에이전트',
       sync: '플러그인 동기화', pluginNew: '+ 새 플러그인', profileAdd: '+ 추가',
       calls: '호출', tokens: '토큰', cost: '비용',
       loading: '불러오는 중…',
+      agentEmpty: '아래 입력창에 작업을 입력하면 Tierkit 에이전트가 실행됩니다. 모든 모델 호출은 Tierkit 라우팅·정책 스택을 거칩니다.',
+      agentPlaceholder: '예: src/ 폴더 구조를 분석하고 설명해줘',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -734,6 +879,208 @@ export const GUI_HTML = `<!doctype html>
     $('btn-host-output').onclick = () => post('showOutput');
     $('btn-host-restart').onclick = () => post('restartDaemon');
   })();
+
+  // ── Agent chat panel ───────────────────────────────────────────────────────
+  // Subscribes to /v1/agent/run SSE stream, renders the AgentEvent timeline live.
+  //   stream_open → status -> running
+  //   task_start → user bubble
+  //   assistant_text → assistant bubble (appended)
+  //   tool_call → tool card inserted
+  //   tool_result → tool card updated with result body
+  //   task_complete → green completion card; status -> idle
+  //   error → red error card; status -> idle
+  const agentThread = $('agent-thread');
+  const agentInput = $('agent-input');
+  const agentSend = $('agent-send');
+  const agentStop = $('agent-stop');
+  const agentStatus = $('agent-status');
+  let agentController = null; // AbortController for in-flight run
+  // Map call.id → DOM node so tool_result can update the card created by tool_call.
+  const toolNodesById = new Map();
+
+  function setAgentRunning(running) {
+    if (running) {
+      agentStatus.textContent = lang === 'ko' ? '실행 중…' : 'running…';
+      agentStatus.className = 'agent-status pill pill-accent';
+      agentSend.disabled = true;
+      agentStop.style.display = '';
+    } else {
+      agentStatus.textContent = lang === 'ko' ? '대기' : 'idle';
+      agentStatus.className = 'agent-status pill pill-dim';
+      agentSend.disabled = false;
+      agentStop.style.display = 'none';
+    }
+  }
+  function scrollAgentBottom() {
+    requestAnimationFrame(() => { agentThread.scrollTop = agentThread.scrollHeight; });
+  }
+  function clearAgentEmpty() {
+    const empty = agentThread.querySelector('.agent-empty');
+    if (empty) empty.remove();
+  }
+  function appendAgent(node) {
+    clearAgentEmpty();
+    agentThread.appendChild(node);
+    scrollAgentBottom();
+  }
+  function renderAgentEvent(evt) {
+    if (evt.type === 'stream_open') return; // silent
+    if (evt.type === 'task_start') {
+      const el = document.createElement('div');
+      el.className = 'agent-msg agent-msg-user';
+      el.textContent = evt.task;
+      appendAgent(el);
+      return;
+    }
+    if (evt.type === 'assistant_text') {
+      const el = document.createElement('div');
+      el.className = 'agent-msg agent-msg-assistant';
+      el.textContent = evt.text;
+      appendAgent(el);
+      return;
+    }
+    if (evt.type === 'tool_call') {
+      const el = document.createElement('div');
+      el.className = 'agent-tool';
+      const args = Object.entries(evt.call.args || {})
+        .map(([k, v]) => k + '=' + (typeof v === 'string' ? JSON.stringify(v.slice(0, 60)) : JSON.stringify(v)))
+        .join(', ');
+      el.innerHTML =
+        '<div class="agent-tool-head">' +
+          '<span class="agent-tool-name">⚙ ' + escapeHtml(evt.call.name) + '</span>' +
+          '<span class="agent-tool-args">' + escapeHtml(args) + '</span>' +
+        '</div>' +
+        '<div class="agent-tool-result" data-pending="1">' + (lang === 'ko' ? '실행 중…' : 'running…') + '</div>';
+      appendAgent(el);
+      toolNodesById.set(evt.call.id, el);
+      return;
+    }
+    if (evt.type === 'tool_result') {
+      const el = toolNodesById.get(evt.call.id);
+      if (!el) return;
+      el.classList.add(evt.result.ok ? 'ok' : 'err');
+      const body = el.querySelector('.agent-tool-result');
+      if (!body) return;
+      const content = String(evt.result.content || '');
+      const preview = content.length > 800 ? content.slice(0, 800) + '\n... (' + (content.length - 800) + ' more bytes)' : content;
+      body.removeAttribute('data-pending');
+      body.textContent = preview;
+      if (content.length > 800) {
+        const toggle = document.createElement('div');
+        toggle.className = 'agent-tool-toggle';
+        toggle.textContent = lang === 'ko' ? '전체 보기' : 'show full output';
+        toggle.onclick = () => {
+          body.textContent = content;
+          body.classList.add('expanded');
+          toggle.remove();
+        };
+        el.appendChild(toggle);
+      }
+      scrollAgentBottom();
+      return;
+    }
+    if (evt.type === 'task_complete') {
+      const el = document.createElement('div');
+      el.className = 'agent-complete';
+      el.textContent = '✓ ' + (lang === 'ko' ? '작업 완료' : 'Task complete') + ' · ' + evt.turnCount + ' ' + (lang === 'ko' ? '턴' : 'turns');
+      appendAgent(el);
+      return;
+    }
+    if (evt.type === 'turn_end') {
+      const el = document.createElement('div');
+      el.className = 'agent-msg-meta';
+      el.textContent = '— ' + (lang === 'ko' ? '턴 종료' : 'turn ended') + ': ' + evt.reason;
+      appendAgent(el);
+      return;
+    }
+    if (evt.type === 'error') {
+      const el = document.createElement('div');
+      el.className = 'agent-error';
+      el.textContent = '[' + evt.code + '] ' + evt.message;
+      appendAgent(el);
+      return;
+    }
+    if (evt.type === 'tool_approval_pending') {
+      // 0.4.0/0.4.1: daemon auto-approves; UI prompt comes in a later pass. Render
+      // a hint so the user sees the gate fired.
+      const el = document.createElement('div');
+      el.className = 'agent-msg-meta';
+      el.textContent = '· ' + (lang === 'ko' ? '도구 승인 처리 중' : 'tool approval...') + ' ' + evt.call.name;
+      appendAgent(el);
+      return;
+    }
+    if (evt.type === 'tool_approval_resolved') {
+      // Silent — the tool_result that follows already conveys outcome.
+      return;
+    }
+  }
+
+  async function submitAgentTask(task) {
+    if (!task || !task.trim()) return;
+    if (agentController) return; // already running
+    toolNodesById.clear();
+    setAgentRunning(true);
+    agentController = new AbortController();
+    let aborted = false;
+    try {
+      const res = await fetch(BASE + '/v1/agent/run', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ task }),
+        signal: agentController.signal,
+      });
+      if (!res.ok) {
+        const errBody = await res.json().catch(() => ({}));
+        renderAgentEvent({ type: 'error', code: errBody?.error?.code || ('http-' + res.status), message: errBody?.error?.message || ('HTTP ' + res.status) });
+        return;
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      while (true) {
+        const r = await reader.read();
+        if (r.done) break;
+        buf += decoder.decode(r.value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf('\n\n')) >= 0) {
+          const block = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 2);
+          if (!block.startsWith('data:')) continue;
+          const payload = block.slice('data:'.length).trim();
+          if (payload === '[DONE]') return;
+          try { renderAgentEvent(JSON.parse(payload)); } catch (e) { /* skip malformed */ }
+        }
+      }
+    } catch (e) {
+      if (e.name === 'AbortError') {
+        aborted = true;
+        renderAgentEvent({ type: 'error', code: 'aborted', message: lang === 'ko' ? '사용자가 중단함' : 'aborted by user' });
+      } else {
+        renderAgentEvent({ type: 'error', code: 'stream-error', message: e.message });
+      }
+    } finally {
+      agentController = null;
+      setAgentRunning(false);
+      void aborted; // satisfy lint
+    }
+  }
+
+  agentSend.onclick = () => {
+    const text = agentInput.value;
+    agentInput.value = '';
+    void submitAgentTask(text);
+  };
+  agentStop.onclick = () => {
+    if (agentController) agentController.abort();
+  };
+  agentInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      const text = agentInput.value;
+      agentInput.value = '';
+      void submitAgentTask(text);
+    }
+  });
 
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
