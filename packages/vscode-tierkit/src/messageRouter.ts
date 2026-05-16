@@ -54,6 +54,7 @@ export function createMessageRouter(opts: MessageRouterOptions): MessageRouter {
       const res = await opts.fetchProxy(opts.getBaseUrl() + msg.path, init);
       post({ type: "tk:res", id: msg.id, ok: res.ok, status: res.status, data: res.data });
     } catch (err) {
+      if (ctrl.signal.aborted) return; // disposed or explicit abort — don't post to a possibly-dead webview
       post({ type: "tk:err", id: msg.id, message: (err as Error).message });
     } finally {
       inflight.delete(msg.id);
