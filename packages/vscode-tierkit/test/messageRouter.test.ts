@@ -42,3 +42,53 @@ describe("messageRouter.handle tk:req", () => {
     expect(posted).toEqual([]); // no tk:err posted
   });
 });
+
+describe("messageRouter.handle tk:stream", () => {
+  it("yields chunks as tk:chunk and finishes with tk:done", async () => {
+    async function* fakeStream() {
+      yield { data: '{"type":"task_start"}' };
+      yield { data: '{"type":"delta","text":"x"}' };
+    }
+    const posted: any[] = [];
+    const router = createMessageRouter({
+      getBaseUrl: () => "http://127.0.0.1:4101",
+      fetchProxy: async () => { throw new Error("not called"); },
+      streamProxy: (_url, _init) => fakeStream(),
+      log: () => {},
+    });
+    await router.handle({ type: "tk:stream", id: 42, method: "POST", path: "/v1/agent/run", body: { task: "hi" } }, (m) => posted.push(m));
+    expect(posted).toEqual([
+      { type: "tk:chunk", id: 42, data: '{"type":"task_start"}' },
+      { type: "tk:chunk", id: 42, data: '{"type":"delta","text":"x"}' },
+      { type: "tk:done", id: 42, reason: "eof" },
+    ]);
+  });
+
+  it("posts tk:done reason=aborted after tk:abort", async () => {
+    let abortSeen = false;
+    async function* slowStream(_url: string, init: { signal: AbortSignal }) {
+      yield { data: "a" };
+      // Wait until aborted
+      await new Promise<void>((resolve) => {
+        init.signal.addEventListener("abort", () => { abortSeen = true; resolve(); });
+      });
+    }
+    const posted: any[] = [];
+    const router = createMessageRouter({
+      getBaseUrl: () => "x",
+      fetchProxy: async () => ({ ok: true, status: 200, data: {} }),
+      streamProxy: (u, i) => slowStream(u, i),
+      log: () => {},
+    });
+
+    // Kick off the stream
+    const p = router.handle({ type: "tk:stream", id: 9, method: "POST", path: "/x", body: {} }, (m) => posted.push(m));
+    // Wait for first chunk to land
+    await new Promise((r) => setTimeout(r, 10));
+    await router.handle({ type: "tk:abort", id: 9 }, () => {});
+    await p;
+    expect(abortSeen).toBe(true);
+    expect(posted[0]).toEqual({ type: "tk:chunk", id: 9, data: "a" });
+    expect(posted[posted.length - 1]).toEqual({ type: "tk:done", id: 9, reason: "aborted" });
+  });
+});

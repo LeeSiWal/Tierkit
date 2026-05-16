@@ -61,15 +61,51 @@ export function createMessageRouter(opts: MessageRouterOptions): MessageRouter {
     }
   }
 
+  async function handleStream(msg: IncomingMessage, post: (m: unknown) => void): Promise<void> {
+    if (typeof msg.id !== "number" || typeof msg.path !== "string") return;
+    const ctrl = new AbortController();
+    inflight.set(msg.id, ctrl);
+    const init = {
+      method: (msg.method || "POST").toUpperCase(),
+      body: msg.body !== undefined ? JSON.stringify(msg.body) : undefined,
+      signal: ctrl.signal,
+    };
+    let reason: "eof" | "aborted" | "error" = "eof";
+    let errMsg: string | undefined;
+    try {
+      for await (const chunk of opts.streamProxy(opts.getBaseUrl() + msg.path, init)) {
+        if (ctrl.signal.aborted) break;
+        post({ type: "tk:chunk", id: msg.id, data: chunk.data });
+      }
+      if (ctrl.signal.aborted) reason = "aborted";
+    } catch (err) {
+      if (ctrl.signal.aborted) {
+        reason = "aborted";
+      } else {
+        reason = "error";
+        errMsg = (err as Error).message;
+      }
+    } finally {
+      inflight.delete(msg.id);
+      const payload: { type: string; id: number; reason: string; error?: string } = {
+        type: "tk:done",
+        id: msg.id,
+        reason,
+      };
+      if (errMsg) payload.error = errMsg;
+      post(payload);
+    }
+  }
+
   return {
     async handle(msg, post) {
       if (msg.type === "tk:req") return handleReq(msg, post);
+      if (msg.type === "tk:stream") return handleStream(msg, post);
       if (msg.type === "tk:abort" && typeof msg.id === "number") {
         const c = inflight.get(msg.id);
         if (c) c.abort();
         return;
       }
-      // tk:stream — implemented in Task 8.
     },
     disposeAll() {
       for (const c of inflight.values()) c.abort();
