@@ -320,65 +320,92 @@ export const GUI_HTML = `<!doctype html>
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
 
-  /* ── Mobile (≤480px): touch-friendly sizes, sticky composer, overflow guards.
-        All rules below scope to small viewports; desktop/sidebar unchanged. ── */
-  @media (max-width: 480px) {
-    /* Base font + readability */
-    body { font-size: 14px; }
-    .dim, .mono { font-size: 12px; }
+  /* Touch responsiveness (all viewports). Strips iOS 300ms tap-delay +
+     double-tap zoom on interactive controls. Without touch-action:manipulation
+     taps were getting eaten by webview gesture pipeline in code-server. */
+  button, .tab-btn, .tiny, select, input, textarea {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+  button, .tab-btn, .tiny {
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Empty slash-suggest container shouldn't intercept clicks behind it. */
+  #agent-slash-suggest:empty { pointer-events: none; }
 
-    /* Topbar wraps so health/freedom pills don't overflow on narrow screens */
-    .topbar { flex-wrap: wrap; row-gap: 4px; }
+  /* ── Narrow viewports (≤600px, covers phone full-screen AND mobile sidebar).
+        Sidebar webviews in code-server on phones are ~280–360px wide, so
+        triggering at 480px (phone-only) misses them. ── */
+  @media (max-width: 600px) {
+    /* Density: trimmed down from 14px (v0.8.2) — sidebar is narrow, big text crowds it */
+    body { font-size: 13px; }
+    .dim, .mono { font-size: 11px; }
 
-    /* Tab nav: larger touch target, stronger active indicator */
+    /* Topbar compact: hide brand label, keep pills */
+    .topbar { padding: 6px 8px; flex-wrap: wrap; row-gap: 4px; }
+    .topbar .brand { display: none; }
+    .topbar .pill { font-size: 10px; }
+
+    /* Tab nav: equal split, smaller touch target than phone full-screen */
+    .tab-nav { padding: 0; }
     .tab-btn {
+      flex: 1;
+      min-height: 36px;
+      padding: 8px 12px;
       font-size: 13px;
-      padding: 12px 18px;
-      min-height: 44px;
     }
     .tab-btn.active { border-bottom-width: 3px; }
 
-    /* .tiny buttons (Export/Import/Clear, Sync, etc.) — pull up to comfortable tap size */
+    /* .tiny buttons: still tappable but proportional to sidebar density */
     .tiny {
-      min-height: 36px;
-      padding: 8px 12px;
+      min-height: 32px;
+      padding: 6px 10px;
       font-size: 12px;
     }
 
-    /* Chat thread spacing + body text size */
-    .agent-thread { font-size: 13.5px; }
+    /* Agent card: tighter padding, smaller header */
+    .agent-card { padding: 8px; }
+    .agent-card h2 { font-size: 13px; margin: 4px 0 8px; }
+    .agent-thread { font-size: 13px; padding: 6px; }
 
     /* Long URLs and code in messages must not blow out the viewport */
     .agent-thread pre, .agent-thread code { overflow-x: auto; word-break: break-word; }
     .agent-thread .msg, .agent-thread p { overflow-wrap: anywhere; }
 
-    /* Composer pinned to the bottom of the viewport so the keyboard can't
-       cover the send button. safe-area-inset clears iPhone home bar. */
-    .agent-composer {
-      position: sticky;
-      bottom: 0;
-      background: var(--bg-card);
-      padding-bottom: calc(8px + env(safe-area-inset-bottom));
-    }
+    /* Composer: NO sticky/safe-area (v0.8.2 broke webview scrolling).
+       Natural flex flow + iOS-zoom-safe font size on inputs. */
+    .agent-composer { gap: 6px; }
     .agent-composer textarea {
-      max-height: 35vh;
+      max-height: 25vh;
       font-size: 16px; /* prevents iOS Safari auto-zoom on focus */
     }
     .agent-composer button {
-      min-width: 44px;
-      min-height: 44px;
-      font-size: 16px;
+      min-width: 36px;
+      min-height: 36px;
+      font-size: 15px;
+      padding: 0 10px;
     }
 
-    /* Composer meta selects: iOS zoom prevention + tap-size */
+    /* Composer meta: hide redundant labels, keep selects + slash hint */
+    #agent-composer-meta [data-i18n="modeLabel"],
+    #agent-composer-meta [data-i18n="approvalLabel"],
+    #agent-composer-meta [data-i18n="forSlash"] { display: none; }
+    #agent-composer-meta .kbd { display: none; }
     #agent-composer-meta select {
       font-size: 16px;
-      min-height: 32px;
-      padding: 4px 8px;
+      min-height: 30px;
+      padding: 2px 6px;
     }
 
-    /* Attachment thumbnails smaller so multiple fit one row */
-    #agent-attachments img { max-width: 80px !important; max-height: 80px !important; }
+    /* Smaller attachment thumbs so multiple fit one row in the narrow pane */
+    #agent-attachments img { max-width: 60px !important; max-height: 60px !important; }
+
+    /* Settings tab: tighter card density */
+    main { padding: 8px; gap: 8px; }
+    .card { padding: 8px; }
+    .card h2 { font-size: 13px; }
   }
 </style>
 </head>

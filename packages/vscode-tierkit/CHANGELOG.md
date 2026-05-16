@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.3 — 2026-05-16
+
+- Mobile sidebar rework. Fixes 0.8.2 regressions:
+  - Touch unresponsiveness — added `touch-action: manipulation` and `-webkit-tap-highlight-color: transparent` on all interactive controls, removing iOS 300ms tap delay and webview gesture pipeline interference.
+  - Reverted `position: sticky` composer + `safe-area-inset-bottom` — they broke scrolling in code-server's sidebar webview (no scroll-root for sticky to anchor to).
+  - Trigger breakpoint moved 480px → 600px so phone *sidebar* viewports (~280–360px) actually match, not just phone full-screen.
+  - Tighter density at narrow widths: 13px body, 11px dim/mono, smaller cards, hidden "mode:"/"approval:" labels, compacted topbar (brand hidden, kept pills).
+  - Empty `agent-slash-suggest` container no longer captures touches.
+
 ## 0.8.2 — 2026-05-16
 
 - Mobile-friendly GUI tweaks for code-server access from phones/tablets. At viewports ≤ 480px: larger touch targets (tab nav 44px, .tiny buttons 36px, send/stop 44×44), 14px body font (12.5px on desktop), iOS Safari zoom prevention on inputs (16px), composer sticky-to-bottom with safe-area-inset for notched devices, code blocks no longer break the viewport, attachment thumbnails 80px. Desktop and sidebar viewports are unchanged.
