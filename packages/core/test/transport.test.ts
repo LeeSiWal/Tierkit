@@ -47,4 +47,46 @@ describe("createHttpTransport.request", () => {
     }));
     expect(res).toEqual({ ok: true, status: 200, data: { hello: "world" } });
   });
+
+  it("POSTs JSON body with content-type header", async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response("{}", { status: 200, headers: { "content-type": "application/json" } }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { createHttpTransport } = loadFactories();
+    const transport = createHttpTransport("http://127.0.0.1:4101");
+    await transport.request("/v1/agent/run", { method: "POST", body: { task: "hi" } });
+
+    const callInit = fetchMock.mock.calls[0][1];
+    expect(callInit.method).toBe("POST");
+    expect(callInit.headers["content-type"]).toBe("application/json");
+    expect(callInit.body).toBe(JSON.stringify({ task: "hi" }));
+  });
+
+  it("returns ok=false for HTTP 4xx without throwing", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(JSON.stringify({ error: "bad" }), { status: 400, headers: { "content-type": "application/json" } }),
+    ));
+    const { createHttpTransport } = loadFactories();
+    const res = await createHttpTransport("").request("/x", { method: "POST", body: {} });
+    expect(res.ok).toBe(false);
+    expect(res.status).toBe(400);
+    expect(res.data).toEqual({ error: "bad" });
+  });
+
+  it("propagates AbortSignal to fetch", async () => {
+    const ctrl = new AbortController();
+    const fetchMock = vi.fn(async (_url: string, init: { signal?: AbortSignal }) => {
+      // Simulate fetch respecting signal by waiting and rejecting on abort.
+      return await new Promise((_, reject) => {
+        init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const { createHttpTransport } = loadFactories();
+    const p = createHttpTransport("").request("/slow", { signal: ctrl.signal });
+    ctrl.abort();
+    await expect(p).rejects.toThrow(/abort/i);
+  });
 });
