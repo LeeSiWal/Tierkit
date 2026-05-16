@@ -319,6 +319,67 @@ export const GUI_HTML = `<!doctype html>
   }
   .tab-panel { display: none; }
   .tab-panel.active { display: block; }
+
+  /* ── Mobile (≤480px): touch-friendly sizes, sticky composer, overflow guards.
+        All rules below scope to small viewports; desktop/sidebar unchanged. ── */
+  @media (max-width: 480px) {
+    /* Base font + readability */
+    body { font-size: 14px; }
+    .dim, .mono { font-size: 12px; }
+
+    /* Topbar wraps so health/freedom pills don't overflow on narrow screens */
+    .topbar { flex-wrap: wrap; row-gap: 4px; }
+
+    /* Tab nav: larger touch target, stronger active indicator */
+    .tab-btn {
+      font-size: 13px;
+      padding: 12px 18px;
+      min-height: 44px;
+    }
+    .tab-btn.active { border-bottom-width: 3px; }
+
+    /* .tiny buttons (Export/Import/Clear, Sync, etc.) — pull up to comfortable tap size */
+    .tiny {
+      min-height: 36px;
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+
+    /* Chat thread spacing + body text size */
+    .agent-thread { font-size: 13.5px; }
+
+    /* Long URLs and code in messages must not blow out the viewport */
+    .agent-thread pre, .agent-thread code { overflow-x: auto; word-break: break-word; }
+    .agent-thread .msg, .agent-thread p { overflow-wrap: anywhere; }
+
+    /* Composer pinned to the bottom of the viewport so the keyboard can't
+       cover the send button. safe-area-inset clears iPhone home bar. */
+    .agent-composer {
+      position: sticky;
+      bottom: 0;
+      background: var(--bg-card);
+      padding-bottom: calc(8px + env(safe-area-inset-bottom));
+    }
+    .agent-composer textarea {
+      max-height: 35vh;
+      font-size: 16px; /* prevents iOS Safari auto-zoom on focus */
+    }
+    .agent-composer button {
+      min-width: 44px;
+      min-height: 44px;
+      font-size: 16px;
+    }
+
+    /* Composer meta selects: iOS zoom prevention + tap-size */
+    #agent-composer-meta select {
+      font-size: 16px;
+      min-height: 32px;
+      padding: 4px 8px;
+    }
+
+    /* Attachment thumbnails smaller so multiple fit one row */
+    #agent-attachments img { max-width: 80px !important; max-height: 80px !important; }
+  }
 </style>
 </head>
 <body>

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.2 — 2026-05-16
+
+- Mobile-friendly GUI tweaks for code-server access from phones/tablets. At viewports ≤ 480px: larger touch targets (tab nav 44px, .tiny buttons 36px, send/stop 44×44), 14px body font (12.5px on desktop), iOS Safari zoom prevention on inputs (16px), composer sticky-to-bottom with safe-area-inset for notched devices, code blocks no longer break the viewport, attachment thumbnails 80px. Desktop and sidebar viewports are unchanged.
+
 ## 0.8.1 — 2026-05-16
 
 - Split sidebar GUI into **Chat** and **Settings** tabs. The agent shell lives in the Chat tab; tools / plugins / activity / usage / models / daemon / settings cards live in the Settings tab. Reduces scrolling in the narrow sidebar and lets you stay focused on the conversation. Last active tab is remembered across reloads (per session in VS Code webviews; persistent in browser mode).
