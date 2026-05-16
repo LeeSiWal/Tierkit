@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.1 — 2026-05-16
+
+- Split sidebar GUI into **Chat** and **Settings** tabs. The agent shell lives in the Chat tab; tools / plugins / activity / usage / models / daemon / settings cards live in the Settings tab. Reduces scrolling in the narrow sidebar and lets you stay focused on the conversation. Last active tab is remembered across reloads (per session in VS Code webviews; persistent in browser mode).
+
 ## 0.8.0 — 2026-05-16
 
 - code-server compatible chat UI. The sidebar webview now talks to the

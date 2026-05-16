@@ -293,6 +293,32 @@ export const GUI_HTML = `<!doctype html>
     padding: 18px 0;
     text-align: center;
   }
+  .tab-nav {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    padding: 0 6px;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-family: inherit;
+  }
+  .tab-btn:hover { color: var(--fg); }
+  .tab-btn.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 </style>
 </head>
 <body>
@@ -305,6 +331,12 @@ export const GUI_HTML = `<!doctype html>
   <button id="btn-refresh" class="tiny" title="refresh all panels">↻</button>
 </div>
 
+<div class="tab-nav" role="tablist">
+  <button class="tab-btn active" data-tab="chat" role="tab" data-i18n="tabChat">Chat</button>
+  <button class="tab-btn" data-tab="settings" role="tab" data-i18n="tabSettings">Settings</button>
+</div>
+
+<div class="tab-panel active" data-tab-panel="chat">
 <div id="host-banner" class="err-banner" style="display:none"></div>
 
 <div class="agent-shell">
@@ -344,8 +376,9 @@ export const GUI_HTML = `<!doctype html>
     <div id="agent-attachments" style="display:none;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
   </div>
 </div>
+</div><!-- /tab-panel:chat -->
 
-<main>
+<main class="tab-panel" data-tab-panel="settings">
 
   <section class="card full">
     <h2>
@@ -441,6 +474,8 @@ export const GUI_HTML = `<!doctype html>
       cardSettings: '설정',
       reloadBtn: '다시 불러오기',
       sessionApproveAll: '이번 세션 동안 모두 승인',
+      tabChat: '채팅',
+      tabSettings: '설정',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -535,6 +570,30 @@ export const GUI_HTML = `<!doctype html>
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
+
+  // ── Tab nav ────────────────────────────────────────────────────────────────
+  // Chat / Settings split. Webview localStorage is session-scoped but works for
+  // intra-session persistence; HTTP mode persists across page loads.
+  const TAB_STORAGE_KEY = 'tierkit.activeTab';
+  function loadActiveTab() {
+    try { return localStorage.getItem(TAB_STORAGE_KEY); } catch { return null; }
+  }
+  function saveActiveTab(name) {
+    try { localStorage.setItem(TAB_STORAGE_KEY, name); } catch { /* ignore */ }
+  }
+  function setActiveTab(name) {
+    document.querySelectorAll('.tab-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-panel').forEach((p) => {
+      p.classList.toggle('active', p.dataset.tabPanel === name);
+    });
+    saveActiveTab(name);
+  }
+  document.querySelectorAll('.tab-btn').forEach((b) => {
+    b.addEventListener('click', () => setActiveTab(b.dataset.tab));
+  });
+  setActiveTab(loadActiveTab() || 'chat');
 
   // ── State + helpers ────────────────────────────────────────────────────────
   const BASE = (typeof window !== 'undefined' && window.__TIERKIT_BASE_URL__) || '';
