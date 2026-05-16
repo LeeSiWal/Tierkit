@@ -51,6 +51,21 @@ export interface ChatMessage {
   toolCalls?: ToolCall[];
   /** Tool-role only: identifies which assistant tool_call this message responds to. */
   toolCallId?: string;
+  /**
+   * Optional inline image attachments (vision input). Only meaningful on `user` turns. The
+   * provider client converts these to its native format — Anthropic uses a base64 source
+   * block; OpenAI uses a `image_url` content part with a `data:` URL. Providers that don't
+   * support vision (Ollama, by default) drop attachments silently.
+   */
+  images?: ImageAttachment[];
+}
+
+/** A single image attached to a user message. Stored as base64 to keep everything in JSON. */
+export interface ImageAttachment {
+  /** MIME type, e.g. "image/png", "image/jpeg", "image/webp". */
+  mediaType: string;
+  /** Base64-encoded raw bytes (no data: URI prefix). */
+  base64: string;
 }
 
 export interface ChatRequest {

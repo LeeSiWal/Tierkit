@@ -82,6 +82,39 @@ describe("runAgent — orchestration", () => {
     if (turnEnd?.type === "turn_end") expect(turnEnd.reason).toBe("no_tool_calls");
   });
 
+  it("forwards image attachments as OpenAI content-parts on the user message", async () => {
+    let observedMessages: Array<{ role: string; content: unknown }> = [];
+    await collect(
+      runAgent(
+        {
+          task: "what's in this screenshot?",
+          cwd,
+          maxTurns: 1,
+          attachments: [
+            { mediaType: "image/png", base64: "aGVsbG8=" }, // "hello"
+          ],
+        },
+        {
+          callModel: async (req) => {
+            observedMessages = req.messages as Array<{ role: string; content: unknown }>;
+            return { text: "<task_complete><summary>done</summary></task_complete>" };
+          },
+        },
+      ),
+    );
+    const userMsg = observedMessages.find((m) => m.role === "user");
+    expect(userMsg).toBeDefined();
+    // The wire form should be a content-parts array: image_url first, text last.
+    expect(Array.isArray(userMsg!.content)).toBe(true);
+    const parts = userMsg!.content as Array<Record<string, unknown>>;
+    const imagePart = parts.find((p) => p.type === "image_url");
+    expect(imagePart).toBeDefined();
+    expect((imagePart!.image_url as { url: string }).url).toBe("data:image/png;base64,aGVsbG8=");
+    const textPart = parts.find((p) => p.type === "text");
+    expect(textPart).toBeDefined();
+    expect((textPart as { text: string }).text).toBe("what's in this screenshot?");
+  });
+
   it("ignores XML tags for unknown tool names (treats them as narrative) and ends with no_tool_calls", async () => {
     // Parser filters out tags whose name isn't a registered tool — these are likely
     // narrative annotations (`<thinking>`, `<note>`) or model confusion, NOT tool intents.

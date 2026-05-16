@@ -27,6 +27,8 @@ interface OpenAIChatMessage {
   content: string;
   toolCalls?: ToolCall[];
   toolCallId?: string;
+  /** Vision input — extracted from image_url content parts during request parsing. */
+  images?: { mediaType: string; base64: string }[];
 }
 
 interface OpenAIChatRequest {
@@ -112,6 +114,7 @@ export async function handleOpenAIChatCompletions(
       content: m.content,
       ...(m.toolCalls && m.toolCalls.length > 0 ? { toolCalls: m.toolCalls } : {}),
       ...(m.toolCallId ? { toolCallId: m.toolCallId } : {}),
+      ...(m.images && m.images.length > 0 ? { images: m.images } : {}),
     })),
     ...(req2.max_tokens !== undefined ? { maxTokens: req2.max_tokens } : {}),
     ...(req2.temperature !== undefined ? { temperature: req2.temperature } : {}),
@@ -283,11 +286,17 @@ async function streamResponse(
  *
  * Returns `null` if the input is neither a string nor an array of content parts.
  */
-function flattenContent(value: unknown): string | null {
-  if (typeof value === "string") return value;
-  if (value === undefined || value === null) return "";
+interface FlattenResult {
+  text: string;
+  images: { mediaType: string; base64: string }[];
+}
+
+function flattenContent(value: unknown): FlattenResult | null {
+  if (typeof value === "string") return { text: value, images: [] };
+  if (value === undefined || value === null) return { text: "", images: [] };
   if (Array.isArray(value)) {
     const parts: string[] = [];
+    const images: { mediaType: string; base64: string }[] = [];
     for (const item of value) {
       if (typeof item === "string") {
         parts.push(item);
@@ -297,22 +306,41 @@ function flattenContent(value: unknown): string | null {
         if (obj.type === "text" && typeof obj.text === "string") {
           parts.push(obj.text);
         }
-        // Anthropic-style tool_result might pass through some clients: { type: "tool_result", content: ... }
+        // OpenAI image part: { type: "image_url", image_url: { url: "data:image/png;base64,..." | "https://..." } }
+        else if (obj.type === "image_url" && obj.image_url) {
+          const iu = obj.image_url as Record<string, unknown> | string;
+          const url = typeof iu === "string" ? iu : typeof iu.url === "string" ? iu.url : "";
+          const parsed = parseDataUrl(url);
+          if (parsed) images.push(parsed);
+          // http(s) URLs are intentionally dropped — fetching arbitrary URLs from the
+          // daemon is a SSRF surface; clients must inline base64 if they want vision.
+        }
+        // Anthropic-style image part: { type: "image", source: { type: "base64", media_type, data } }
+        else if (obj.type === "image" && obj.source && typeof obj.source === "object") {
+          const src = obj.source as Record<string, unknown>;
+          if (src.type === "base64" && typeof src.media_type === "string" && typeof src.data === "string") {
+            images.push({ mediaType: src.media_type, base64: src.data });
+          }
+        }
+        // Anthropic-style tool_result might pass through some clients
         else if (obj.type === "tool_result" && typeof obj.content === "string") {
           parts.push(obj.content);
         }
-        // Plain content with text field (some clients): { text: "..." }
+        // Plain content with text field (some clients)
         else if (typeof obj.text === "string" && !obj.type) {
           parts.push(obj.text);
         }
-        // image_url, audio, tool_use, etc. are silently dropped — Tierkit's underlying
-        // providers don't all support them and the safe default is "ignore unknown parts"
-        // so the text portion still gets through.
       }
     }
-    return parts.join("\n");
+    return { text: parts.join("\n"), images };
   }
   return null;
+}
+
+function parseDataUrl(url: string): { mediaType: string; base64: string } | null {
+  const m = /^data:([\w/+.-]+);base64,(.+)$/.exec(url);
+  if (!m) return null;
+  return { mediaType: m[1]!, base64: m[2]! };
 }
 
 function parseRequest(body: unknown):
@@ -344,10 +372,11 @@ function parseRequest(body: unknown):
         ok: false,
         message:
           "each message.content must be a string OR an array of OpenAI content parts " +
-          "({ type: 'text', text: '...' }). Tools that send tool_use / image parts will see those ignored.",
+          "({ type: 'text', text: '...' } or { type: 'image_url', image_url: { url: 'data:...;base64,...' } }).",
       };
     }
-    const parsed: OpenAIChatMessage = { role, content: flattened };
+    const parsed: OpenAIChatMessage = { role, content: flattened.text };
+    if (flattened.images.length > 0 && role === "user") parsed.images = flattened.images;
     // OpenAI's assistant turn can have either content, tool_calls, or both. Accept whatever
     // the caller sends — we forward to the provider client which knows its own format.
     if (role === "assistant" && Array.isArray((m as Record<string, unknown>).tool_calls)) {

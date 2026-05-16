@@ -339,6 +339,7 @@ export const GUI_HTML = `<!doctype html>
     <div id="agent-slash-suggest" style="display:none;position:relative">
       <div style="position:absolute;left:0;right:60px;bottom:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);max-height:180px;overflow-y:auto;font-family:var(--mono);font-size:11.5px;z-index:5"></div>
     </div>
+    <div id="agent-attachments" style="display:none;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
   </div>
 </div>
 
@@ -956,6 +957,72 @@ export const GUI_HTML = `<!doctype html>
   // Tool names the user has whitelisted for this browser session via the "remember for this
   // session" checkbox on the approval prompt. Resets on page reload / explicit Clear.
   const sessionApprovedTools = new Set();
+  // Pending image attachments for the next task submission. Each entry is
+  // { id, mediaType, base64, thumbnailUrl }. Cleared after a task is sent.
+  const pendingAttachments = [];
+  let suppressNextTaskStart = false;
+  const attachmentsHost = $('agent-attachments');
+  const MAX_ATTACHMENT_BYTES = 8 * 1024 * 1024; // per image
+  const MAX_ATTACHMENTS = 6;
+  function renderAttachments() {
+    if (pendingAttachments.length === 0) {
+      attachmentsHost.style.display = 'none';
+      attachmentsHost.innerHTML = '';
+      return;
+    }
+    attachmentsHost.style.display = 'flex';
+    attachmentsHost.innerHTML = '';
+    for (const att of pendingAttachments) {
+      const tile = document.createElement('div');
+      tile.style.cssText = 'position:relative;width:64px;height:64px;border:1px solid var(--border);border-radius:4px;overflow:hidden;background:var(--bg-card)';
+      const img = document.createElement('img');
+      img.src = att.thumbnailUrl;
+      img.style.cssText = 'width:100%;height:100%;object-fit:cover';
+      img.alt = att.mediaType;
+      tile.appendChild(img);
+      const rm = document.createElement('button');
+      rm.textContent = '×';
+      rm.title = lang === 'ko' ? '제거' : 'remove';
+      rm.style.cssText = 'position:absolute;top:0;right:0;width:18px;height:18px;line-height:14px;font-size:12px;padding:0;background:rgba(0,0,0,0.6);color:#fff;border:0;cursor:pointer;border-radius:0 4px 0 4px';
+      rm.onclick = () => {
+        const i = pendingAttachments.findIndex((x) => x.id === att.id);
+        if (i >= 0) pendingAttachments.splice(i, 1);
+        renderAttachments();
+      };
+      tile.appendChild(rm);
+      attachmentsHost.appendChild(tile);
+    }
+  }
+  async function attachFile(file) {
+    if (pendingAttachments.length >= MAX_ATTACHMENTS) {
+      toast(lang === 'ko' ? '이미지는 최대 ' + MAX_ATTACHMENTS + '장까지' : 'max ' + MAX_ATTACHMENTS + ' images', 'err');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      toast(lang === 'ko' ? '이미지 파일만 지원' : 'only image files supported', 'err');
+      return;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      toast(lang === 'ko' ? '이미지가 너무 큼 (' + Math.round(file.size / 1024 / 1024) + 'MB > 8MB)' : 'image too large (' + Math.round(file.size / 1024 / 1024) + 'MB > 8MB)', 'err');
+      return;
+    }
+    const buf = await file.arrayBuffer();
+    // Convert to base64 in chunks to avoid call stack overflow on large images.
+    const bytes = new Uint8Array(buf);
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    const base64 = btoa(binary);
+    pendingAttachments.push({
+      id: 'att_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      mediaType: file.type,
+      base64,
+      thumbnailUrl: 'data:' + file.type + ';base64,' + base64,
+    });
+    renderAttachments();
+  }
   function updateUsageMeter() {
     if (agentSessionTokens === 0) {
       agentUsageMeter.style.display = 'none';
@@ -970,6 +1037,8 @@ export const GUI_HTML = `<!doctype html>
     agentEventLog.length = 0;
     toolNodesById.clear();
     sessionApprovedTools.clear();
+    pendingAttachments.length = 0;
+    renderAttachments();
     agentThread.innerHTML = '<div class="agent-empty" data-i18n="agentEmpty">' +
       (lang === 'ko'
         ? '아래 입력창에 작업을 입력하면 Tierkit 에이전트가 실행됩니다. 모든 모델 호출은 Tierkit 라우팅·정책 스택을 거칩니다.'
@@ -1005,6 +1074,13 @@ export const GUI_HTML = `<!doctype html>
   }
   function renderAgentEvent(evt) {
     if (evt.type === 'stream_open') return; // silent
+    if (evt.type === 'task_start' && suppressNextTaskStart) {
+      // We already rendered the user bubble locally (with any image thumbnails). Skip the
+      // server's echo to avoid a duplicate "▸ ..." line in the thread.
+      suppressNextTaskStart = false;
+      agentEventLog.push(evt);
+      return;
+    }
     if (evt.type === 'model_usage') {
       agentSessionTokens += evt.usage.totalTokens || ((evt.usage.promptTokens || 0) + (evt.usage.completionTokens || 0));
       updateUsageMeter();
@@ -1343,6 +1419,19 @@ export const GUI_HTML = `<!doctype html>
     setDragOver(false);
     const dt = e.dataTransfer;
     if (!dt) return;
+    // Image files dropped from the OS (or pasted from VS Code's "Copy image") arrive as
+    // File objects on dataTransfer.files. Route those to attachFile so they show up in the
+    // attachments preview row instead of being treated as @path text refs.
+    if (dt.files && dt.files.length > 0) {
+      let consumedImage = false;
+      for (const f of dt.files) {
+        if (f.type && f.type.startsWith('image/')) {
+          void attachFile(f);
+          consumedImage = true;
+        }
+      }
+      if (consumedImage) return;
+    }
     // Prefer text/uri-list (file:// URIs from the OS file manager / VS Code explorer).
     let paths = [];
     const uriList = dt.getData('text/uri-list');
@@ -1375,6 +1464,42 @@ export const GUI_HTML = `<!doctype html>
     agentInput.focus();
   });
 
+  // Paste images from clipboard (Cmd/Ctrl+V on a screenshot, copied image from VS Code, etc.)
+  agentInput.addEventListener('paste', (e) => {
+    const items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    let consumed = false;
+    for (const it of items) {
+      if (it.kind === 'file') {
+        const f = it.getAsFile();
+        if (f && f.type && f.type.startsWith('image/')) {
+          void attachFile(f);
+          consumed = true;
+        }
+      }
+    }
+    if (consumed) e.preventDefault(); // suppress the default "paste as text" for images
+  });
+
+  function appendUserTaskBubble(text, attachments) {
+    const el = document.createElement('div');
+    el.className = 'agent-msg agent-msg-user';
+    if (attachments && attachments.length > 0) {
+      const imgsRow = document.createElement('div');
+      imgsRow.style.cssText = 'display:flex;gap:4px;flex-wrap:wrap;margin-bottom:4px';
+      for (const att of attachments) {
+        const im = document.createElement('img');
+        im.src = 'data:' + att.mediaType + ';base64,' + att.base64;
+        im.style.cssText = 'max-width:120px;max-height:120px;border-radius:4px;border:1px solid var(--border)';
+        imgsRow.appendChild(im);
+      }
+      el.appendChild(imgsRow);
+    }
+    const textEl = document.createElement('div');
+    textEl.textContent = text;
+    el.appendChild(textEl);
+    appendAgent(el);
+  }
   async function submitAgentTask(task) {
     if (!task || !task.trim()) return;
     if (agentController) return; // already running
@@ -1405,12 +1530,25 @@ export const GUI_HTML = `<!doctype html>
       finalTask = finalTask + '\n\n[Files referenced by user: ' + atRefs.join(', ') + '. Read them with the read_file tool if needed.]';
     }
     try {
+      const attachmentsForSubmit = pendingAttachments.length > 0
+        ? pendingAttachments.map((a) => ({ mediaType: a.mediaType, base64: a.base64 }))
+        : undefined;
+      // Render the user bubble locally so attachments show up alongside the task text.
+      // Then ask renderAgentEvent to swallow the next server-emitted task_start event so
+      // we don't duplicate the bubble.
+      appendUserTaskBubble(task, attachmentsForSubmit);
+      suppressNextTaskStart = true;
       const res = await fetch(BASE + '/v1/agent/run', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ task: finalTask, mode: selectedMode, approvalMode }),
+        body: JSON.stringify({ task: finalTask, mode: selectedMode, approvalMode, ...(attachmentsForSubmit ? { attachments: attachmentsForSubmit } : {}) }),
         signal: agentController.signal,
       });
+      // Once the request is in flight, clear the pending attachments so the next task
+      // doesn't accidentally resend them. The thumbnails were rendered into the user
+      // bubble alongside the task text.
+      pendingAttachments.length = 0;
+      renderAttachments();
       if (!res.ok) {
         const errBody = await res.json().catch(() => ({}));
         renderAgentEvent({ type: 'error', code: errBody?.error?.code || ('http-' + res.status), message: errBody?.error?.message || ('HTTP ' + res.status) });

@@ -7,9 +7,13 @@ interface ModelsResponse {
   data?: { id: string }[];
 }
 
+type OpenAIWireContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string } };
+
 interface OpenAIWireMessage {
   role: "system" | "user" | "assistant" | "tool";
-  content: string | null;
+  content: string | OpenAIWireContentPart[] | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
 }
@@ -36,6 +40,18 @@ interface ChatCompletionsStreamChunk {
  */
 function toOpenAIWireMessages(messages: ChatMessage[]): OpenAIWireMessage[] {
   return messages.map((m): OpenAIWireMessage => {
+    // Vision: user turn with images becomes a content-parts array. Text part comes last
+    // so the user's instructions trail the visual context — same convention vision-trained
+    // models expect (Claude / GPT-4V both work either way, but trailing-text is more common).
+    if (m.role === "user" && m.images && m.images.length > 0) {
+      const parts: OpenAIWireContentPart[] = m.images.map((img) => ({
+        type: "image_url" as const,
+        image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+      }));
+      if (m.content && m.content.length > 0) parts.push({ type: "text", text: m.content });
+      const out: OpenAIWireMessage = { role: m.role, content: parts };
+      return out;
+    }
     const out: OpenAIWireMessage = { role: m.role, content: m.content };
     if (m.toolCalls && m.toolCalls.length > 0) out.tool_calls = m.toolCalls;
     if (m.toolCallId) out.tool_call_id = m.toolCallId;

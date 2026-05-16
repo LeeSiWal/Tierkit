@@ -102,7 +102,11 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
       // ── POST /v1/agent/run ────────────────────────────────────────────────
       if (!(method === "POST" && url.pathname === "/v1/agent/run")) return false;
 
-      const body = await readJsonBody<Partial<AgentRunInput> & { task?: string; approvalMode?: "auto" | "interactive" }>(req);
+      const body = await readJsonBody<Partial<AgentRunInput> & {
+        task?: string;
+        approvalMode?: "auto" | "interactive";
+        attachments?: { mediaType?: string; base64?: string }[];
+      }>(req);
       if (!body) {
         writeJsonError(res, 400, "request body must be JSON");
         return true;
@@ -147,6 +151,22 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
       });
 
       try {
+        // Validate attachments — must be {mediaType: "image/*", base64: "<non-empty>"} pairs.
+        // Limit total size to 20MB to keep daemon memory bounded; reject anything larger
+        // (the GUI enforces a smaller cap, this is the daemon safety net).
+        const attachments: { mediaType: string; base64: string }[] = [];
+        if (Array.isArray(body.attachments)) {
+          let totalBytes = 0;
+          for (const a of body.attachments) {
+            if (!a || typeof a !== "object") continue;
+            if (typeof a.mediaType !== "string" || !a.mediaType.startsWith("image/")) continue;
+            if (typeof a.base64 !== "string" || a.base64.length === 0) continue;
+            totalBytes += a.base64.length;
+            if (totalBytes > 20 * 1024 * 1024) break;
+            attachments.push({ mediaType: a.mediaType, base64: a.base64 });
+          }
+        }
+
         const input: AgentRunInput = {
           task: body.task,
           cwd: ctx.cwd,
@@ -155,6 +175,7 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
           ...(body.modelId ? { modelId: body.modelId } : {}),
           ...(body.mode ? { mode: body.mode } : {}),
           ...(body.maxTurns !== undefined ? { maxTurns: body.maxTurns } : {}),
+          ...(attachments.length > 0 ? { attachments } : {}),
           approve: approveImpl,
           abortSignal: runAbort.signal,
         };

@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.7.0 — 2026-05-16
+
+**Vision input.** Drop, paste, or attach images directly in the agent composer — the daemon forwards them to vision-capable providers (Claude 3+, GPT-4V / GPT-4o, etc.) in their native format. Models without vision drop attachments silently; pair this with a vision-capable profile to actually use it.
+
+### Composer UX
+- **Paste from clipboard**: Cmd/Ctrl+V on an image (screenshot, copied from VS Code, etc.) attaches it as a thumbnail.
+- **Drag-drop image files**: dragging image files into the composer attaches them. Non-image files still fall back to the @path token behavior from 0.6.0.
+- **Thumbnail preview row** below the composer with × buttons to remove individual attachments before send.
+- **Limits**: up to 6 images per task, 8 MB per image. Daemon enforces a 20 MB hard cap on combined attachment size as a safety net.
+- After send, thumbnails are rendered inline in the user bubble so the conversation thread carries the visual context. Pending attachments clear so the next task doesn't accidentally reuse them.
+
+### Pipeline (UI → daemon → provider)
+
+```
+GUI: pendingAttachments[]            (mediaType + base64)
+  │
+  ▼ POST /v1/agent/run { attachments }
+  │
+@tierkit/agent serverExtension:      validates each (image/*, ≤20MB total)
+  │
+  ▼ runAgent({ ..., attachments })
+  │
+AgentLoop:                           images attached to the initial user message
+  │
+  ▼ toWireMessage → OpenAI content-parts array: [image_url, ..., text]
+  │
+  ▼ POST /v1/openai/chat/completions
+  │
+core/runtime/openaiCompat:           flattenContent extracts data: URLs + raw base64
+                                     image blocks; lands on ChatMessage.images
+  │
+  ▼ provider client
+  │
+Anthropic:                           type: "image" + source { type: base64, media_type, data }
+OpenAI:                              content parts with type: "image_url"
+Ollama:                              silently dropped (text-only by default)
+```
+
+### Schema changes
+- `ChatMessage` gains optional `images?: ImageAttachment[]` (provider clients only honor it on `user` turns).
+- New `ImageAttachment` type: `{ mediaType: string; base64: string }`.
+- `AgentRunInput` gains optional `attachments?: ImageAttachment[]` — the daemon route copies validated attachments here.
+- `AgentMessage` gains optional `images` for the initial user turn.
+
+### Security
+- HTTP(S) image URLs are intentionally NOT fetched server-side — only base64-inlined images go through. This avoids opening an SSRF surface from the loopback daemon.
+- Each attachment's MIME type must match `image/*`; non-image dropdowns are rejected.
+
+### Tests
+- New `agentLoop` test verifies user message wire format: image_url part first, text part last, `data:image/png;base64,...` URL preserved verbatim.
+- 28/28 agent tests + 243/243 core tests pass.
+
+### Still skipped to future (0.8.x?)
+- **Voice input** (Whisper API integration)
+- **Semantic codebase_search** (embeddings provider + .tierkit/embeddings/ index)
+- **browser_action** (Playwright runtime)
+
 ## 0.6.0 — 2026-05-16
 
 **Daily-driver polish.** 0.4.3 → 0.6.0 in one release (the smaller versions were planned increments — they all ship together here). Adds observability, file-aware composer, two new tools, history compression, git checkpoints, drag-drop, settings panel, and per-session approval whitelisting.

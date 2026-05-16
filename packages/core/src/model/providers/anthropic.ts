@@ -13,7 +13,7 @@ interface AnthropicSSEEvent {
 }
 
 interface AnthropicContentBlock {
-  type: "text" | "tool_use" | "tool_result";
+  type: "text" | "tool_use" | "tool_result" | "image";
   /** type=text */
   text?: string;
   /** type=tool_use */
@@ -23,6 +23,8 @@ interface AnthropicContentBlock {
   /** type=tool_result */
   tool_use_id?: string;
   content?: string;
+  /** type=image */
+  source?: { type: "base64"; media_type: string; data: string };
 }
 
 interface AnthropicMessagesResponse {
@@ -71,6 +73,17 @@ function toAnthropicMessages(messages: ChatMessage[]): Array<{ role: "user" | "a
         blocks.push({ type: "tool_use", id: tc.id, name: tc.function.name, input });
       }
       out.push({ role: "assistant", content: blocks });
+      continue;
+    }
+    // User turn with vision attachments → content becomes an array of image blocks
+    // followed by a text block (Anthropic vision wants images first per their docs).
+    if (m.role === "user" && m.images && m.images.length > 0) {
+      const blocks: AnthropicContentBlock[] = m.images.map((img) => ({
+        type: "image",
+        source: { type: "base64", media_type: img.mediaType, data: img.base64 },
+      }));
+      if (m.content && m.content.length > 0) blocks.push({ type: "text", text: m.content });
+      out.push({ role: "user", content: blocks });
       continue;
     }
     out.push({ role: m.role as "user" | "assistant", content: m.content });

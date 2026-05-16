@@ -23,6 +23,8 @@ export interface AgentMessage {
   toolCalls?: AgentToolCall[];
   /** Set on `tool` messages — links back to the invocation that produced this result. */
   toolCallId?: string;
+  /** Set on `user` messages with vision attachments. */
+  images?: { mediaType: string; base64: string }[];
 }
 
 /** A single tool invocation requested by the model. */
@@ -157,4 +159,18 @@ export interface AgentRunInput {
   /** Optional abort signal — propagated into tool execution. The daemon route wires this
    * to the HTTP request's `close` event so clicking Stop kills any running execute_command. */
   abortSignal?: AbortSignal;
+  /**
+   * Optional inline image attachments for the initial user turn (vision input). The agent
+   * forwards them to the daemon's openai-compat endpoint, which routes them to the active
+   * provider (Anthropic → image block, OpenAI → image_url part). Models without vision
+   * support drop attachments silently — choose a vision-capable profile via `modelId`.
+   */
+  attachments?: ImageAttachment[];
+}
+
+export interface ImageAttachment {
+  /** MIME type, e.g. "image/png", "image/jpeg", "image/webp". */
+  mediaType: string;
+  /** Base64-encoded raw bytes (no `data:` URI prefix). */
+  base64: string;
 }

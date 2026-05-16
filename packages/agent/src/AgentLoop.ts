@@ -50,7 +50,9 @@ export interface RunAgentDeps {
 
 export interface ModelCallRequest {
   model: string;
-  messages: { role: string; content: string; tool_calls?: unknown; tool_call_id?: string }[];
+  /** Each message's content may be a plain string or an array of OpenAI content parts
+   *  (text + image_url). Tools and helpers normalize between the two as needed. */
+  messages: { role: string; content: string | unknown[]; tool_calls?: unknown; tool_call_id?: string }[];
 }
 
 export interface ModelCallResponse {
@@ -89,7 +91,11 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
   const systemPrompt = buildSystemPrompt({ tools, cwd, ...(input.mode ? { mode: input.mode } : {}) });
   const messages: AgentMessage[] = [
     { role: "system", content: systemPrompt },
-    { role: "user", content: input.task },
+    {
+      role: "user",
+      content: input.task,
+      ...(input.attachments && input.attachments.length > 0 ? { images: input.attachments } : {}),
+    },
   ];
   const knownToolNames = tools.map((t) => t.name);
 
@@ -257,13 +263,25 @@ function compressOldToolResults(messages: AgentMessage[], keepTail: number): voi
 
 function toWireMessage(m: AgentMessage): {
   role: string;
-  content: string;
+  content: string | unknown[];
   tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
   tool_call_id?: string;
 } {
+  // User turn with images → encode as OpenAI content-parts array (image_url with data: URLs).
+  // The daemon's openai-compat layer parses those back out into ChatMessage.images and the
+  // provider client maps them to its native vision format. This way the agent and the daemon
+  // only have to know the OpenAI dialect.
+  if (m.role === "user" && m.images && m.images.length > 0) {
+    const parts: unknown[] = m.images.map((img) => ({
+      type: "image_url",
+      image_url: { url: `data:${img.mediaType};base64,${img.base64}` },
+    }));
+    if (m.content && m.content.length > 0) parts.push({ type: "text", text: m.content });
+    return { role: m.role, content: parts };
+  }
   const out: {
     role: string;
-    content: string;
+    content: string | unknown[];
     tool_calls?: { id: string; type: "function"; function: { name: string; arguments: string } }[];
     tool_call_id?: string;
   } = { role: m.role, content: m.content };
