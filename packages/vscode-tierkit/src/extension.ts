@@ -24,6 +24,7 @@ import { RooAdapter } from "@tierkit/adapter-roo";
 import { ClineAdapter } from "@tierkit/adapter-cline";
 import { ContinueAdapter } from "@tierkit/adapter-continue";
 import { createAgentRouteExtension } from "@tierkit/agent";
+import { createMessageRouter } from "./messageRouter.js";
 
 let statusItem: vscode.StatusBarItem | undefined;
 let serverHandle: RunningServer | undefined;
@@ -183,8 +184,12 @@ async function maybeStartDaemon(): Promise<void> {
  * Sidebar webview provider. Renders the same `GUI_HTML` the daemon serves at `/`, with
  * a CSP meta + bootstrap script injected so:
  *   - inline scripts/styles execute (the GUI is single-file),
- *   - `connect-src` allows loopback fetches to the daemon,
- *   - `window.__TIERKIT_BASE_URL__` is set so the page hits the right host:port,
+ *   - the webview never fetches the daemon directly; all data flows through
+ *     postMessage to this extension host, which proxies via fetchProxy/streamProxy
+ *     (works in both VS Code Desktop and code-server),
+ *   - `window.__TIERKIT_HOST__ = "vscode"` is set so the GUI's transport adapter
+ *     picks the postMessage backend instead of direct fetch,
+ *   - `window.__TIERKIT_BASE_URL__` is set (debug/UI display only — not consumed by transport in vscode mode),
  *   - if auto-start failed, a banner explains the failure with a "Show output" button.
  *
  * `retainContextWhenHidden` keeps webview state when the user flips to another sidebar
@@ -202,13 +207,27 @@ class TierkitSidebarProvider implements vscode.WebviewViewProvider {
     webviewView.onDidDispose(() => {
       if (this.current === webviewView) this.current = undefined;
     });
+    const router = createMessageRouter({
+      getBaseUrl: () => baseUrl(),
+      fetchProxy,
+      streamProxy,
+      log: (line) => log(`router: ${line}`),
+    });
+    webviewView.onDidDispose(() => router.disposeAll());
+
     webviewView.webview.onDidReceiveMessage((msg) => {
-      if (msg?.type === "showOutput") outputChannel?.show(true);
-      else if (msg?.type === "restartDaemon") void restartDaemon();
-      else if (msg?.type === "previewDiff" && typeof msg.path === "string" && typeof msg.proposed === "string") {
+      if (typeof msg?.type !== "string") return;
+      if (msg.type.startsWith("tk:")) {
+        void router.handle(msg, (out) => webviewView.webview.postMessage(out));
+        return;
+      }
+      // Pre-existing message types
+      if (msg.type === "showOutput") outputChannel?.show(true);
+      else if (msg.type === "restartDaemon") void restartDaemon();
+      else if (msg.type === "previewDiff" && typeof msg.path === "string" && typeof msg.proposed === "string") {
         void previewDiff(msg.path, msg.proposed);
       }
-      else if (msg?.type === "openFile" && typeof msg.path === "string") {
+      else if (msg.type === "openFile" && typeof msg.path === "string") {
         void openFile(msg.path);
       }
     });
@@ -222,42 +241,23 @@ class TierkitSidebarProvider implements vscode.WebviewViewProvider {
 
   render(): void {
     if (!this.current) return;
-    // ── portMapping: critical for Windows sandboxed webviews. Without this, the webview
-    // iframe's fetch to 127.0.0.1:PORT is blocked by the OS network sandbox (UWP AppContainer,
-    // some AV products, certain enterprise security configs), even when the daemon is fully
-    // running and reachable from a regular browser on the same machine. portMapping tells
-    // VS Code to proxy fetches from the webview to the extension host machine's loopback,
-    // bypassing the sandbox. The webview then uses `http://localhost:PORT` (must be
-    // `localhost`, not `127.0.0.1` — the mapping keys off that hostname).
-    const port = portFromBaseUrl(baseUrl());
+    log(`render: baseUrl=${baseUrl()} daemonError=${lastDaemonError ?? "none"}`);
     this.current.webview.options = {
       enableScripts: true,
       localResourceRoots: [],
-      portMapping: port ? [{ webviewPort: port, extensionHostPort: port }] : [],
     };
-    const webviewBase = port ? `http://localhost:${port}` : baseUrl();
-    log(`render: webviewBase=${webviewBase} portMapping=${port ?? "none"} daemonError=${lastDaemonError ?? "none"}`);
-    this.current.webview.html = wrapHtmlForWebview(GUI_HTML, webviewBase, lastDaemonError);
-  }
-}
-
-function portFromBaseUrl(url: string): number | undefined {
-  try {
-    const u = new URL(url);
-    const n = Number.parseInt(u.port, 10);
-    return Number.isFinite(n) && n > 0 ? n : 4101;
-  } catch {
-    return undefined;
+    this.current.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl(), lastDaemonError);
   }
 }
 
 function wrapHtmlForWebview(html: string, base: string, errorMessage?: string): string {
+  // CSP: webview no longer fetches the daemon directly; all data flows through
+  // postMessage to the extension host. So connect-src is not needed.
   const csp =
     `<meta http-equiv="Content-Security-Policy" content="` +
     `default-src 'none'; ` +
     `style-src 'unsafe-inline'; ` +
     `script-src 'unsafe-inline'; ` +
-    `connect-src http://127.0.0.1:* http://localhost:*; ` +
     `img-src data: https:; ` +
     `font-src data:;` +
     `">`;
@@ -348,6 +348,46 @@ async function withClient<T>(action: (c: TierkitClient) => Promise<T>): Promise<
       void vscode.window.showErrorMessage(`Tierkit error: ${(err as Error).message}`);
     }
     return undefined;
+  }
+}
+
+async function fetchProxy(url: string, init: { method: string; body?: string; signal: AbortSignal }): Promise<{ ok: boolean; status: number; data: unknown }> {
+  const res = await fetch(url, {
+    method: init.method,
+    headers: init.body !== undefined ? { "content-type": "application/json" } : {},
+    body: init.body,
+    signal: init.signal,
+  });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
+}
+
+async function* streamProxy(url: string, init: { method: string; body?: string; signal: AbortSignal }): AsyncIterable<{ data: string }> {
+  const res = await fetch(url, {
+    method: init.method,
+    headers: init.body !== undefined ? { "content-type": "application/json" } : {},
+    body: init.body,
+    signal: init.signal,
+  });
+  if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    while (true) {
+      const r = await reader.read();
+      if (r.done) break;
+      buf += decoder.decode(r.value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) >= 0) {
+        const block = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 2);
+        if (!block.startsWith("data:")) continue;
+        yield { data: block.slice(5).trim() };
+      }
+    }
+  } finally {
+    try { reader.cancel(); } catch { /* ignore */ }
   }
 }
 

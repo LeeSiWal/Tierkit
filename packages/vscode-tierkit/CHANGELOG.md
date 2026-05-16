@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.1 — 2026-05-16
+
+- Split sidebar GUI into **Chat** and **Settings** tabs. The agent shell lives in the Chat tab; tools / plugins / activity / usage / models / daemon / settings cards live in the Settings tab. Reduces scrolling in the narrow sidebar and lets you stay focused on the conversation. Last active tab is remembered across reloads (per session in VS Code webviews; persistent in browser mode).
+
+## 0.8.0 — 2026-05-16
+
+- code-server compatible chat UI. The sidebar webview now talks to the
+  extension host via postMessage instead of direct fetch through
+  portMapping; the host proxies all daemon calls. Works in VS Code
+  Desktop and code-server (and any future host that supports the
+  standard webview API).
+- Removed `portMapping` and `connect-src` CSP entries (no longer needed).
+
 ## 0.7.0 — 2026-05-16
 
 **Vision input.** Drop, paste, or attach images directly in the agent composer — the daemon forwards them to vision-capable providers (Claude 3+, GPT-4V / GPT-4o, etc.) in their native format. Models without vision drop attachments silently; pair this with a vision-capable profile to actually use it.

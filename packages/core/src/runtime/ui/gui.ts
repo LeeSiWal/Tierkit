@@ -17,6 +17,8 @@
  * `navigator.language`; `ko` → Korean labels. Runtime-built strings come from the `i18n`
  * runtime object (parallel English/Korean tables).
  */
+import { TRANSPORT_INLINE_JS } from "./transport.js";
+
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -291,6 +293,32 @@ export const GUI_HTML = `<!doctype html>
     padding: 18px 0;
     text-align: center;
   }
+  .tab-nav {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-card);
+    padding: 0 6px;
+    flex-shrink: 0;
+  }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 8px 14px;
+    font-size: 12px;
+    color: var(--fg-dim);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    font-family: inherit;
+  }
+  .tab-btn:hover { color: var(--fg); }
+  .tab-btn.active {
+    color: var(--fg);
+    border-bottom-color: var(--accent);
+    font-weight: 600;
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
 </style>
 </head>
 <body>
@@ -303,6 +331,12 @@ export const GUI_HTML = `<!doctype html>
   <button id="btn-refresh" class="tiny" title="refresh all panels">↻</button>
 </div>
 
+<div class="tab-nav" role="tablist">
+  <button class="tab-btn active" data-tab="chat" role="tab" data-i18n="tabChat">Chat</button>
+  <button class="tab-btn" data-tab="settings" role="tab" data-i18n="tabSettings">Settings</button>
+</div>
+
+<div class="tab-panel active" data-tab-panel="chat">
 <div id="host-banner" class="err-banner" style="display:none"></div>
 
 <div class="agent-shell">
@@ -342,8 +376,9 @@ export const GUI_HTML = `<!doctype html>
     <div id="agent-attachments" style="display:none;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
   </div>
 </div>
+</div><!-- /tab-panel:chat -->
 
-<main>
+<main class="tab-panel" data-tab-panel="settings">
 
   <section class="card full">
     <h2>
@@ -439,6 +474,8 @@ export const GUI_HTML = `<!doctype html>
       cardSettings: '설정',
       reloadBtn: '다시 불러오기',
       sessionApproveAll: '이번 세션 동안 모두 승인',
+      tabChat: '채팅',
+      tabSettings: '설정',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -534,8 +571,36 @@ export const GUI_HTML = `<!doctype html>
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
 
+  // ── Tab nav ────────────────────────────────────────────────────────────────
+  // Chat / Settings split. Webview localStorage is session-scoped but works for
+  // intra-session persistence; HTTP mode persists across page loads.
+  const TAB_STORAGE_KEY = 'tierkit.activeTab';
+  function loadActiveTab() {
+    try { return localStorage.getItem(TAB_STORAGE_KEY); } catch { return null; }
+  }
+  function saveActiveTab(name) {
+    try { localStorage.setItem(TAB_STORAGE_KEY, name); } catch { /* ignore */ }
+  }
+  function setActiveTab(name) {
+    document.querySelectorAll('.tab-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-panel').forEach((p) => {
+      p.classList.toggle('active', p.dataset.tabPanel === name);
+    });
+    saveActiveTab(name);
+  }
+  document.querySelectorAll('.tab-btn').forEach((b) => {
+    b.addEventListener('click', () => setActiveTab(b.dataset.tab));
+  });
+  setActiveTab(loadActiveTab() || 'chat');
+
   // ── State + helpers ────────────────────────────────────────────────────────
   const BASE = (typeof window !== 'undefined' && window.__TIERKIT_BASE_URL__) || '';
+  ${TRANSPORT_INLINE_JS}
+  const transport = (typeof window !== 'undefined' && window.__TIERKIT_HOST__ === 'vscode')
+    ? createVsCodeTransport()
+    : createHttpTransport(BASE);
   const $ = (id) => document.getElementById(id);
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }
@@ -548,12 +613,15 @@ export const GUI_HTML = `<!doctype html>
       return hh + ':' + mm + ':' + ss;
     } catch { return iso; }
   }
-  async function jget(p) { const r = await fetch(BASE + p); if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); }
+  async function jget(p) {
+    const r = await transport.request(p, { method: 'GET' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.data;
+  }
   async function jpost(p, b) {
-    const r = await fetch(BASE + p, { method: 'POST', headers: {'content-type':'application/json'}, body: b !== undefined ? JSON.stringify(b) : undefined });
-    const d = await r.json().catch(() => ({}));
-    if (!r.ok && r.status !== 400) throw new Error(d?.error || d?.message || ('HTTP ' + r.status));
-    return { ok: r.ok, status: r.status, data: d };
+    const r = await transport.request(p, { method: 'POST', body: b });
+    if (!r.ok && r.status !== 400) throw new Error(r.data?.error || r.data?.message || ('HTTP ' + r.status));
+    return { ok: r.ok, status: r.status, data: r.data };
   }
 
   function toast(msg, kind) {
@@ -1361,9 +1429,9 @@ export const GUI_HTML = `<!doctype html>
     atSuggestAbort = new AbortController();
     let files = [];
     try {
-      const r = await fetch(BASE + '/v1/workspace/files?prefix=' + encodeURIComponent(prefix) + '&limit=8', { signal: atSuggestAbort.signal });
-      const body = await r.json();
-      files = body.files || [];
+      const r = await transport.request('/v1/workspace/files?prefix=' + encodeURIComponent(prefix) + '&limit=8', { method: 'GET', signal: atSuggestAbort.signal });
+      if (!r.ok) return;
+      files = r.data.files || [];
     } catch { return; }
     if (files.length === 0) return;
     atSuggestEl = document.createElement('div');
@@ -1538,38 +1606,18 @@ export const GUI_HTML = `<!doctype html>
       // we don't duplicate the bubble.
       appendUserTaskBubble(task, attachmentsForSubmit);
       suppressNextTaskStart = true;
-      const res = await fetch(BASE + '/v1/agent/run', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ task: finalTask, mode: selectedMode, approvalMode, ...(attachmentsForSubmit ? { attachments: attachmentsForSubmit } : {}) }),
-        signal: agentController.signal,
-      });
-      // Once the request is in flight, clear the pending attachments so the next task
-      // doesn't accidentally resend them. The thumbnails were rendered into the user
-      // bubble alongside the task text.
       pendingAttachments.length = 0;
       renderAttachments();
-      if (!res.ok) {
-        const errBody = await res.json().catch(() => ({}));
-        renderAgentEvent({ type: 'error', code: errBody?.error?.code || ('http-' + res.status), message: errBody?.error?.message || ('HTTP ' + res.status) });
-        return;
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buf = '';
-      while (true) {
-        const r = await reader.read();
-        if (r.done) break;
-        buf += decoder.decode(r.value, { stream: true });
-        let idx;
-        while ((idx = buf.indexOf('\n\n')) >= 0) {
-          const block = buf.slice(0, idx).trim();
-          buf = buf.slice(idx + 2);
-          if (!block.startsWith('data:')) continue;
-          const payload = block.slice('data:'.length).trim();
-          if (payload === '[DONE]') return;
-          try { renderAgentEvent(JSON.parse(payload)); } catch (e) { /* skip malformed */ }
+      const reqBody = { task: finalTask, mode: selectedMode, approvalMode, ...(attachmentsForSubmit ? { attachments: attachmentsForSubmit } : {}) };
+      try {
+        for await (const ev of transport.stream('/v1/agent/run', { method: 'POST', body: reqBody, signal: agentController.signal })) {
+          if (ev.data === '[DONE]') return;
+          try { renderAgentEvent(JSON.parse(ev.data)); } catch (e) { /* skip malformed */ }
         }
+      } catch (streamErr) {
+        if (streamErr.name === 'AbortError' || /aborted/i.test(streamErr.message)) throw streamErr;
+        renderAgentEvent({ type: 'error', code: 'stream-error', message: streamErr.message });
+        return;
       }
     } catch (e) {
       if (e.name === 'AbortError') {
