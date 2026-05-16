@@ -96,4 +96,9 @@ jobs:
             exit 0
           fi
           cd packages/vscode-tierkit
+          # First publish only: namespace must exist. Create it idempotently —
+          # subsequent runs return "Namespace already exists", which we ignore.
+          PUBLISHER="$(node -p "require('./package.json').publisher")"
+          pnpm dlx ovsx create-namespace "$PUBLISHER" -p "$OVSX_PAT" 2>&1 \
+            | grep -v "already exists" || true
           pnpm dlx ovsx publish tierkit-vscode-${GITHUB_REF_NAME#v}.vsix -p "$OVSX_PAT"
