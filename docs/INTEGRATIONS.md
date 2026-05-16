@@ -79,6 +79,24 @@ Before you bind a tool to Tierkit, confirm:
 - [ ] You're OK with the daemon's stable failure codes (`unknown-profile`, `dangerous-command-blocked`, `budget-exceeded`, `workflow-gate-blocked`, …). Each one is recoverable; your wrapper can branch on `code` to render a useful UI.
 - [ ] Your tool can degrade gracefully when the daemon isn't running. The companion extension renders an "offline" status bar item; your tool should at minimum fall back to a clear error.
 
+## Running in code-server (browser VS Code)
+
+Tierkit's VS Code extension works in [code-server](https://github.com/coder/code-server)
+(VS Code in a browser) starting with v0.8.0. The setup is identical to Desktop:
+
+1. Build the VSIX: `cd packages/vscode-tierkit && pnpm package:sideload`
+2. Copy the VSIX into your code-server container or host.
+3. Install: `code-server --install-extension tierkit-vscode-X.Y.Z.vsix`
+4. Open the Tierkit icon in the activity bar.
+
+Under the hood, the sidebar webview communicates with the extension host
+via postMessage; the extension host proxies all calls to the daemon
+running on `127.0.0.1:4101`. No port forwarding or external daemon URL is
+needed — the daemon stays loopback-only on the server.
+
+**Limitation:** `vscode.dev` and other web-only extension hosts are not
+supported, because they cannot spawn the Node-based daemon process.
+
 ## What this milestone (v1.4) intentionally does NOT do
 
 - No automatic in-process patching of Roo/Cline/Continue. Those tools change their internals on their own schedules; Tierkit refuses to monkey-patch their globals.
