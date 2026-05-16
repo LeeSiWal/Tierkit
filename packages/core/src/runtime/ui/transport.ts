@@ -100,6 +100,11 @@ function createVsCodeTransport() {
       return new Promise(function (resolve, reject) {
         pending.set(id, { resolve: resolve, reject: reject });
         if (i.signal) {
+          if (i.signal.aborted) {
+            pending.delete(id);
+            reject(new Error('aborted'));
+            return;
+          }
           i.signal.addEventListener('abort', function () {
             if (pending.has(id)) {
               pending.delete(id);
@@ -148,6 +153,10 @@ function createVsCodeTransport() {
 
       var abortHandler = null;
       if (i.signal) {
+        if (i.signal.aborted) {
+          pending.delete(id);
+          return;
+        }
         abortHandler = function () {
           try { vscode.postMessage({ type: 'tk:abort', id: id }); } catch (e) {}
         };

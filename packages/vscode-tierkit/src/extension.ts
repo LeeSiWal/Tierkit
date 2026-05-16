@@ -184,8 +184,12 @@ async function maybeStartDaemon(): Promise<void> {
  * Sidebar webview provider. Renders the same `GUI_HTML` the daemon serves at `/`, with
  * a CSP meta + bootstrap script injected so:
  *   - inline scripts/styles execute (the GUI is single-file),
- *   - `connect-src` allows loopback fetches to the daemon,
- *   - `window.__TIERKIT_BASE_URL__` is set so the page hits the right host:port,
+ *   - the webview never fetches the daemon directly; all data flows through
+ *     postMessage to this extension host, which proxies via fetchProxy/streamProxy
+ *     (works in both VS Code Desktop and code-server),
+ *   - `window.__TIERKIT_HOST__ = "vscode"` is set so the GUI's transport adapter
+ *     picks the postMessage backend instead of direct fetch,
+ *   - `window.__TIERKIT_BASE_URL__` is set (debug/UI display only — not consumed by transport in vscode mode),
  *   - if auto-start failed, a banner explains the failure with a "Show output" button.
  *
  * `retainContextWhenHidden` keeps webview state when the user flips to another sidebar

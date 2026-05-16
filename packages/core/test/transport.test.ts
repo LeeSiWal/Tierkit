@@ -196,6 +196,14 @@ describe("createVsCodeTransport.request", () => {
     reply(m1.id, { type: "tk:res", ok: true, status: 200, data: { which: "a" } });
     await expect(p1).resolves.toMatchObject({ data: { which: "a" } });
   });
+
+  it("rejects immediately when signal is already aborted", async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const { createVsCodeTransport } = loadFactories();
+    const p = createVsCodeTransport().request("/x", { signal: ctrl.signal });
+    await expect(p).rejects.toThrow(/abort/i);
+  });
 });
 
 describe("createVsCodeTransport.stream", () => {
@@ -263,5 +271,15 @@ describe("createVsCodeTransport.stream", () => {
     // After abort, the consumer should resolve (we use done to unblock).
     reply(startMsg.id, { type: "tk:done", reason: "aborted" });
     await consumer;
+  });
+
+  it("ends iteration immediately when signal is already aborted", async () => {
+    const ctrl = new AbortController();
+    ctrl.abort();
+    const { createVsCodeTransport } = loadFactories();
+    const iter = createVsCodeTransport().stream("/x", { method: "POST", body: {}, signal: ctrl.signal });
+    const out: string[] = [];
+    try { for await (const ev of iter) out.push(ev.data); } catch { /* expected on some impls */ }
+    expect(out).toEqual([]);
   });
 });
