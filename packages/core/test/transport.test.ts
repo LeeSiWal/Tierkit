@@ -197,3 +197,71 @@ describe("createVsCodeTransport.request", () => {
     await expect(p1).resolves.toMatchObject({ data: { which: "a" } });
   });
 });
+
+describe("createVsCodeTransport.stream", () => {
+  let posted: unknown[];
+  let messageListeners: Array<(e: MessageEvent) => void>;
+  function reply(id: number, payload: object) {
+    const ev = new MessageEvent("message", { data: { ...payload, id } });
+    for (const l of messageListeners) l(ev);
+  }
+  beforeEach(() => {
+    posted = [];
+    messageListeners = [];
+    vi.stubGlobal("acquireVsCodeApi", () => ({ postMessage: (m: unknown) => posted.push(m) }));
+    vi.spyOn(window, "addEventListener").mockImplementation((type, listener) => {
+      if (type === "message") messageListeners.push(listener as (e: MessageEvent) => void);
+    });
+  });
+
+  it("posts tk:stream, yields tk:chunk in order, ends on tk:done", async () => {
+    const { createVsCodeTransport } = loadFactories();
+    const iter = createVsCodeTransport().stream("/v1/agent/run", { method: "POST", body: { task: "hi" } });
+
+    // Start consumption asynchronously
+    const collected: string[] = [];
+    const consumer = (async () => {
+      for await (const ev of iter) collected.push(ev.data);
+    })();
+
+    await Promise.resolve();
+    const msg = posted[0] as { id: number; type: string };
+    expect(msg.type).toBe("tk:stream");
+
+    reply(msg.id, { type: "tk:chunk", data: '{"type":"task_start"}' });
+    reply(msg.id, { type: "tk:chunk", data: '{"type":"delta","text":"x"}' });
+    reply(msg.id, { type: "tk:done", reason: "eof" });
+
+    await consumer;
+    expect(collected).toEqual(['{"type":"task_start"}', '{"type":"delta","text":"x"}']);
+  });
+
+  it("posts tk:abort and ends iteration when signal aborts", async () => {
+    const ctrl = new AbortController();
+    const { createVsCodeTransport } = loadFactories();
+    const iter = createVsCodeTransport().stream("/v1/agent/run", {
+      method: "POST", body: {}, signal: ctrl.signal,
+    });
+
+    const consumer = (async () => {
+      const out: string[] = [];
+      try { for await (const ev of iter) out.push(ev.data); } catch { /* ignore */ }
+      return out;
+    })();
+
+    await Promise.resolve();
+    const startMsg = posted[0] as { id: number };
+    reply(startMsg.id, { type: "tk:chunk", data: "one" });
+    ctrl.abort();
+    // Allow microtasks
+    await Promise.resolve();
+
+    const abortMsg = posted.find((m) => (m as { type: string }).type === "tk:abort") as { id: number };
+    expect(abortMsg).toBeTruthy();
+    expect(abortMsg.id).toBe(startMsg.id);
+
+    // After abort, the consumer should resolve (we use done to unblock).
+    reply(startMsg.id, { type: "tk:done", reason: "aborted" });
+    await consumer;
+  });
+});

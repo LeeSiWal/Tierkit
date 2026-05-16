@@ -122,8 +122,67 @@ function createVsCodeTransport() {
       });
     },
     stream: async function* (path, init) {
-      // Implemented in Task 5.
-      throw new Error('vscode stream not implemented');
+      var id = allocId();
+      var i = init || {};
+      var queue = [];
+      var waiter = null;
+      var ended = false;
+      var error = null;
+
+      pending.set(id, {
+        onChunk: function (data) {
+          if (waiter) { var w = waiter; waiter = null; w({ value: { data: data }, done: false }); }
+          else queue.push({ value: { data: data }, done: false });
+        },
+        onDone: function (reason, errMsg) {
+          ended = true;
+          if (errMsg && reason !== 'eof') error = new Error(errMsg);
+          if (waiter) {
+            var w = waiter; waiter = null;
+            if (error) w(Promise.reject(error));
+            else w({ value: undefined, done: true });
+          }
+        },
+        resolve: function () {}, reject: function (e) { error = e; ended = true; if (waiter) { var w = waiter; waiter = null; w(Promise.reject(e)); } },
+      });
+
+      if (i.signal) {
+        i.signal.addEventListener('abort', function () {
+          try { vscode.postMessage({ type: 'tk:abort', id: id }); } catch (e) {}
+        });
+      }
+
+      try {
+        vscode.postMessage({
+          type: 'tk:stream', id: id,
+          method: (i.method || 'POST').toUpperCase(),
+          path: path,
+          body: i.body,
+        });
+      } catch (e) {
+        pending.delete(id);
+        throw e;
+      }
+
+      try {
+        while (true) {
+          if (queue.length > 0) {
+            var item = queue.shift();
+            if (item.done) return;
+            yield item.value;
+            continue;
+          }
+          if (ended) {
+            if (error) throw error;
+            return;
+          }
+          var next = await new Promise(function (resolve) { waiter = resolve; });
+          if (next && next.done) return;
+          if (next && next.value) yield next.value;
+        }
+      } finally {
+        pending.delete(id);
+      }
     },
   };
 }
