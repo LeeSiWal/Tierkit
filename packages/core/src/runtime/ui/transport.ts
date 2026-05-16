@@ -146,10 +146,12 @@ function createVsCodeTransport() {
         resolve: function () {}, reject: function (e) { error = e; ended = true; if (waiter) { var w = waiter; waiter = null; w(Promise.reject(e)); } },
       });
 
+      var abortHandler = null;
       if (i.signal) {
-        i.signal.addEventListener('abort', function () {
+        abortHandler = function () {
           try { vscode.postMessage({ type: 'tk:abort', id: id }); } catch (e) {}
-        });
+        };
+        i.signal.addEventListener('abort', abortHandler);
       }
 
       try {
@@ -182,6 +184,7 @@ function createVsCodeTransport() {
         }
       } finally {
         pending.delete(id);
+        if (abortHandler && i.signal) i.signal.removeEventListener('abort', abortHandler);
       }
     },
   };
