@@ -62,9 +62,69 @@ function createHttpTransport(base) {
 }
 
 function createVsCodeTransport() {
+  var vscode = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
+  if (!vscode) {
+    return {
+      request: async function () { throw new Error('acquireVsCodeApi unavailable'); },
+      stream: async function* () { throw new Error('acquireVsCodeApi unavailable'); },
+    };
+  }
+  var nextId = 1;
+  var pending = new Map(); // id -> { resolve, reject } | { stream handlers }
+
+  window.addEventListener('message', function (e) {
+    var msg = e.data;
+    if (!msg || typeof msg !== 'object') return;
+    var entry = pending.get(msg.id);
+    if (!entry) return;
+    if (msg.type === 'tk:res') {
+      pending.delete(msg.id);
+      entry.resolve({ ok: msg.ok, status: msg.status, data: msg.data });
+    } else if (msg.type === 'tk:err') {
+      pending.delete(msg.id);
+      entry.reject(new Error(msg.message || 'tk:err'));
+    } else if (msg.type === 'tk:chunk') {
+      if (entry.onChunk) entry.onChunk(msg.data);
+    } else if (msg.type === 'tk:done') {
+      pending.delete(msg.id);
+      if (entry.onDone) entry.onDone(msg.reason || 'eof', msg.error);
+    }
+  });
+
+  function allocId() { return nextId++; }
+
   return {
-    request: async function () { throw new Error('vscode transport not implemented'); },
-    stream: async function* () { throw new Error('vscode transport not implemented'); },
+    request: function (path, init) {
+      var id = allocId();
+      var i = init || {};
+      return new Promise(function (resolve, reject) {
+        pending.set(id, { resolve: resolve, reject: reject });
+        if (i.signal) {
+          i.signal.addEventListener('abort', function () {
+            if (pending.has(id)) {
+              pending.delete(id);
+              try { vscode.postMessage({ type: 'tk:abort', id: id }); } catch (e) {}
+              reject(new Error('aborted'));
+            }
+          });
+        }
+        try {
+          vscode.postMessage({
+            type: 'tk:req', id: id,
+            method: (i.method || 'GET').toUpperCase(),
+            path: path,
+            body: i.body,
+          });
+        } catch (e) {
+          pending.delete(id);
+          reject(e);
+        }
+      });
+    },
+    stream: async function* (path, init) {
+      // Implemented in Task 5.
+      throw new Error('vscode stream not implemented');
+    },
   };
 }
 `;
