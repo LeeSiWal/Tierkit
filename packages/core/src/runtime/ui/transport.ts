@@ -36,7 +36,34 @@ function createHttpTransport(base) {
       return { ok: res.ok, status: res.status, data: data };
     },
     stream: async function* (path, init) {
-      throw new Error('stream not implemented');
+      var i = init || {};
+      var fetchInit = {
+        method: (i.method || 'GET').toUpperCase(),
+        headers: i.body !== undefined ? { 'content-type': 'application/json' } : {},
+        body: i.body !== undefined ? JSON.stringify(i.body) : undefined,
+        signal: i.signal,
+      };
+      var res = await fetch(buildUrl(path), fetchInit);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var reader = res.body.getReader();
+      var decoder = new TextDecoder();
+      var buf = '';
+      try {
+        while (true) {
+          var r = await reader.read();
+          if (r.done) break;
+          buf += decoder.decode(r.value, { stream: true });
+          var idx;
+          while ((idx = buf.indexOf('\\n\\n')) >= 0) {
+            var block = buf.slice(0, idx).trim();
+            buf = buf.slice(idx + 2);
+            if (block.indexOf('data:') !== 0) continue;
+            yield { data: block.slice(5).trim() };
+          }
+        }
+      } finally {
+        try { reader.cancel(); } catch (e) {}
+      }
     },
   };
 }

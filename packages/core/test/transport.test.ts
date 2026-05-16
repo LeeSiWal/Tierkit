@@ -90,3 +90,45 @@ describe("createHttpTransport.request", () => {
     await expect(p).rejects.toThrow(/abort/i);
   });
 });
+
+describe("createHttpTransport.stream", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
+
+  it("yields each SSE data: payload as a chunk", async () => {
+    const sseBody =
+      "data: {\"type\":\"task_start\"}\n\n" +
+      "data: {\"type\":\"delta\",\"text\":\"hi\"}\n\n" +
+      "data: [DONE]\n\n";
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        // Push in two chunks to exercise the buffering path.
+        controller.enqueue(encoder.encode(sseBody.slice(0, 30)));
+        controller.enqueue(encoder.encode(sseBody.slice(30)));
+        controller.close();
+      },
+    });
+    vi.stubGlobal("fetch", vi.fn(async () =>
+      new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    ));
+
+    const { createHttpTransport } = loadFactories();
+    const collected: string[] = [];
+    for await (const ev of createHttpTransport("").stream("/v1/agent/run", { method: "POST", body: {} })) {
+      collected.push(ev.data);
+      if (ev.data === "[DONE]") break;
+    }
+    expect(collected).toEqual([
+      '{"type":"task_start"}',
+      '{"type":"delta","text":"hi"}',
+      "[DONE]",
+    ]);
+  });
+
+  it("throws on non-2xx response", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 500 })));
+    const { createHttpTransport } = loadFactories();
+    const iter = createHttpTransport("").stream("/x", { method: "POST", body: {} });
+    await expect((async () => { for await (const _ of iter) {} })()).rejects.toThrow(/500/);
+  });
+});
