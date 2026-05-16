@@ -49,6 +49,25 @@ export interface ServerOptions {
    * three (roo/cline/continue) here.
    */
   adapters?: Partial<Record<Target, TierkitAdapter>>;
+  /**
+   * Optional extra route handlers, evaluated BEFORE built-in routes. Lets higher-level
+   * packages (`@tierkit/agent`, VS Code extension) plug in `/v1/agent/run` etc. without
+   * the core having to depend on them. Each handler inspects the request and either
+   * writes a response (returning true) or skips (returning false, in which case the next
+   * handler — and eventually the built-in dispatch — gets a try).
+   */
+  routeExtensions?: RouteExtension[];
+}
+
+export interface RouteExtension {
+  /** Human-readable label for diagnostics. */
+  name: string;
+  /** Return true if this handler took the request; false to fall through. */
+  handle: (
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    context: { cwd: string; env: Record<string, string | undefined> },
+  ) => Promise<boolean>;
 }
 
 export interface RunningServer {
@@ -100,6 +119,17 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         res.statusCode = 204;
         res.end();
         return;
+      }
+
+      // ── Route extensions ────────────────────────────────────────────────────
+      // Externally-injected handlers (e.g. @tierkit/agent's /v1/agent/run) get first
+      // look. If any handler claims the request (returns true), we're done — it has
+      // already written the response. Otherwise we fall through to built-in routes.
+      if (opts.routeExtensions && opts.routeExtensions.length > 0) {
+        for (const ext of opts.routeExtensions) {
+          const claimed = await ext.handle(req, res, { cwd: opts.cwd, env });
+          if (claimed) return;
+        }
       }
 
       if (route === "GET /v1/health") {

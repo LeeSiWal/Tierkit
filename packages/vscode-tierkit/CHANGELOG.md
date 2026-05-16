@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.4.0 — 2026-05-16
+
+**Tierkit gets its own agent.** New `@tierkit/agent` package + `POST /v1/agent/run` endpoint = Tierkit can now drive end-to-end coding tasks itself, without needing Roo / Cline / Continue.
+
+### Background
+Through 0.3.x the only way to get real coding done with Tierkit was to use it as a layer behind Roo Code (or similar). That works but has friction — Roo's system prompts conflict with Tierkit's plugin-rule injection and tool-shim. The agent-style detection mitigation was in the 0.3.5 plan, but a bigger pivot is cleaner: build Tierkit's own minimal but capable coding agent that natively understands Tierkit's plugin format, routes through Tierkit's full policy stack, and works with weak local models out of the box.
+
+This is the first milestone of that pivot. 0.4.0 ships the agent infrastructure (loop, tools, daemon endpoint). 0.4.x will add the sidebar chat UI, native plugin-command-as-slash-command integration, more tools, and approval UI.
+
+### `@tierkit/agent`
+
+New workspace package. Headline pieces:
+
+- **Cline-style XML tool calling.** Tools are described in the system prompt with one example each; the agent parses `<tool_name>...</tool_name>` from the model's text response. Works reliably with weaker models (qwen2.5-coder:7b, llama3, mistral-nemo) where OpenAI structured `tool_calls` aren't dependable.
+- **5 core tools** with Tierkit policy gates pre-wired:
+  - `read_file` — line-numbered output; sensitive-file blocklist enforced
+  - `list_files` — recursive option; skips noisy dirs (node_modules, .git, etc.)
+  - `search_files` — regex grep with optional glob filter; capped at 200 matches
+  - `write_file` — atomic write via tmp+rename; sensitive-file blocklist; approval required
+  - `execute_command` — `dangerous-command` classifier gate; 30s timeout; output truncation; approval required
+- **Agent loop** (`runAgent`) — async generator yielding `AgentEvent`s (`task_start`, `assistant_text`, `tool_call`, `tool_approval_pending`, `tool_result`, `task_complete`, etc.). Streams cleanly to SSE or UI.
+- **`<task_complete>` sentinel** — the model declares completion explicitly; the loop terminates with a summary instead of running forever.
+- **Per-tool approval** — destructive tools (`write_file`, `execute_command`) call back to `input.approve(toolCall)` before running. Daemon-side wiring auto-approves for now; UI prompt comes in 0.4.x.
+- **Routes through Tierkit daemon** — every model call hits `/v1/openai/chat/completions`, so all Tierkit policy applies (routing, viability, secret redaction, command-gate, budget, sessions, plugin-rule injection, tool-shim).
+
+### `POST /v1/agent/run`
+
+New daemon endpoint. Streams `text/event-stream` with one `AgentEvent` per chunk, terminating with `data: [DONE]`. Request body:
+
+```json
+{
+  "task": "Find all TODOs in src/ and list them",
+  "modelId": "auto",
+  "mode": "planner",
+  "maxTurns": 25
+}
+```
+
+Plugged in via the new `routeExtensions` option on `startServer` — `@tierkit/core` doesn't depend on the agent package, the VS Code extension wires them together at runtime.
+
+### `routeExtensions` in `startServer`
+
+New `ServerOptions.routeExtensions` array. Each entry's `handle(req, res, ctx)` is called before built-in routes; returning `true` claims the request. Keeps the core dependency-free while letting higher-level packages plug in new endpoints.
+
+### Tests
+371 pass (22 new agent tests covering parser, system prompt, agent loop with mocked model, SSE endpoint round-trip).
+
+### What's not in 0.4.0
+- Sidebar chat UI (deferred to 0.4.x) — for now agent is HTTP-only via `/v1/agent/run`
+- UI-driven approval (auto-approve in 0.4.0)
+- Diff preview for `write_file`
+- Plugin-command-as-slash-command native integration (deferred)
+- Additional tools (browser, MCP, follow-up question, apply-diff)
+
+### Coexistence with Roo / Cline / Continue
+Existing OpenAI-compatible integration is unchanged. You can still configure Roo to route through `/v1/openai/chat/completions` and get all of Tierkit's policy benefits. The agent is an additional capability, not a replacement.
+
 ## 0.3.4 — 2026-05-16
 
 **Ollama model auto-discovery — whatever you have pulled, Tierkit uses it.**

@@ -23,6 +23,7 @@ import { GUI_HTML, startServer, type RunningServer } from "@tierkit/core";
 import { RooAdapter } from "@tierkit/adapter-roo";
 import { ClineAdapter } from "@tierkit/adapter-cline";
 import { ContinueAdapter } from "@tierkit/adapter-continue";
+import { createAgentRouteExtension } from "@tierkit/agent";
 
 let statusItem: vscode.StatusBarItem | undefined;
 let serverHandle: RunningServer | undefined;
@@ -129,6 +130,11 @@ async function maybeStartDaemon(): Promise<void> {
       host: "127.0.0.1",
       port,
       adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
+      routeExtensions: [
+        // Auto-approve all tool calls for 0.4.0-alpha; UI-driven approval comes in a
+        // follow-up. Single-user local context, daemon binds loopback — this is safe.
+        createAgentRouteExtension({ approve: async () => true }),
+      ],
     });
     effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
     log(`auto-start: started on ${effectiveBaseUrl}`);
@@ -141,6 +147,7 @@ async function maybeStartDaemon(): Promise<void> {
         host: "127.0.0.1",
         port: 0,
         adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
+        routeExtensions: [createAgentRouteExtension({ approve: async () => true })],
       });
       effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
       log(`auto-start: started on ${effectiveBaseUrl} (fallback)`);
