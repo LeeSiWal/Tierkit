@@ -85,7 +85,16 @@ jobs:
             exit 0
           fi
           cd packages/vscode-tierkit
-          pnpm exec vsce publish --no-dependencies --packagePath tierkit-vscode-${GITHUB_REF_NAME#v}.vsix
+          # Idempotent: if the version is already on Marketplace, treat as success.
+          set +e
+          OUT=$(pnpm exec vsce publish --no-dependencies --packagePath tierkit-vscode-${GITHUB_REF_NAME#v}.vsix 2>&1)
+          RC=$?
+          echo "$OUT"
+          if [ $RC -ne 0 ] && echo "$OUT" | grep -qiE "already exists|already published"; then
+            echo "Version already published to Marketplace — treating as success."
+            exit 0
+          fi
+          exit $RC
 
       - name: Publish to OpenVSX
         env:
@@ -101,4 +110,13 @@ jobs:
           PUBLISHER="$(node -p "require('./package.json').publisher")"
           pnpm dlx ovsx create-namespace "$PUBLISHER" -p "$OVSX_PAT" 2>&1 \
             | grep -v "already exists" || true
-          pnpm dlx ovsx publish tierkit-vscode-${GITHUB_REF_NAME#v}.vsix -p "$OVSX_PAT"
+          # Idempotent publish: if version already on OpenVSX, treat as success.
+          set +e
+          OUT=$(pnpm dlx ovsx publish tierkit-vscode-${GITHUB_REF_NAME#v}.vsix -p "$OVSX_PAT" 2>&1)
+          RC=$?
+          echo "$OUT"
+          if [ $RC -ne 0 ] && echo "$OUT" | grep -qiE "already exists|already published"; then
+            echo "Version already published to OpenVSX — treating as success."
+            exit 0
+          fi
+          exit $RC
