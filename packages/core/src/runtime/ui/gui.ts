@@ -308,6 +308,42 @@ export const GUI_HTML = `<!doctype html>
     padding: 18px 0;
     text-align: center;
   }
+  /* Plugin ON/OFF toggle (used in Active plugins rows). Self-contained 36×18 switch
+     with a 14×14 knob that slides on data-state="on". Touch-friendly target via
+     touch-action:manipulation from the global rule above. */
+  .plugin-toggle {
+    width: 36px;
+    height: 18px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-input);
+    padding: 0;
+    position: relative;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: background 120ms ease, border-color 120ms ease;
+  }
+  .plugin-toggle[data-state="on"] {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .plugin-toggle .plugin-toggle-knob {
+    display: block;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--fg);
+    position: absolute;
+    top: 1px;
+    left: 1px;
+    transition: left 140ms ease, background 140ms ease;
+  }
+  .plugin-toggle[data-state="on"] .plugin-toggle-knob {
+    left: 19px;
+    background: #0f1115;
+  }
+  .plugin-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+
   /* Settings group section headers */
   .settings-group {
     grid-column: 1 / -1;
@@ -948,40 +984,38 @@ export const GUI_HTML = `<!doctype html>
       for (const p of list) {
         const row = document.createElement('div');
         row.className = 'row dense';
-        const statusPill = p.enabled
-          ? '<span class="pill pill-ok" style="font-size:10px">' + escapeHtml(i18n.enabled) + '</span>'
-          : '<span class="pill pill-dim" style="font-size:10px">' + escapeHtml(i18n.disabled) + '</span>';
+        // ON/OFF toggle switch — clearer than two separate Enable/Disable text buttons.
+        // The role + aria-checked make it screen-reader friendly. data-state drives the
+        // visual (CSS rules below in <style>).
+        const toggleHtml =
+          '<button class="plugin-toggle" role="switch" aria-checked="' + (p.enabled ? 'true' : 'false') +
+            '" data-action="toggle" data-id="' + escapeHtml(p.id) +
+            '" data-state="' + (p.enabled ? 'on' : 'off') +
+            '" title="' + escapeHtml(p.enabled ? i18n.disable : i18n.enable) + '">' +
+            '<span class="plugin-toggle-knob"></span>' +
+          '</button>';
         row.innerHTML =
-          '<div class="col-grow"><div><b>' + escapeHtml(p.id) + '</b> ' + statusPill +
+          '<div class="col-grow"><div><b>' + escapeHtml(p.id) + '</b>' +
             (p.manifest?.freedom?.level ? ' <span class="pill pill-accent" style="font-size:10px">' + escapeHtml(p.manifest.freedom.level) + '</span>' : '') +
             '</div>' +
             (p.manifest?.description ? '<div class="dim" style="margin-top:2px">' + escapeHtml(p.manifest.description) + '</div>' : '') +
           '</div>' +
-          (p.enabled
-            ? '<button class="tiny" data-action="disable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.disable) + '</button>'
-            : '<button class="tiny primary" data-action="enable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.enable) + '</button>') +
+          toggleHtml +
           '<button class="tiny" data-action="remove" data-id="' + escapeHtml(p.id) + '" title="' + escapeHtml(i18n.removeBtn) + '">✕</button>';
         root.appendChild(row);
       }
-      root.querySelectorAll('button[data-action="enable"]').forEach((b) => {
+      root.querySelectorAll('button[data-action="toggle"]').forEach((b) => {
         b.onclick = async () => {
-          const id = b.getAttribute('data-id'); b.disabled = true;
+          const id = b.getAttribute('data-id');
+          const currentlyOn = b.getAttribute('data-state') === 'on';
+          b.disabled = true;
           try {
-            const resp = await safeEnable(id);
+            const resp = currentlyOn
+              ? await jpost('/v1/plugins/disable', { pluginId: id })
+              : await safeEnable(id);
             if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
-            toast(id + ' ✓ ' + i18n.enabled, 'ok');
+            toast(id + ' ✓ ' + (currentlyOn ? i18n.disabled : i18n.enabled), 'ok');
             await Promise.all([refreshPlugins(), refreshTools()]);
-          } finally { b.disabled = false; }
-        };
-      });
-      root.querySelectorAll('button[data-action="disable"]').forEach((b) => {
-        b.onclick = async () => {
-          const id = b.getAttribute('data-id'); b.disabled = true;
-          try {
-            const resp = await jpost('/v1/plugins/disable', { pluginId: id });
-            if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
-            toast(id + ' ✓ ' + i18n.disabled, 'ok');
-            await refreshPlugins();
           } finally { b.disabled = false; }
         };
       });

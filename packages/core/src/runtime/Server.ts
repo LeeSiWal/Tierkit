@@ -60,6 +60,21 @@ export interface ServerOptions {
    * handler — and eventually the built-in dispatch — gets a try).
    */
   routeExtensions?: RouteExtension[];
+  /**
+   * Optional default plugin to install + enable on first run. Caller (the VS Code
+   * extension) typically points this at the bundled `superpowers-guided` sample. The
+   * server checks the registry at startup: if no plugin has ever been installed
+   * (`plugins.json` empty or missing) it runs `installPlugin` and, if `autoEnable` is
+   * set, auto-initializes `tierkit.config.json` and enables the new plugin. Once any
+   * registry entry exists, this option is silently ignored — the user's prior choices
+   * (uninstalled, disabled, swapped) are preserved.
+   */
+  bootstrapPlugin?: {
+    /** Absolute path to a plugin directory. Passed verbatim to `installPlugin`. */
+    path: string;
+    /** Default true — call `enablePlugin` after install (auto-`initProject` if needed). */
+    autoEnable?: boolean;
+  };
 }
 
 export interface RouteExtension {
@@ -553,6 +568,36 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       sendJson(res, 500, { error: (err as Error).message });
     }
   });
+
+  // First-run bootstrap: install + (optionally) enable a default plugin if the registry
+  // is empty. Runs concurrently with server.listen — we don't block the daemon coming up
+  // on it. Errors are logged-but-swallowed: the daemon must still start even if bootstrap
+  // fails (no bundled samples, permission denied, etc.).
+  if (opts.bootstrapPlugin) {
+    void (async () => {
+      try {
+        const registry = await listPlugins({ cwd: opts.cwd });
+        if (registry.plugins.length > 0) return; // user has touched plugins before — skip
+        const installed = await installPlugin({ cwd: opts.cwd, pluginPath: opts.bootstrapPlugin!.path });
+        const wantEnable = opts.bootstrapPlugin!.autoEnable !== false;
+        if (!wantEnable) return;
+        // enablePlugin throws "no-config" if tierkit.config.json doesn't exist yet. Auto-init.
+        const cfg = await loadConfig(opts.cwd);
+        if (!cfg.found) {
+          await initProject({ cwd: opts.cwd });
+        }
+        await enablePlugin({
+          cwd: opts.cwd,
+          pluginId: installed.pluginId,
+          ...(opts.adapters ? { adapters: opts.adapters } : {}),
+        });
+      } catch (err) {
+        // Non-fatal — the GUI's empty-state install rows still work as a manual fallback.
+        // eslint-disable-next-line no-console
+        console.error("[tierkit] bootstrapPlugin failed:", (err as Error).message);
+      }
+    })();
+  }
 
   return new Promise<RunningServer>((resolve, reject) => {
     server.once("error", reject);

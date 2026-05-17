@@ -139,6 +139,13 @@ async function isTierkitDaemonAt(url: string): Promise<boolean> {
  *
  * Every step is logged to the "Tierkit" Output channel so failures are debuggable.
  */
+/** Pick the default sample to bootstrap on first run. `guided` is the recommended
+ * starting point per the README; fall back to whichever sample is first if it's missing. */
+function pickBootstrapSample(): BundledSample | undefined {
+  if (bundledSamples.length === 0) return undefined;
+  return bundledSamples.find((s) => s.id === "superpowers-guided") ?? bundledSamples[0];
+}
+
 async function maybeStartDaemon(): Promise<void> {
   lastDaemonError = undefined;
   log("auto-start: begin");
@@ -181,6 +188,14 @@ async function maybeStartDaemon(): Promise<void> {
     /* keep default */
   }
 
+  // Load bundled samples now so we can pass one as the bootstrap plugin to startServer.
+  // (Until this completes, the GUI also has nothing to render in its Install dropdown.)
+  bundledSamples = await loadBundledSamples();
+  log(`bundled-samples: loaded ${bundledSamples.length} (${bundledSamples.map((s) => s.id).join(", ")})`);
+  const boot = pickBootstrapSample();
+  const bootstrapOpt = boot ? { bootstrapPlugin: { path: boot.path, autoEnable: true } } : {};
+  log(`bootstrap: ${boot ? boot.id : "(none — bundled samples missing)"}`);
+
   log(`auto-start: trying startServer({port:${port}})`);
   try {
     serverHandle = await startServer({
@@ -189,10 +204,11 @@ async function maybeStartDaemon(): Promise<void> {
       port,
       adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
       routeExtensions: [
-        // 0.4.2: no forced approve handler — the daemon route picks `auto` vs `interactive`
-        // per-request from the `approvalMode` body field set by the GUI's composer dropdown.
+        // 0.4.2: no forced approve handler — the daemon route picks "auto" vs "interactive"
+        // per-request from the approvalMode body field set by the GUI's composer dropdown.
         createAgentRouteExtension(),
       ],
+      ...bootstrapOpt,
     });
     effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
     log(`auto-start: started on ${effectiveBaseUrl}`);
@@ -206,6 +222,7 @@ async function maybeStartDaemon(): Promise<void> {
         port: 0,
         adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
         routeExtensions: [createAgentRouteExtension()],
+        ...bootstrapOpt,
       });
       effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
       log(`auto-start: started on ${effectiveBaseUrl} (fallback)`);
@@ -457,17 +474,10 @@ export function activate(context: vscode.ExtensionContext): void {
   log(`Tierkit extension activating — VS Code ${vscode.version}, Node ${process.version}`);
   log(`workspace folders: ${JSON.stringify((vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath))}`);
 
-  // ── Auto-start the daemon in-process (fire and forget). ──
-  void maybeStartDaemon();
-
-  // ── Load bundled sample-plugin metadata (fire and forget) so the GUI's Install
-  //     dropdown can show them. When done, re-render the sidebar so the dropdown
-  //     gets the populated list. ──
-  void loadBundledSamples().then((samples) => {
-    bundledSamples = samples;
-    log(`bundled-samples: loaded ${samples.length} (${samples.map((s) => s.id).join(", ")})`);
-    sidebarRef?.render();
-  });
+  // ── Auto-start the daemon in-process. Bundled samples are loaded inside
+  //     maybeStartDaemon (before startServer) so they can feed into the
+  //     bootstrapPlugin option. Fire-and-forget; render() is called from inside. ──
+  void maybeStartDaemon().then(() => sidebarRef?.render());
 
   // ── Sidebar dashboard webview ──
   sidebarRef = new TierkitSidebarProvider();

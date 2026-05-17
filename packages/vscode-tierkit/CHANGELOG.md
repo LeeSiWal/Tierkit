@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.9.3 — 2026-05-17
+
+**Superpowers ships preinstalled. ON/OFF toggle switch on every plugin row.**
+
+### Auto-bootstrap on first run
+`startServer` gains a `bootstrapPlugin?: { path; autoEnable? }` option. When set, the daemon checks the registry at startup; if `plugins.json` is empty or missing (= clean first run) it:
+1. `installPlugin` the bundled sample into `.tierkit/plugins/<id>/`
+2. If `autoEnable !== false` and `tierkit.config.json` doesn't exist yet, runs `initProject` to create it (idempotent — only writes default when missing)
+3. `enablePlugin` so the plugin is active and synced
+
+The extension picks `superpowers-guided` from the bundled samples and passes it as the bootstrap. Result: open the sidebar for the first time in a workspace, and superpowers is already active. **No clicks needed.**
+
+Subsequent starts skip bootstrap because the registry has entries — the user's choices (uninstall, disable, swap to a different sample) are preserved across daemon restarts.
+
+CLI users (no `bootstrapPlugin` opt) are unaffected — bootstrap is opt-in.
+
+Errors during bootstrap are logged-but-swallowed: the daemon still comes up even if install fails. The GUI's empty-state install rows remain as a manual fallback.
+
+### Toggle switch
+Plugin rows replaced their Enable/Disable text buttons with a single 36×18 ON/OFF switch (visual + `role="switch"` + `aria-checked` for a11y). The knob slides + the track colors when toggled. The Remove `[✕]` button is unchanged.
+
+```
+Before:
+  superpowers-guided  enabled  guided   [Disable]  [✕]
+  superpowers-free    disabled free     [Enable]   [✕]
+
+After:
+  superpowers-guided  guided                 ●━━○   [✕]
+  superpowers-free    free                   ○━━●   [✕]
+```
+
+Click anywhere on the switch → toggles via the same `safeEnable` (auto-init+retry on no-config) or `/v1/plugins/disable` paths. Single click. No mode switch.
+
+### Implementation notes
+- The extension now `await`s `loadBundledSamples()` inside `maybeStartDaemon` BEFORE `startServer`, so the bootstrap option carries an actual path (previously the samples loaded asynchronously after the daemon was already up).
+- After daemon start, `sidebarRef?.render()` runs once so the webview HTML carries the updated `__TIERKIT_SAMPLES__`.
+
+### Verification
+- 259/259 core tests pass.
+- `node --check` on inline script: clean parse.
+- Workspace builds cleanly.
+
+Bumps tierkit-vscode 0.9.2 → 0.9.3.
+
 ## 0.9.2 — 2026-05-17
 
 **Empty Active plugins card now shows the bundled samples inline + one-click "Install + Enable" that auto-initializes config.**
