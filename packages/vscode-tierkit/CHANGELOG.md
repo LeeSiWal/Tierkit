@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.6 — 2026-05-17
+
+**Fix: only one of the four superpowers samples actually installed after upgrading.**
+
+### Symptom
+After installing 0.9.5 with the expectation of four samples (only guided enabled), users who had already started Tierkit on this workspace under an earlier 0.9.x — when bootstrap installed just `superpowers-guided` — still saw only one row in Active plugins.
+
+### Root cause
+0.9.5's bootstrap had a single gate:
+
+```ts
+if (registry.plugins.length > 0) return; // skip — user has touched plugins before
+```
+
+For a fresh workspace this is correct, but if any 0.9.3/0.9.4 daemon had ever run, `plugins.json` already contained `superpowers-guided`. The gate then skipped the entire 4-sample install, so the new array form (`bootstrapPlugins[]`) never made a difference. Confirmed via the daemon's `/v1/plugins` showing one entry whose `installedAt` predates 0.9.5.
+
+### Fix
+Bootstrap is now **per-item idempotent**:
+
+- Remove the `registry.plugins.length > 0` gate.
+- Try each `bootstrapPlugins[i]` independently. If `installPlugin` throws "already installed", treat it as success (the end state matches what we want) and still queue the plugin for `enablePlugin` if `autoEnable: true`.
+- `enablePlugin` is already idempotent (adding an already-active id to `activePlugins` is a no-op).
+- Each install/enable lives in its own try/catch so one malformed sample dir doesn't take the rest down.
+
+**Trade-off**: a sample the user `[✕]`-removed will be re-installed on the next daemon restart. The intended way to silence a sample is the ON/OFF toggle (0.9.3), not uninstall. If you truly don't want a sample, leave it installed-and-toggled-off — uninstall is for plugins the bootstrap doesn't ship.
+
+### Result for users on this upgrade
+- Existing workspaces with only `superpowers-guided`: reload window → bootstrap installs `superpowers-free`, `superpowers-balanced`, `superpowers-strict` (all disabled). Guided stays enabled.
+- Fresh workspaces: same as 0.9.5 — all four installed, only guided enabled.
+
+### Apply
+1. Install `tierkit-vscode-0.9.6.vsix`.
+2. Reload window (Cmd-Shift-P → Developer: Reload Window).
+3. Confirm Active plugins now shows four rows; only superpowers-guided's toggle is ON.
+
+Bumps tierkit-vscode 0.9.5 → 0.9.6.
+
 ## 0.9.5 — 2026-05-17
 
 ### All four superpowers presets install on first run; only guided is auto-enabled

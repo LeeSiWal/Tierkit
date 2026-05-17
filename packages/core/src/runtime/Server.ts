@@ -574,34 +574,50 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     }
   });
 
-  // First-run bootstrap: install (and optionally enable) one or more default plugins
-  // when the registry is empty. Runs concurrently with server.listen — we don't block
-  // the daemon coming up on it. Errors are logged-but-swallowed: the daemon must still
-  // start even if bootstrap fails (missing sample dir, permission denied, etc.).
+  // Bootstrap: ensure every entry in opts.bootstrapPlugins is installed (per-item,
+  // idempotent). Each install is its own try/catch — if the plugin is already in the
+  // registry (PluginInstallError "already installed"), we silently skip and treat the
+  // existing id as "still here" so a subsequent autoEnable still flips the toggle.
+  // Items marked autoEnable run through enablePlugin (also idempotent — adding an
+  // already-active id to activePlugins is a no-op).
+  //
+  // We DON'T gate on "registry empty" anymore: users who upgrade from an earlier
+  // bootstrap (which installed only one sample) would otherwise never get the rest.
+  // Trade-off: a sample the user explicitly `[✕]`-removed will be re-installed on
+  // daemon restart. The intended way to silence a sample is the ON/OFF toggle, not
+  // uninstall.
+  //
+  // Runs concurrently with server.listen — never blocks daemon startup.
   if (opts.bootstrapPlugins && opts.bootstrapPlugins.length > 0) {
     void (async () => {
-      try {
-        const registry = await listPlugins({ cwd: opts.cwd });
-        if (registry.plugins.length > 0) return; // user has touched plugins before — skip
-        // Pass 1: install every item. Capture which ones the caller wants enabled so we
-        // can pre-initialize the project config exactly once if needed.
-        const installedToEnable: string[] = [];
-        for (const item of opts.bootstrapPlugins!) {
-          try {
-            const r = await installPlugin({ cwd: opts.cwd, pluginPath: item.path });
-            if (item.autoEnable) installedToEnable.push(r.pluginId);
-          } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error(`[tierkit] bootstrap install "${item.path}" failed:`, (err as Error).message);
+      const idsToEnable: string[] = [];
+      for (const item of opts.bootstrapPlugins!) {
+        try {
+          const r = await installPlugin({ cwd: opts.cwd, pluginPath: item.path });
+          if (item.autoEnable) idsToEnable.push(r.pluginId);
+        } catch (err) {
+          // "already installed" is success-equivalent for bootstrap: the user has it,
+          // we want it, end-state matches. We DO still need its pluginId for autoEnable —
+          // derive it from the path's basename, which matches the installed id by
+          // convention for the bundled samples.
+          if (err instanceof PluginInstallError && /already installed/.test(err.message)) {
+            if (item.autoEnable) {
+              const inferred = item.path.split(/[\\/]/).filter(Boolean).pop();
+              if (inferred) idsToEnable.push(inferred);
+            }
+            continue;
           }
+          // eslint-disable-next-line no-console
+          console.error(`[tierkit] bootstrap install "${item.path}" failed:`, (err as Error).message);
         }
-        if (installedToEnable.length === 0) return;
-        // enablePlugin throws "no-config" if tierkit.config.json doesn't exist yet. Auto-init.
+      }
+      if (idsToEnable.length === 0) return;
+      try {
         const cfg = await loadConfig(opts.cwd);
         if (!cfg.found) {
           await initProject({ cwd: opts.cwd });
         }
-        for (const pluginId of installedToEnable) {
+        for (const pluginId of idsToEnable) {
           try {
             await enablePlugin({
               cwd: opts.cwd,
@@ -615,7 +631,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         }
       } catch (err) {
         // eslint-disable-next-line no-console
-        console.error("[tierkit] bootstrap failed:", (err as Error).message);
+        console.error("[tierkit] bootstrap config-init failed:", (err as Error).message);
       }
     })();
   }
