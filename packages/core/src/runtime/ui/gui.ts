@@ -1324,7 +1324,7 @@ export const GUI_HTML = `<!doctype html>
       const body = el.querySelector('.agent-tool-result');
       if (!body) return;
       const content = String(evt.result.content || '');
-      const preview = content.length > 800 ? content.slice(0, 800) + '\n... (' + (content.length - 800) + ' more bytes)' : content;
+      const preview = content.length > 800 ? content.slice(0, 800) + '\\n... (' + (content.length - 800) + ' more bytes)' : content;
       body.removeAttribute('data-pending');
       body.textContent = preview;
       if (content.length > 800) {
@@ -1503,7 +1503,7 @@ export const GUI_HTML = `<!doctype html>
     const v = agentInput.value;
     const caret = agentInput.selectionStart ?? v.length;
     const head = v.slice(0, caret);
-    const m = /(?:^|\s)@([\w\-./]*)$/.exec(head);
+    const m = /(?:^|\\s)@([\\w\\-./]*)$/.exec(head);
     return m ? { match: m[1], start: caret - m[1].length - 1 } : null;
   }
   let atSuggestEl = null;
@@ -1592,7 +1592,7 @@ export const GUI_HTML = `<!doctype html>
     let paths = [];
     const uriList = dt.getData('text/uri-list');
     if (uriList) {
-      for (const raw of uriList.split(/\r?\n/)) {
+      for (const raw of uriList.split(/\\r?\\n/)) {
         const line = raw.trim();
         if (!line || line.startsWith('#')) continue;
         try {
@@ -1616,7 +1616,7 @@ export const GUI_HTML = `<!doctype html>
       return '@' + basename;
     }).join(' ');
     const at = agentInput.selectionStart ?? agentInput.value.length;
-    agentInput.value = agentInput.value.slice(0, at) + (at > 0 && !/\s$/.test(agentInput.value.slice(0, at)) ? ' ' : '') + inserted + ' ' + agentInput.value.slice(at);
+    agentInput.value = agentInput.value.slice(0, at) + (at > 0 && !/\\s$/.test(agentInput.value.slice(0, at)) ? ' ' : '') + inserted + ' ' + agentInput.value.slice(at);
     agentInput.focus();
   });
 
@@ -1669,21 +1669,21 @@ export const GUI_HTML = `<!doctype html>
     const approvalMode = agentApprovalSelect.value === 'interactive' ? 'interactive' : 'auto';
     // Expand /cmdname args into a Command preamble + rest as the agent task.
     let finalTask = task;
-    const slashMatch = /^\/([a-z][a-z0-9-]*)(?:\s+([\s\S]*))?$/i.exec(task.trim());
+    const slashMatch = /^\\/([a-z][a-z0-9-]*)(?:\\s+([\\s\\S]*))?$/i.exec(task.trim());
     if (slashMatch && commandsByName.has(slashMatch[1])) {
       const cmd = commandsByName.get(slashMatch[1]);
       const rest = slashMatch[2] || '';
       finalTask =
-        '[Plugin command: /' + cmd.name + ' from ' + cmd.pluginId + ' — ' + (cmd.description || '') + ']\n' +
+        '[Plugin command: /' + cmd.name + ' from ' + cmd.pluginId + ' — ' + (cmd.description || '') + ']\\n' +
         (rest ? rest : (lang === 'ko' ? '명령에 추가 인자 없음. 명령의 본래 의도대로 수행해.' : 'No additional args provided. Carry out the command according to its description.'));
     }
     // Collect @path references and surface them so the agent knows the user mentioned them.
     // We don't pre-read the files — the agent's read_file tool exists for that. But by
     // listing the paths up front we save a round-trip on small contexts.
     const atRefs = [];
-    finalTask.replace(/(?:^|\s)@([\w\-./]+)/g, (_, p) => { if (p && !atRefs.includes(p)) atRefs.push(p); return _; });
+    finalTask.replace(/(?:^|\\s)@([\\w\\-./]+)/g, (_, p) => { if (p && !atRefs.includes(p)) atRefs.push(p); return _; });
     if (atRefs.length > 0) {
-      finalTask = finalTask + '\n\n[Files referenced by user: ' + atRefs.join(', ') + '. Read them with the read_file tool if needed.]';
+      finalTask = finalTask + '\\n\\n[Files referenced by user: ' + atRefs.join(', ') + '. Read them with the read_file tool if needed.]';
     }
     try {
       const attachmentsForSubmit = pendingAttachments.length > 0

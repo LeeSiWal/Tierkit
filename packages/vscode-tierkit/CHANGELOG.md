@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.8.4 — 2026-05-16
+
+**Fixes sidebar being entirely unresponsive — every click/tap was a no-op.**
+
+The sidebar GUI ships as a single TypeScript template literal that emits the page HTML + an inline `<script>` IIFE. Several pieces of code inside that IIFE used single-backslash escapes — regex `\s` / `\w` / `\-` and JS string `\n` — which the **outer** TS template literal silently processed (per JS spec: untagged template literals drop unknown escapes and translate known ones like `\n` to a raw newline). The resulting `<script>` body was invalid JavaScript:
+- `'\n'` became a literal newline inside a single-quoted string → `SyntaxError: Invalid or unexpected token`
+- `/(?:^|\s)@([\w\-./]*)$/` became `/(?:^|s)@([w-./]*)$/` → `SyntaxError: Range out of order in character class`
+
+The IIFE threw on parse, so **no event handlers were registered**. Every button, input, tab, dropdown, and approval prompt in the sidebar was dead. Reported on every environment (VS Code Desktop, code-server, phone, desktop mouse) — consistent with "no JS at all is running."
+
+### Fix
+All offending escapes now double-backslashed at source (`'\\n'`, `/\\s/`, `[\\w\\-./]`, etc.) so the inlined script gets the literal characters it needs. Regression test (`test/guiHtml.test.ts`) extracts the inline script and:
+1. Parses it via `new Function(...)` — fails on syntax error.
+2. Asserts that `\s`, `\w`, `\n`, `\r` appear in the emitted code (catches "the backslash got eaten" silently).
+
+This category of bug would have shipped in 0.8.0 with the messageRouter rework — it was introduced when several JS regex and string-literal lines were added inside the template without realizing the outer scope eats single backslashes.
+
 ## 0.8.3 — 2026-05-16
 
 - Mobile sidebar rework. Fixes 0.8.2 regressions:
