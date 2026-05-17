@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.9.1 — 2026-05-17
+
+**Fix: chat and sidebar dead in VS Code webviews — `acquireVsCodeApi` called twice in 0.9.0.**
+
+Same class of regression as 0.8.4 (IIFE init failure → no handlers register → sidebar entirely unresponsive), but this time at runtime in webviews specifically.
+
+### Root cause
+The VS Code webview API permits exactly **one** call to `acquireVsCodeApi()` per page; the second call throws `"An instance of the VS Code API has already been acquired"`.
+
+0.9.0 hoisted `vsApi` from the inner `maybeRenderHostBanner` IIFE to the outer IIFE for reuse across panels:
+
+```js
+const transport = ... ? createVsCodeTransport() : createHttpTransport(BASE);
+                          //    ↑ 1st acquireVsCodeApi() inside transport.ts
+const vsApi = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
+                          //    ↑ 2nd call — throws in webview mode
+```
+
+The throw killed the outer IIFE → no chat/composer/button handlers got registered → identical-looking symptom to 0.8.4 even though the cause is completely different.
+
+### Why stub-DOM smoke didn't catch it
+The previous smoke test stubbed `acquireVsCodeApi = undefined`, so both call sites took the null-path. The new regression test in `test/guiHtml.test.ts` provides a webview-shaped stub: a counter that throws on call #2, exactly matching the real contract. The test fails on 0.9.0 code, passes on 0.9.1.
+
+### Fix
+`createVsCodeTransport` already calls `acquireVsCodeApi` once — it now exposes the resulting handle on `transport.vsApi`. `gui.ts` reads from there instead of re-acquiring. `createHttpTransport` returns `vsApi: null` for shape parity in browser mode.
+
+```diff
+-  const vsApi = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
++  const vsApi = transport.vsApi;
+```
+
+### Verification
+- New regression test `does not call acquireVsCodeApi more than once` — fails on 0.9.0, passes here.
+- 259/259 core tests pass.
+- `node --check` on extracted inline script: clean parse.
+- Full workspace rebuild succeeds.
+
 ## 0.9.0 — 2026-05-17
 
 **Plugin install / uninstall / scaffold — all from the sidebar. No more CLI required.**

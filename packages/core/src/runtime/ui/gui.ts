@@ -790,9 +790,10 @@ export const GUI_HTML = `<!doctype html>
   const transport = (typeof window !== 'undefined' && window.__TIERKIT_HOST__ === 'vscode')
     ? createVsCodeTransport()
     : createHttpTransport(BASE);
-  // VS Code postMessage handle, hoisted to outer scope so any panel can use it. null when
-  // GUI is loaded in a regular browser (acquireVsCodeApi only exists in webviews).
-  const vsApi = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
+  // VS Code postMessage handle. createVsCodeTransport already called acquireVsCodeApi
+  // (and the webview API only permits ONE call per page — a second call throws). So we
+  // pick the handle off the transport rather than acquiring it again. null in browser mode.
+  const vsApi = transport.vsApi;
   const $ = (id) => document.getElementById(id);
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }

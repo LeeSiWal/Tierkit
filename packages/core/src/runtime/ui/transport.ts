@@ -30,6 +30,7 @@ function createHttpTransport(base) {
     };
   }
   return {
+    vsApi: null, // HTTP mode has no webview API; consumers should null-check.
     request: async function (path, init) {
       var res = await fetch(buildUrl(path), makeInit(init));
       var data = await res.json().catch(function () { return {}; });
@@ -62,9 +63,13 @@ function createHttpTransport(base) {
 }
 
 function createVsCodeTransport() {
+  // acquireVsCodeApi can be called AT MOST ONCE per page (VS Code webview contract).
+  // We call it here and expose the handle on the returned transport so callers don't
+  // need to acquire it independently — that would throw on the second call.
   var vscode = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
   if (!vscode) {
     return {
+      vsApi: null,
       request: async function () { throw new Error('acquireVsCodeApi unavailable'); },
       stream: async function* () { throw new Error('acquireVsCodeApi unavailable'); },
     };
@@ -94,6 +99,7 @@ function createVsCodeTransport() {
   function allocId() { return nextId++; }
 
   return {
+    vsApi: vscode,
     request: function (path, init) {
       var id = allocId();
       var i = init || {};
