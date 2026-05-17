@@ -18,6 +18,9 @@
  * call the same daemon directly via `@tierkit/client`, or they don't get Tierkit's policy.
  */
 import * as vscode from "vscode";
+import * as path from "node:path";
+import * as fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import { TierkitClient, TierkitClientError } from "@tierkit/client";
 import { GUI_HTML, startServer, type RunningServer } from "@tierkit/core";
 import { RooAdapter } from "@tierkit/adapter-roo";
@@ -33,6 +36,60 @@ let effectiveBaseUrl: string | undefined;
 let sidebarRef: TierkitSidebarProvider | undefined;
 /** Diagnostic Output channel. Logs every step of auto-start so failures are debuggable. */
 let outputChannel: vscode.OutputChannel | undefined;
+
+interface BundledSample {
+  id: string;
+  name: string;
+  description: string;
+  freedom: string;
+  /** Absolute path passed verbatim to `POST /v1/plugins/install`. */
+  path: string;
+}
+/** Cached at activation. Empty array if `@tierkit/plugin-superpowers` isn't installed. */
+let bundledSamples: BundledSample[] = [];
+
+/**
+ * Resolve the on-disk path of `@tierkit/plugin-superpowers/plugins/` and read each child
+ * directory's `tierkit.plugin.json` to expose sample metadata to the GUI.
+ *
+ * Failure is non-fatal: if the package isn't present (e.g. someone packaged the .vsix
+ * without it), the GUI's "Install bundled" dropdown is empty and the Path input still works.
+ */
+async function loadBundledSamples(): Promise<BundledSample[]> {
+  try {
+    const req = createRequire(import.meta.url);
+    const pkgPath = req.resolve("@tierkit/plugin-superpowers/package.json");
+    const pluginsRoot = path.join(path.dirname(pkgPath), "plugins");
+    const dirs = await fs.readdir(pluginsRoot, { withFileTypes: true });
+    const out: BundledSample[] = [];
+    for (const d of dirs) {
+      if (!d.isDirectory()) continue;
+      const manifestPath = path.join(pluginsRoot, d.name, "tierkit.plugin.json");
+      try {
+        const raw = await fs.readFile(manifestPath, "utf8");
+        const parsed = JSON.parse(raw) as {
+          id?: string;
+          name?: string;
+          description?: string;
+          freedom?: { level?: string };
+        };
+        out.push({
+          id: parsed.id ?? d.name,
+          name: parsed.name ?? d.name,
+          description: parsed.description ?? "",
+          freedom: parsed.freedom?.level ?? "",
+          path: path.join(pluginsRoot, d.name),
+        });
+      } catch {
+        // Skip malformed sample dirs silently — the goal is graceful UI, not validation.
+      }
+    }
+    return out.sort((a, b) => a.id.localeCompare(b.id));
+  } catch (err) {
+    log(`bundled-samples: could not resolve @tierkit/plugin-superpowers: ${(err as Error).message}`);
+    return [];
+  }
+}
 /** Tracks the last auto-start outcome so the sidebar can render an explanation banner. */
 let lastDaemonError: string | undefined;
 
@@ -267,6 +324,8 @@ function wrapHtmlForWebview(html: string, base: string, errorMessage?: string): 
     `window.__TIERKIT_BASE_URL__ = ${JSON.stringify(base)};` +
     `window.__TIERKIT_DAEMON_ERROR__ = ${errLiteral};` +
     `window.__TIERKIT_HOST__ = "vscode";` +
+    // Bundled samples discovered at activation. GUI's Install dropdown reads this.
+    `window.__TIERKIT_SAMPLES__ = ${JSON.stringify(bundledSamples)};` +
     `</script>`;
   return html.replace(/<head>/i, `<head>\n${csp}\n${bootstrap}`);
 }
@@ -400,6 +459,15 @@ export function activate(context: vscode.ExtensionContext): void {
 
   // ── Auto-start the daemon in-process (fire and forget). ──
   void maybeStartDaemon();
+
+  // ── Load bundled sample-plugin metadata (fire and forget) so the GUI's Install
+  //     dropdown can show them. When done, re-render the sidebar so the dropdown
+  //     gets the populated list. ──
+  void loadBundledSamples().then((samples) => {
+    bundledSamples = samples;
+    log(`bundled-samples: loaded ${samples.length} (${samples.map((s) => s.id).join(", ")})`);
+    sidebarRef?.render();
+  });
 
   // ── Sidebar dashboard webview ──
   sidebarRef = new TierkitSidebarProvider();

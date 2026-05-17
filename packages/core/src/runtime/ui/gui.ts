@@ -560,10 +560,12 @@ export const GUI_HTML = `<!doctype html>
     <h2>
       <span data-i18n="cardPlugins">Active plugins</span>
       <span class="h2-actions">
+        <button id="btn-plugin-install" class="tiny" data-i18n="pluginInstall">+ Install</button>
         <button id="btn-plugin-new" class="tiny" data-i18n="pluginNew">+ New</button>
       </span>
     </h2>
     <div id="plugins-list"><div class="empty" data-i18n="loading">loading…</div></div>
+    <div id="plugin-install-form" style="display:none"></div>
     <div id="plugin-new-form" style="display:none"></div>
   </section>
 
@@ -692,6 +694,17 @@ export const GUI_HTML = `<!doctype html>
       activityRedactions: 'redacted',
       activityBlocked: 'BLOCKED',
       profilePromptName: 'Profile id (e.g. claudeCustom)',
+      pluginInstall: '+ Install',
+      pluginNameLabel: 'name',
+      pluginDescLabel: 'description',
+      freedomLabel: 'freedom',
+      firstCommandLabel: 'first command',
+      generateBtn: 'Generate →',
+      installBtn: 'Install',
+      removeBtn: 'Remove',
+      bundledSamplesLabel: 'Bundled samples',
+      fromPathLabel: 'From path',
+      noBundledSamples: 'No bundled samples available (open in VS Code to see them).',
     },
     ko: {
       offline: '오프라인',
@@ -732,6 +745,17 @@ export const GUI_HTML = `<!doctype html>
       activityRedactions: '마스킹',
       activityBlocked: '차단됨',
       profilePromptName: '프로파일 id (예: claudeCustom)',
+      pluginInstall: '+ 설치',
+      pluginNameLabel: '이름',
+      pluginDescLabel: '설명',
+      freedomLabel: 'freedom',
+      firstCommandLabel: '첫 명령어',
+      generateBtn: '생성하기 →',
+      installBtn: '설치',
+      removeBtn: '삭제',
+      bundledSamplesLabel: '번들 샘플',
+      fromPathLabel: '경로로 설치',
+      noBundledSamples: '번들 샘플 없음 (VS Code 확장에서만 노출).',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -766,6 +790,9 @@ export const GUI_HTML = `<!doctype html>
   const transport = (typeof window !== 'undefined' && window.__TIERKIT_HOST__ === 'vscode')
     ? createVsCodeTransport()
     : createHttpTransport(BASE);
+  // VS Code postMessage handle, hoisted to outer scope so any panel can use it. null when
+  // GUI is loaded in a regular browser (acquireVsCodeApi only exists in webviews).
+  const vsApi = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
   const $ = (id) => document.getElementById(id);
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }
@@ -864,7 +891,8 @@ export const GUI_HTML = `<!doctype html>
           '</div>' +
           (p.enabled
             ? '<button class="tiny" data-action="disable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.disable) + '</button>'
-            : '<button class="tiny primary" data-action="enable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.enable) + '</button>');
+            : '<button class="tiny primary" data-action="enable" data-id="' + escapeHtml(p.id) + '">' + escapeHtml(i18n.enable) + '</button>') +
+          '<button class="tiny" data-action="remove" data-id="' + escapeHtml(p.id) + '" title="' + escapeHtml(i18n.removeBtn) + '">✕</button>';
         root.appendChild(row);
       }
       root.querySelectorAll('button[data-action="enable"]').forEach((b) => {
@@ -889,6 +917,20 @@ export const GUI_HTML = `<!doctype html>
           } finally { b.disabled = false; }
         };
       });
+      root.querySelectorAll('button[data-action="remove"]').forEach((b) => {
+        b.onclick = async () => {
+          const id = b.getAttribute('data-id');
+          // Plain confirm() works in both VS Code webviews and browser mode.
+          if (!confirm((lang === 'ko' ? '플러그인을 삭제할까요? ' : 'Remove plugin? ') + id)) return;
+          b.disabled = true;
+          try {
+            const resp = await jpost('/v1/plugins/remove', { pluginId: id });
+            if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
+            toast(id + ' ✓ ' + (lang === 'ko' ? '삭제됨' : 'removed'), 'ok');
+            await Promise.all([refreshPlugins(), refreshTools()]);
+          } finally { b.disabled = false; }
+        };
+      });
     } catch (e) {
       $('plugins-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
     }
@@ -896,28 +938,145 @@ export const GUI_HTML = `<!doctype html>
 
   $('btn-plugin-new').onclick = () => {
     const host = $('plugin-new-form');
+    // Hide the install form if it's open.
+    const installHost = $('plugin-install-form');
+    installHost.style.display = 'none'; installHost.innerHTML = '';
     host.style.display = 'block';
     host.innerHTML =
       '<div class="inline-form">' +
         '<div class="form-grid">' +
           '<label>' + escapeHtml(i18n.pluginIdLabel) + '</label>' +
           '<input id="pn-id" placeholder="my-team-rules" />' +
+          '<label>' + escapeHtml(i18n.pluginNameLabel) + '</label>' +
+          '<input id="pn-name" placeholder="" />' +
+          '<label>' + escapeHtml(i18n.pluginDescLabel) + '</label>' +
+          '<input id="pn-desc" placeholder="" />' +
+          '<label>' + escapeHtml(i18n.freedomLabel) + '</label>' +
+          '<select id="pn-freedom">' +
+            '<option value="free">free</option>' +
+            '<option value="guided" selected>guided</option>' +
+            '<option value="balanced">balanced</option>' +
+            '<option value="strict">strict</option>' +
+          '</select>' +
+          '<label>' + escapeHtml(i18n.firstCommandLabel) + '</label>' +
+          '<input id="pn-cmd" placeholder="review" />' +
         '</div>' +
         '<div class="actions">' +
           '<button id="pn-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
-          '<button id="pn-save" class="primary">' + escapeHtml(i18n.saveBtn) + '</button>' +
+          '<button id="pn-save" class="primary">' + escapeHtml(i18n.generateBtn) + '</button>' +
         '</div>' +
       '</div>';
     $('pn-cancel').onclick = () => { host.style.display = 'none'; host.innerHTML = ''; };
     $('pn-save').onclick = async () => {
       const id = ($('pn-id').value || '').trim();
-      if (!id) return;
-      const resp = await jpost('/v1/plugins/new', { id });
+      if (!id) { toast(i18n.pluginIdLabel + ' ?', 'err'); return; }
+      const body = { id };
+      const name = ($('pn-name').value || '').trim();
+      const description = ($('pn-desc').value || '').trim();
+      const freedomLevel = $('pn-freedom').value;
+      const firstCommand = ($('pn-cmd').value || '').trim();
+      if (name) body.name = name;
+      if (description) body.description = description;
+      if (freedomLevel) body.freedomLevel = freedomLevel;
+      if (firstCommand) body.firstCommand = firstCommand;
+      const resp = await jpost('/v1/plugins/new', body);
       if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
       toast(id + ' ✓ ' + i18n.newCreated, 'ok');
-      host.style.display = 'none'; host.innerHTML = '';
+      // If we're in VS Code, offer to open the new plugin's manifest in the editor.
+      const pluginDir = resp.data?.pluginDir;
+      if (vsApi && pluginDir) {
+        const manifestPath = pluginDir + '/tierkit.plugin.json';
+        // Inline action button in the toast area — append to the panel as a follow-up note.
+        const note = document.createElement('div');
+        note.className = 'empty';
+        note.style.cssText = 'font-style:normal;text-align:left;padding:8px;background:var(--bg-input);border-radius:6px;margin-top:6px';
+        const openBtn = document.createElement('button');
+        openBtn.className = 'tiny primary';
+        openBtn.textContent = lang === 'ko' ? '에디터에서 열기' : 'Open in editor';
+        openBtn.style.marginLeft = '8px';
+        openBtn.onclick = () => vsApi.postMessage({ type: 'openFile', path: manifestPath });
+        note.textContent = (lang === 'ko' ? '플러그인 생성: ' : 'Created: ') + pluginDir;
+        note.appendChild(openBtn);
+        host.appendChild(note);
+        // Keep the form host visible until the user dismisses; just hide the inputs.
+        const inline = host.querySelector('.inline-form');
+        if (inline) inline.style.display = 'none';
+      } else {
+        host.style.display = 'none'; host.innerHTML = '';
+      }
       await refreshPlugins();
     };
+  };
+
+  // ── + Install: bundled samples dropdown + path input ────────────────────────
+  $('btn-plugin-install').onclick = () => {
+    const newHost = $('plugin-new-form');
+    newHost.style.display = 'none'; newHost.innerHTML = '';
+    const host = $('plugin-install-form');
+    if (host.style.display === 'block') {
+      host.style.display = 'none'; host.innerHTML = '';
+      return;
+    }
+    host.style.display = 'block';
+    const samples = (typeof window !== 'undefined' && Array.isArray(window.__TIERKIT_SAMPLES__)) ? window.__TIERKIT_SAMPLES__ : [];
+    const bundledRows = samples.length === 0
+      ? '<div class="empty" style="font-size:11px;padding:6px 0">' + escapeHtml(i18n.noBundledSamples) + '</div>'
+      : samples.map((s) =>
+          '<div class="row dense" style="font-size:12px">' +
+            '<div class="col-grow">' +
+              '<div><b>' + escapeHtml(s.id) + '</b>' +
+                (s.freedom ? ' <span class="pill pill-accent" style="font-size:9px">' + escapeHtml(s.freedom) + '</span>' : '') +
+              '</div>' +
+              (s.description ? '<div class="dim" style="font-size:10.5px;margin-top:1px">' + escapeHtml(s.description) + '</div>' : '') +
+            '</div>' +
+            '<button class="tiny primary" data-action="install-bundled" data-path="' + escapeHtml(s.path) + '" data-id="' + escapeHtml(s.id) + '">' + escapeHtml(i18n.installBtn) + '</button>' +
+          '</div>',
+        ).join('');
+    host.innerHTML =
+      '<div class="inline-form">' +
+        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg-dim);margin-bottom:4px">' +
+          escapeHtml(i18n.bundledSamplesLabel) +
+        '</div>' +
+        bundledRows +
+        '<div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--fg-dim);margin:10px 0 4px">' +
+          escapeHtml(i18n.fromPathLabel) +
+        '</div>' +
+        '<div style="display:flex;gap:6px">' +
+          '<input id="pi-path" placeholder="/absolute/path/to/plugin-dir" style="flex:1" />' +
+          '<button id="pi-install" class="primary">' + escapeHtml(i18n.installBtn) + '</button>' +
+        '</div>' +
+        '<div class="actions" style="margin-top:8px">' +
+          '<button id="pi-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
+        '</div>' +
+      '</div>';
+    async function doInstall(pluginPath, label) {
+      const resp = await jpost('/v1/plugins/install', { pluginPath });
+      if (!resp.ok) {
+        toast(resp.data?.message || i18n.failed, 'err');
+        return false;
+      }
+      const installedId = resp.data?.pluginId || label || pluginPath;
+      toast(installedId + ' ✓ ' + (lang === 'ko' ? '설치됨 (활성화하려면 Enable 누르세요)' : 'installed — click Enable to activate'), 'ok');
+      await refreshPlugins();
+      return true;
+    }
+    host.querySelectorAll('button[data-action="install-bundled"]').forEach((b) => {
+      b.onclick = async () => {
+        const pluginPath = b.getAttribute('data-path');
+        const id = b.getAttribute('data-id');
+        b.disabled = true;
+        try { if (await doInstall(pluginPath, id)) { host.style.display = 'none'; host.innerHTML = ''; } }
+        finally { b.disabled = false; }
+      };
+    });
+    $('pi-install').onclick = async () => {
+      const p = ($('pi-path').value || '').trim();
+      if (!p) return;
+      const btn = $('pi-install'); btn.disabled = true;
+      try { if (await doInstall(p, null)) { host.style.display = 'none'; host.innerHTML = ''; } }
+      finally { btn.disabled = false; }
+    };
+    $('pi-cancel').onclick = () => { host.style.display = 'none'; host.innerHTML = ''; };
   };
 
   $('btn-sync').onclick = async () => {
@@ -1155,8 +1314,6 @@ export const GUI_HTML = `<!doctype html>
         '<button id="btn-host-output" class="tiny">' + escapeHtml(labels.showOutput) + '</button>' +
         '<button id="btn-host-restart" class="tiny">' + escapeHtml(labels.restart) + '</button>' +
       '</div>';
-    const acquire = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi : null;
-    const vsApi = acquire ? acquire() : null;
     function post(type) { if (vsApi) vsApi.postMessage({ type }); }
     $('btn-host-output').onclick = () => post('showOutput');
     $('btn-host-restart').onclick = () => post('restartDaemon');

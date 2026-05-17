@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.9.0 — 2026-05-17
+
+**Plugin install / uninstall / scaffold — all from the sidebar. No more CLI required.**
+
+### New GUI flows
+- **`+ Install` button** in the Active plugins card opens a dropdown with two sections:
+  - **Bundled samples** — 1-click install of `superpowers-free` / `guided` / `balanced` / `strict` (description + freedom-level badge inline). The VS Code extension discovers `@tierkit/plugin-superpowers/plugins/*` at activation and injects the absolute paths via `window.__TIERKIT_SAMPLES__`.
+  - **From path** — install any plugin directory by typing an absolute path.
+- **Remove button (✕)** on every installed plugin row. Confirms before calling `POST /v1/plugins/remove`, which deletes the on-disk plugin dir and drops it from `plugins.json` + `activePlugins`.
+- **`+ New` form expanded** — was just `id` before. Now includes `name`, `description`, freedom level (free/guided/balanced/strict dropdown), and optional `first command` name. After Generate, an **`Open in editor`** button pops up that calls back into the extension host to open the new plugin's `tierkit.plugin.json` in VS Code.
+
+### Server (2 new + 1 extended HTTP routes)
+
+| Method | Path | Body | Wraps |
+|---|---|---|---|
+| POST | `/v1/plugins/install` | `{ pluginPath, force? }` | `installPlugin` usecase |
+| POST | `/v1/plugins/remove`  | `{ pluginId }`           | `removePlugin` usecase |
+| POST | `/v1/plugins/new`     | `+ freedomLevel, firstCommand` (existing endpoint, two new optional fields) | `pluginNew` usecase |
+
+### Side fixes
+- **`/v1/plugins` response now includes `enabled: boolean`** per plugin. Enable state lives in `tierkit.config.json`'s `activePlugins` array — previously the GUI's Active plugins card always showed every plugin as "disabled" because `RegistryEntry` has no `enabled` field. `listPlugins` now joins both sources so the Enable/Disable button reflects truth.
+- **`vsApi` hoisted to outer IIFE scope.** It was buried inside `maybeRenderHostBanner`, so every other reference (image preview button, openFile postMessage in the agent card) was a `ReferenceError`. Those branches silently failed before; now they work.
+
+### How it looks
+
+```
+ACTIVE PLUGINS                              [+ Install] [+ New]
+┌──────────────────────────────────────────────────────────────┐
+│  superpowers-guided  enabled  guided      [Disable]  [✕]    │
+│  superpowers-free    disabled free        [Enable]   [✕]    │
+└──────────────────────────────────────────────────────────────┘
+
+[+ Install]  ▼
+┌── Bundled samples ─────────────────────────────────────────┐
+│  superpowers-free      free        minimal, model decides… │
+│  superpowers-guided    guided      recommended starting…   │  [Install]
+│  superpowers-balanced  balanced    + review step           │  [Install]
+│  superpowers-strict    strict      enforced plan/approve   │  [Install]
+├── From path ───────────────────────────────────────────────┤
+│  [_/absolute/path/to/plugin____________________]  [Install]│
+└────────────────────────────────────────────────────────────┘
+
+[+ New]  ▼
+  id          [my-plugin]
+  name        [My Plugin]
+  description [...]
+  freedom     [guided ▾]
+  first cmd   [hello-world]
+              [Cancel]  [Generate →]
+  Created: .tierkit/plugins/my-plugin   [Open in editor]
+```
+
+### Bundled samples path resolution
+`vscode-tierkit/package.json` adds `@tierkit/plugin-superpowers: workspace:*`. The extension's `loadBundledSamples()` does `createRequire(import.meta.url).resolve("@tierkit/plugin-superpowers/package.json")` at activation, reads each child manifest under `plugins/`, and exposes them via `window.__TIERKIT_SAMPLES__`. Browser-mode (no extension) sees an empty samples array and only the "From path" input — graceful degradation.
+
+### Verification
+- 258/258 core tests pass (including the IIFE-parses regression test from 0.8.4).
+- `node --check` on the inline script: clean parse.
+- Stub-DOM smoke: IIFE executes without throwing.
+
 ## 0.8.5 — 2026-05-16
 
 **Chat tab fills the sidebar. Settings tab regrouped from 7 cards into 3 sections.**

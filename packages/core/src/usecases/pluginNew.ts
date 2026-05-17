@@ -33,6 +33,10 @@ export interface PluginNewInput {
   author?: string;
   /** Refuse to write if the folder exists; set to true to overwrite. */
   force?: boolean;
+  /** Initial freedom level. Defaults to `"free"`. */
+  freedomLevel?: "free" | "guided" | "balanced" | "strict";
+  /** Override the first command name (default `"review"`). Kebab-case. */
+  firstCommand?: string;
 }
 
 export interface PluginNewResult {
@@ -66,6 +70,11 @@ export async function pluginNew(input: PluginNewInput): Promise<PluginNewResult>
     input.description ??
     `Custom Tierkit plugin "${name}". Edit tierkit.plugin.json to customize commands, modes, rules, permissions.`;
   const author = input.author ?? "you";
+  const freedomLevel = input.freedomLevel ?? "free";
+  const firstCommand = input.firstCommand ?? "review";
+  if (!PLUGIN_ID_RE.test(firstCommand)) {
+    throw new PluginNewError("invalid-command-name", `firstCommand must match ${PLUGIN_ID_RE} (got "${firstCommand}")`);
+  }
 
   const pluginDir = path.join(input.cwd, input.id);
   const exists = await fs.access(pluginDir).then(() => true, () => false);
@@ -106,10 +115,13 @@ export async function pluginNew(input: PluginNewInput): Promise<PluginNewResult>
     components: {
       commands: [
         {
-          name: "review",
-          file: "commands/review.md",
-          description: "Review the current diff or selected files for issues",
-          category: "review",
+          name: firstCommand,
+          file: `commands/${firstCommand}.md`,
+          description:
+            firstCommand === "review"
+              ? "Review the current diff or selected files for issues"
+              : `${titleize(firstCommand)} — describe what this command does in commands/${firstCommand}.md`,
+          category: firstCommand === "review" ? "review" : "misc",
         },
       ],
       modes: [
@@ -140,29 +152,41 @@ export async function pluginNew(input: PluginNewInput): Promise<PluginNewResult>
       publicCloudDefaultMode: "review-only",
     },
     freedom: {
-      level: "free",
+      level: freedomLevel,
     },
   };
   await writeFile("tierkit.plugin.json", JSON.stringify(manifest, null, 2) + "\n");
 
-  await writeFile(
-    "commands/review.md",
-    [
-      "# Review",
-      "",
-      "Review the current diff or the file(s) the user mentions.",
-      "",
-      "When invoked:",
-      "1. Identify what code is in scope (uncommitted changes by default).",
-      "2. For each non-trivial change, ask:",
-      "   - Is the public API stable? Backwards compatible?",
-      "   - Are error paths handled?",
-      "   - Are there security or privacy implications?",
-      "3. Cite specific lines with file:line references.",
-      "4. End with: a short summary of severity (Critical / Major / Minor) and a recommended next action.",
-      "",
-    ].join("\n"),
-  );
+  // Write the first command file. If the user kept the default "review" we ship a
+  // realistic prompt; otherwise we ship a starter template they fill in.
+  const commandBody =
+    firstCommand === "review"
+      ? [
+          "# Review",
+          "",
+          "Review the current diff or the file(s) the user mentions.",
+          "",
+          "When invoked:",
+          "1. Identify what code is in scope (uncommitted changes by default).",
+          "2. For each non-trivial change, ask:",
+          "   - Is the public API stable? Backwards compatible?",
+          "   - Are error paths handled?",
+          "   - Are there security or privacy implications?",
+          "3. Cite specific lines with file:line references.",
+          "4. End with: a short summary of severity (Critical / Major / Minor) and a recommended next action.",
+          "",
+        ].join("\n")
+      : [
+          `# ${titleize(firstCommand)}`,
+          "",
+          `Describe what \`/${firstCommand}\` does, what context it needs, and what output it produces.`,
+          "",
+          "When invoked:",
+          "1. (Step 1 — replace with your instructions.)",
+          "2. (Step 2 …)",
+          "",
+        ].join("\n");
+  await writeFile(`commands/${firstCommand}.md`, commandBody);
 
   await writeFile(
     "modes/default.md",

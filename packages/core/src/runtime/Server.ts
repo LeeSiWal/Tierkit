@@ -26,7 +26,9 @@ import { initProject } from "../usecases/initProject.js";
 import { shutdownSpawnedOllama } from "./../model/providers/ollamaAutoLaunch.js";
 import { handleOpenAIChatCompletions } from "./openaiCompat.js";
 import { connectTool, listConnections, type ConnectableTool as ConnTool } from "../usecases/connectTool.js";
-import { enablePlugin, disablePlugin, PluginLifecycleError } from "../usecases/pluginLifecycle.js";
+import { enablePlugin, disablePlugin, removePlugin, PluginLifecycleError } from "../usecases/pluginLifecycle.js";
+import { installPlugin, PluginInstallError } from "../usecases/installPlugin.js";
+import { PluginLoadError } from "../plugin/PluginLoader.js";
 import { syncPlugins } from "../usecases/syncPlugins.js";
 import { pluginNew, PluginNewError } from "../usecases/pluginNew.js";
 import type { TierkitAdapter } from "../adapter/TierkitAdapter.js";
@@ -439,7 +441,15 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       }
 
       if (route === "POST /v1/plugins/new") {
-        const body = await readJsonBody<{ id: string; name?: string; description?: string; author?: string; force?: boolean }>(req);
+        const body = await readJsonBody<{
+          id: string;
+          name?: string;
+          description?: string;
+          author?: string;
+          force?: boolean;
+          freedomLevel?: "free" | "guided" | "balanced" | "strict";
+          firstCommand?: string;
+        }>(req);
         if (!body || typeof body.id !== "string") {
           return sendJson(res, 400, { error: "request must be { id: string, ...optional fields }" });
         }
@@ -451,10 +461,57 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
             ...(body.description ? { description: body.description } : {}),
             ...(body.author ? { author: body.author } : {}),
             ...(body.force ? { force: body.force } : {}),
+            ...(body.freedomLevel ? { freedomLevel: body.freedomLevel } : {}),
+            ...(body.firstCommand ? { firstCommand: body.firstCommand } : {}),
           });
           return sendJson(res, 200, r);
         } catch (err) {
           if (err instanceof PluginNewError) return sendJson(res, 400, { code: err.code, message: err.message });
+          throw err;
+        }
+      }
+
+      // ── Install from a local directory (wraps the installPlugin usecase the CLI uses) ──
+      if (route === "POST /v1/plugins/install") {
+        const body = await readJsonBody<{ pluginPath?: string; force?: boolean }>(req);
+        if (!body || typeof body.pluginPath !== "string" || body.pluginPath.length === 0) {
+          return sendJson(res, 400, { error: "request must be { pluginPath: string, force?: boolean }" });
+        }
+        try {
+          const r = await installPlugin({
+            cwd: opts.cwd,
+            pluginPath: body.pluginPath,
+            ...(body.force ? { force: body.force } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof PluginInstallError) return sendJson(res, 400, { code: "install-failed", message: err.message });
+          if (err instanceof PluginLoadError) {
+            return sendJson(res, 400, {
+              code: "plugin-load-failed",
+              message: `failed to load plugin from ${err.pluginDir}`,
+              issues: err.issues,
+            });
+          }
+          throw err;
+        }
+      }
+
+      // ── Remove (uninstall): drops the registry entry and removes the on-disk plugin dir ──
+      if (route === "POST /v1/plugins/remove") {
+        const body = await readJsonBody<{ pluginId?: string }>(req);
+        if (!body || typeof body.pluginId !== "string") {
+          return sendJson(res, 400, { error: "request must be { pluginId: string }" });
+        }
+        try {
+          const r = await removePlugin({
+            cwd: opts.cwd,
+            pluginId: body.pluginId,
+            ...(opts.adapters ? { adapters: opts.adapters } : {}),
+          });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof PluginLifecycleError) return sendJson(res, 400, { code: err.code, message: err.message });
           throw err;
         }
       }

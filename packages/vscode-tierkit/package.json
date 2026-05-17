@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.8.5",
+  "version": "0.9.0",
   "private": true,
   "description": "%description%",
   "license": "MIT",
@@ -111,7 +111,8 @@
     "@tierkit/adapter-roo": "workspace:*",
     "@tierkit/agent": "workspace:*",
     "@tierkit/client": "workspace:*",
-    "@tierkit/core": "workspace:*"
+    "@tierkit/core": "workspace:*",
+    "@tierkit/plugin-superpowers": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

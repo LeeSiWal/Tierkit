@@ -206,6 +206,9 @@ importers:
       '@tierkit/core':
         specifier: workspace:*
         version: link:../core
+      '@tierkit/plugin-superpowers':
+        specifier: workspace:*
+        version: link:../plugin-superpowers
     devDependencies:
       '@types/node':
         specifier: ^20.14.10
