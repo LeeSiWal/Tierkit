@@ -49,17 +49,44 @@ interface BundledSample {
 let bundledSamples: BundledSample[] = [];
 
 /**
- * Resolve the on-disk path of `@tierkit/plugin-superpowers/plugins/` and read each child
- * directory's `tierkit.plugin.json` to expose sample metadata to the GUI.
+ * Resolve the on-disk path of bundled sample plugins and read each child directory's
+ * `tierkit.plugin.json` to expose sample metadata to the GUI.
  *
- * Failure is non-fatal: if the package isn't present (e.g. someone packaged the .vsix
- * without it), the GUI's "Install bundled" dropdown is empty and the Path input still works.
+ * Two source paths are tried in order:
+ *   1. `<extensionRoot>/samples/` — populated by `scripts/copy-samples.mjs` at build
+ *      time. This is the path that exists inside the published .vsix.
+ *   2. `@tierkit/plugin-superpowers/plugins/` via `createRequire.resolve` — only works
+ *      when the extension runs from the monorepo (dev mode), since the .vsix doesn't
+ *      ship node_modules.
+ *
+ * Failure is non-fatal: if neither path works, the Install dropdown is empty and the
+ * GUI's "From path" input still works.
  */
 async function loadBundledSamples(): Promise<BundledSample[]> {
+  // Candidate 1: bundled samples copied into the extension folder. dist/extension.js
+  // sits one level deep under the extension root, so the samples dir is `../samples`.
+  const bundledPath = path.resolve(__dirname, "..", "samples");
+  let pluginsRoot: string | undefined;
   try {
-    const req = createRequire(import.meta.url);
-    const pkgPath = req.resolve("@tierkit/plugin-superpowers/package.json");
-    const pluginsRoot = path.join(path.dirname(pkgPath), "plugins");
+    const s = await fs.stat(bundledPath);
+    if (s.isDirectory()) pluginsRoot = bundledPath;
+  } catch {
+    // Not present — fall through to the dev-mode candidate.
+  }
+
+  // Candidate 2: dev mode — resolve through node_modules / pnpm workspace links.
+  if (!pluginsRoot) {
+    try {
+      const req = createRequire(import.meta.url);
+      const pkgPath = req.resolve("@tierkit/plugin-superpowers/package.json");
+      pluginsRoot = path.join(path.dirname(pkgPath), "plugins");
+    } catch (err) {
+      log(`bundled-samples: could not resolve via require either: ${(err as Error).message}`);
+      return [];
+    }
+  }
+
+  try {
     const dirs = await fs.readdir(pluginsRoot, { withFileTypes: true });
     const out: BundledSample[] = [];
     for (const d of dirs) {
@@ -84,9 +111,10 @@ async function loadBundledSamples(): Promise<BundledSample[]> {
         // Skip malformed sample dirs silently — the goal is graceful UI, not validation.
       }
     }
+    log(`bundled-samples: source=${pluginsRoot}, count=${out.length}`);
     return out.sort((a, b) => a.id.localeCompare(b.id));
   } catch (err) {
-    log(`bundled-samples: could not resolve @tierkit/plugin-superpowers: ${(err as Error).message}`);
+    log(`bundled-samples: readdir failed at ${pluginsRoot}: ${(err as Error).message}`);
     return [];
   }
 }

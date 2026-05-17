@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "private": true,
   "description": "%description%",
   "license": "MIT",
@@ -94,11 +94,11 @@
     }
   },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/copy-samples.mjs",
     "dev": "tsup --watch",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
-    "clean": "rm -rf dist *.vsix .tsbuildinfo",
+    "clean": "rm -rf dist samples *.vsix .tsbuildinfo",
     "prepublish:check": "node -e \"const p=require('./package.json'); if(p.publisher==='tierkit-placeholder'){console.error('ABORT: package.json::publisher is still the placeholder. Edit it to your actual VS Code Marketplace publisher id before publishing.'); process.exit(1)} if(!require('fs').existsSync('./icon.png')){console.error('ABORT: icon.png is missing. Generate one from media/tierkit.svg with: rsvg-convert -w 128 -h 128 media/tierkit.svg -o icon.png'); process.exit(1)} console.log('prepublish check ok: publisher=' + p.publisher + ', icon=icon.png present')\"",
     "package": "pnpm run prepublish:check && vsce package --no-dependencies --out tierkit-vscode-${npm_package_version}.vsix",
     "package:sideload": "vsce package --no-dependencies --allow-missing-repository --skip-license --out tierkit-vscode-${npm_package_version}.vsix",

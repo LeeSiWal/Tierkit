@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.9.4 — 2026-05-17
+
+**Fixes 0.9.3 auto-bootstrap silently doing nothing in the published .vsix.**
+
+### Root cause
+0.9.3 introduced `bootstrapPlugin` (auto-install + auto-enable a default sample on first run), driven by `loadBundledSamples()` which resolved `@tierkit/plugin-superpowers/plugins/` via `createRequire`. That worked in dev mode (monorepo workspace symlink), but the **published .vsix has no `node_modules/`** — `vsce package --no-dependencies` strips them and tsup can't bundle a directory of `.md` data files into JS.
+
+Result: in an installed extension, `createRequire.resolve("@tierkit/plugin-superpowers/package.json")` threw, `loadBundledSamples()` swallowed the error and returned `[]`, `pickBootstrapSample()` was undefined, the `bootstrapPlugin` option never reached `startServer`, and the GUI's Install dropdown stayed empty. The Active plugins card showed "활성 플러그인 없음" exactly as if 0.9.3 never shipped.
+
+Confirmed by `unzip`-ing the 0.9.3 .vsix: only `dist/`, `media/`, `l10n/`, `package.json` — no `plugin-superpowers` anywhere.
+
+### Fix
+The build now physically copies the samples into the extension folder so they land inside the .vsix:
+
+```
+packages/vscode-tierkit/
+├── dist/
+│   └── extension.js        (bundled code, no data files)
+└── samples/                ← NEW, copied from ../plugin-superpowers/plugins/
+    ├── superpowers-balanced/
+    ├── superpowers-free/
+    ├── superpowers-guided/
+    └── superpowers-strict/
+```
+
+Changes:
+- **New `scripts/copy-samples.mjs`** — uses Node's `fs.cp` to mirror `../plugin-superpowers/plugins/` into `samples/`. Logs each sample id + freedom level so packaging output proves they're in.
+- **`package.json`**: `build` now runs `tsup && node scripts/copy-samples.mjs`. `clean` removes `samples/` too.
+- **`.vscodeignore`**: whitelists `!samples/**` so vsce includes them.
+- **`loadBundledSamples()`** tries two paths in order:
+  1. `<extensionRoot>/samples/` — present in the published .vsix.
+  2. `@tierkit/plugin-superpowers/plugins/` via `createRequire` — dev-mode fallback.
+
+Verified the new .vsix contains `extension/samples/superpowers-guided/tierkit.plugin.json` (and the others).
+
+### How to apply
+1. Reinstall `tierkit-vscode-0.9.4.vsix`.
+2. **Reload the VS Code window** (Command Palette → "Developer: Reload Window") — without this the extension host keeps running the old 0.9.3 code and the in-process daemon never restarts with the new bootstrap option.
+3. Open the Tierkit sidebar in any workspace that has never been initialized (no `.tierkit/plugins.json`). `superpowers-guided` should install + enable automatically. Existing workspaces with prior plugin state are untouched.
+
+### Verification
+- `unzip` of the new .vsix shows `extension/samples/superpowers-*` directories with manifests.
+- 259/259 core tests pass.
+
+Bumps tierkit-vscode 0.9.3 → 0.9.4.
+
 ## 0.9.3 — 2026-05-17
 
 **Superpowers ships preinstalled. ON/OFF toggle switch on every plugin row.**

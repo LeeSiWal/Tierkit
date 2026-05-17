@@ -12,6 +12,10 @@
 !package.nls.json
 !package.nls.*.json
 !l10n/**
+# Bundled sample plugins (copied here by scripts/copy-samples.mjs). The extension's
+# loadBundledSamples() resolves this path at runtime so the .vsix doesn't need
+# @tierkit/plugin-superpowers in node_modules.
+!samples/**
 
 # Exclude sourcemaps from the published .vsix (keep dist/extension.js only).
 dist/**/*.map
