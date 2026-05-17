@@ -1,5 +1,73 @@
 # Changelog
 
+## 0.8.5 — 2026-05-16
+
+**Chat tab fills the sidebar. Settings tab regrouped from 7 cards into 3 sections.**
+
+### Chat tab — full-height layout
+The thread now expands to fill all available viewport height; the composer stays
+pinned at the bottom via natural flex flow (no `position: sticky` — that's what
+broke 0.8.2). Scrolling happens inside the thread, not the body. Works equally
+in VS Code Desktop, code-server, and on phones.
+
+Implementation: `body { height: 100vh; display: flex; flex-direction: column }`,
+`.tab-panel.active[data-tab-panel="chat"]` overrides to `display: flex` so its
+descendants (`.agent-shell` → `.agent-card` → `.agent-thread`) chain `flex: 1 +
+min-height: 0` all the way down. `.agent-thread`'s old `max-height: 360px` cap
+is gone. `.tab-panel.active[data-tab-panel="settings"]` keeps `overflow-y:
+auto` so the settings page gets its own scroll container instead of fighting
+the chat layout.
+
+### Settings tab — 3 grouped sections + Today hero
+
+```
+┌─ TODAY · 24 calls · 12.3k tok · $0.04 · claude $0.025 ollama $0.000 ─┐  ← hero
+└──────────────────────────────────────────────────────────────────────┘
+
+INTEGRATIONS                                                              ← group header
+┌─ Connected tools ──┐  ┌─ Active plugins ──┐
+└────────────────────┘  └───────────────────┘
+
+CONFIGURATION
+┌─ Model profiles ───┐  ┌─ Config / Daemon ─────────┐
+│ ollama  light      │  │ workspace: ...            │
+│ claude  heavy      │  │ user: ~/.tierkit/...      │
+│ [+ Add]            │  │ ─── Daemon ──────         │
+│                    │  │ 127.0.0.1:4101            │
+└────────────────────┘  └───────────────────────────┘
+
+ACTIVITY
+┌─ Recent activity (full width) ──────────────────────┐
+│ 14:21  claude  in 1.2k  out 0.4k  $0.012            │
+│ ...                                                  │
+└──────────────────────────────────────────────────────┘
+```
+
+Changes:
+- **Today's usage** promoted from a card to a thin gradient hero strip at the
+  top: 3 inline stats + per-profile breakdown as inline pills (no separate
+  card, no vertical real-estate cost).
+- **Group headers** (`INTEGRATIONS` / `CONFIGURATION` / `ACTIVITY`) — small
+  uppercase labels span the full grid via `grid-column: 1 / -1`.
+- **Daemon card merged** into the Config card under a labeled subdivider. The
+  Daemon endpoint info (one line) no longer eats a whole card.
+- **Card label collision resolved** — `Settings (config view)` card inside the
+  `Settings` tab was confusing. Now `Config / Daemon`.
+- **Activity moved to the tail** (it's reference data, not actionable — belongs
+  at the bottom).
+- **Element IDs preserved** — every refresh function continues to work without
+  JS changes (apart from `usage-by-profile` rendering as inline pills).
+
+### Cards still in place
+Element IDs (`tools-list`, `plugins-list`, `models-list`, `activity-list`,
+`settings-view`, `daemon-info`, `stat-calls/tokens/cost`, `usage-by-profile`)
+are unchanged so all existing handlers, refresh functions, and the daemon-side
+endpoints keep working untouched.
+
+### Tests
+258/258 core tests pass (including the IIFE-parses regression test from 0.8.4).
+Stub-DOM smoke executes the IIFE without throwing.
+
 ## 0.8.4 — 2026-05-16
 
 **Fixes sidebar being entirely unresponsive — every click/tap was a no-op.**

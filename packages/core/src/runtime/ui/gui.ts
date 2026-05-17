@@ -41,12 +41,16 @@ export const GUI_HTML = `<!doctype html>
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; }
+  html, body { margin: 0; height: 100vh; }
   body {
     background: var(--bg);
     color: var(--fg);
     font: 13px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
-    padding-bottom: 24px;
+    /* Flex column so the chat tab can claim remaining viewport for its thread.
+       Settings tab uses its own scroll container — body itself doesn't scroll. */
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   /* ── Top bar ─────────────────────────────────────────────────────────────── */
   .topbar {
@@ -169,10 +173,19 @@ export const GUI_HTML = `<!doctype html>
   .toast.ok { color: var(--ok); border-color: rgba(158, 206, 106, 0.4); }
   @keyframes fadeIn { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
   /* ── Agent chat panel ──────────────────────────────────────────────────── */
+  /* Inside the chat tab (which is a flex column), the shell takes all remaining
+     vertical space and contains the card. min-height:0 is critical — without it,
+     flex children refuse to shrink past their content height and the thread can't
+     overflow-scroll. */
   .agent-shell {
     max-width: 880px;
+    width: 100%;
     margin: 14px auto 0;
-    padding: 0 12px;
+    padding: 0 12px 12px;
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
   .agent-card {
     background: var(--bg-card);
@@ -181,6 +194,8 @@ export const GUI_HTML = `<!doctype html>
     padding: 12px;
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-height: 0;
   }
   .agent-card h2 {
     margin: 0 0 10px;
@@ -195,8 +210,8 @@ export const GUI_HTML = `<!doctype html>
   }
   .agent-card h2 .agent-status { margin-left: auto; font-size: 10px; }
   .agent-thread {
+    flex: 1;
     min-height: 80px;
-    max-height: 360px;
     overflow-y: auto;
     padding: 6px 0;
     font-size: 12.5px;
@@ -293,6 +308,49 @@ export const GUI_HTML = `<!doctype html>
     padding: 18px 0;
     text-align: center;
   }
+  /* Settings group section headers */
+  .settings-group {
+    grid-column: 1 / -1;
+    margin: 14px 0 -2px;
+    padding: 0 2px;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--fg-dim);
+  }
+  .settings-group:first-of-type { margin-top: 4px; }
+  /* "Today" usage hero — single full-width card with stats inline */
+  .usage-hero {
+    background: linear-gradient(135deg, rgba(122,162,247,0.10), rgba(158,206,106,0.06));
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    grid-column: 1 / -1;
+  }
+  .usage-hero .hero-stat { display: flex; align-items: baseline; gap: 4px; }
+  .usage-hero .hero-stat .label { color: var(--fg-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .usage-hero .hero-stat .value { color: var(--fg); font-size: 14px; font-weight: 600; }
+  .usage-hero .hero-cost { color: var(--accent); }
+  /* Subdivider inside merged Config / Daemon card */
+  .card-divider {
+    margin: 10px 0 8px;
+    border-top: 1px solid var(--border);
+    padding-top: 8px;
+  }
+  .card-divider-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-dim);
+    margin-bottom: 4px;
+  }
   .tab-nav {
     display: flex;
     border-bottom: 1px solid var(--border);
@@ -317,8 +375,16 @@ export const GUI_HTML = `<!doctype html>
     border-bottom-color: var(--accent);
     font-weight: 600;
   }
-  .tab-panel { display: none; }
-  .tab-panel.active { display: block; }
+  .tab-panel { display: none; min-height: 0; }
+  .tab-panel.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
+  /* Chat tab: full-height layout. Thread expands to fill, composer stays pinned just
+     below via natural flex flow (NOT sticky — sticky needs a scroll-root that webview
+     iframes don't provide, which is what broke 0.8.2). */
+  .tab-panel.active[data-tab-panel="chat"] {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
 
   /* Touch responsiveness (all viewports). Strips iOS 300ms tap-delay +
      double-tap zoom on interactive controls. Without touch-action:manipulation
@@ -468,7 +534,19 @@ export const GUI_HTML = `<!doctype html>
 
 <main class="tab-panel" data-tab-panel="settings">
 
-  <section class="card full">
+  <!-- ── TODAY hero ─────────────────────────────────────────────────── -->
+  <div class="usage-hero">
+    <div class="hero-stat"><span class="label" data-i18n="calls">calls</span><span class="value" id="stat-calls">—</span></div>
+    <div class="hero-stat"><span class="label" data-i18n="tokens">tokens</span><span class="value" id="stat-tokens">—</span></div>
+    <div class="hero-stat"><span class="label" data-i18n="cost">cost</span><span class="value hero-cost" id="stat-cost">—</span></div>
+    <span class="spacer" style="flex:1"></span>
+    <div id="usage-by-profile" style="font-size:10.5px;color:var(--fg-dim)"></div>
+  </div>
+
+  <!-- ── INTEGRATIONS ───────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupIntegrations">Integrations</h3>
+
+  <section class="card">
     <h2>
       <span data-i18n="cardTools">Connected tools</span>
       <span class="h2-actions">
@@ -489,23 +567,8 @@ export const GUI_HTML = `<!doctype html>
     <div id="plugin-new-form" style="display:none"></div>
   </section>
 
-  <section class="card">
-    <h2>
-      <span data-i18n="cardActivity">Recent activity</span>
-      <span id="activity-dot" class="pill pill-dim" style="font-size:10px">●</span>
-    </h2>
-    <div id="activity-list"><div class="empty" data-i18n="loading">loading…</div></div>
-  </section>
-
-  <section class="card">
-    <h2><span data-i18n="cardUsage">Today's usage</span></h2>
-    <div class="stats">
-      <div class="stat"><div class="stat-label" data-i18n="calls">calls</div><div class="stat-value" id="stat-calls">—</div></div>
-      <div class="stat"><div class="stat-label" data-i18n="tokens">tokens</div><div class="stat-value" id="stat-tokens">—</div></div>
-      <div class="stat"><div class="stat-label" data-i18n="cost">cost</div><div class="stat-value" id="stat-cost">—</div></div>
-    </div>
-    <div id="usage-by-profile" style="margin-top:10px"></div>
-  </section>
+  <!-- ── CONFIGURATION ──────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupConfiguration">Configuration</h3>
 
   <section class="card">
     <h2>
@@ -519,18 +582,28 @@ export const GUI_HTML = `<!doctype html>
   </section>
 
   <section class="card">
-    <h2><span data-i18n="cardDaemon">Daemon</span></h2>
-    <div id="daemon-info" class="row mono dim" data-i18n="loading">loading…</div>
-  </section>
-
-  <section class="card full">
     <h2>
-      <span data-i18n="cardSettings">Settings</span>
+      <span data-i18n="cardConfigDaemon">Config / Daemon</span>
       <span class="h2-actions">
         <button id="btn-settings-reload" class="tiny" data-i18n="reloadBtn">Reload</button>
       </span>
     </h2>
     <div id="settings-view" class="row mono dim" data-i18n="loading">loading…</div>
+    <div class="card-divider">
+      <div class="card-divider-label" data-i18n="cardDaemon">Daemon</div>
+      <div id="daemon-info" class="row mono dim" data-i18n="loading">loading…</div>
+    </div>
+  </section>
+
+  <!-- ── ACTIVITY ───────────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupActivity">Activity</h3>
+
+  <section class="card full">
+    <h2>
+      <span data-i18n="cardActivity">Recent activity</span>
+      <span id="activity-dot" class="pill pill-dim" style="font-size:10px">●</span>
+    </h2>
+    <div id="activity-list"><div class="empty" data-i18n="loading">loading…</div></div>
   </section>
 
 </main>
@@ -560,10 +633,14 @@ export const GUI_HTML = `<!doctype html>
       importBtn: '불러오기',
       clearBtn: '비우기',
       cardSettings: '설정',
+      cardConfigDaemon: '설정 / 데몬',
       reloadBtn: '다시 불러오기',
       sessionApproveAll: '이번 세션 동안 모두 승인',
       tabChat: '채팅',
       tabSettings: '설정',
+      groupIntegrations: '통합',
+      groupConfiguration: '설정',
+      groupActivity: '활동',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -905,12 +982,16 @@ export const GUI_HTML = `<!doctype html>
       const byp = $('usage-by-profile');
       const entries = Object.entries(s.byProfile || {});
       if (entries.length === 0) {
-        byp.innerHTML = '<div class="empty" style="font-size:11px">' + escapeHtml(i18n.runTaskHint) + '</div>';
+        byp.innerHTML = '';
       } else {
-        byp.innerHTML = entries.map(([id, v]) =>
-          '<div class="row dense" style="font-size:11px"><div class="col-grow"><span class="mono" style="color:var(--accent)">' + escapeHtml(id) + '</span></div>' +
-          '<span class="nowrap dim">' + (v.calls || 0) + ' calls · ' + fmtCost(v.costUsd) + '</span></div>',
-        ).join('');
+        // Render inline so it fits next to the hero stats (single line, wraps on overflow).
+        byp.innerHTML = entries
+          .map(([id, v]) =>
+            '<span class="mono" style="color:var(--accent);margin-right:10px;white-space:nowrap">' +
+              escapeHtml(id) + ' <span class="dim">' + fmtCost(v.costUsd) + '</span>' +
+            '</span>',
+          )
+          .join('');
       }
     } catch (e) {
       $('stat-calls').textContent = '—';
