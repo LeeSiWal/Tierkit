@@ -61,20 +61,25 @@ export interface ServerOptions {
    */
   routeExtensions?: RouteExtension[];
   /**
-   * Optional default plugin to install + enable on first run. Caller (the VS Code
-   * extension) typically points this at the bundled `superpowers-guided` sample. The
-   * server checks the registry at startup: if no plugin has ever been installed
-   * (`plugins.json` empty or missing) it runs `installPlugin` and, if `autoEnable` is
-   * set, auto-initializes `tierkit.config.json` and enables the new plugin. Once any
-   * registry entry exists, this option is silently ignored — the user's prior choices
-   * (uninstalled, disabled, swapped) are preserved.
+   * Optional default plugins to install on first run. The server checks the registry at
+   * startup: if no plugin has ever been installed (registry empty or missing), every entry
+   * here gets installed in order. Items with `autoEnable: true` are then enabled (with
+   * auto-`initProject` if no `tierkit.config.json` exists yet). Items without it are
+   * installed-but-disabled, so the user can flip them on later via the GUI toggle.
+   *
+   * Once any registry entry exists, this option is silently ignored — the user's prior
+   * choices (uninstalled, disabled, swapped) are preserved across daemon restarts.
+   *
+   * Typical use: the VS Code extension passes all four bundled `superpowers-*` samples
+   * and marks `superpowers-guided` as the only one to auto-enable, so users get every
+   * preset preinstalled and the recommended one active by default.
    */
-  bootstrapPlugin?: {
+  bootstrapPlugins?: Array<{
     /** Absolute path to a plugin directory. Passed verbatim to `installPlugin`. */
     path: string;
-    /** Default true — call `enablePlugin` after install (auto-`initProject` if needed). */
+    /** When true, enable this plugin after install. Default false (install only). */
     autoEnable?: boolean;
-  };
+  }>;
 }
 
 export interface RouteExtension {
@@ -569,32 +574,48 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     }
   });
 
-  // First-run bootstrap: install + (optionally) enable a default plugin if the registry
-  // is empty. Runs concurrently with server.listen — we don't block the daemon coming up
-  // on it. Errors are logged-but-swallowed: the daemon must still start even if bootstrap
-  // fails (no bundled samples, permission denied, etc.).
-  if (opts.bootstrapPlugin) {
+  // First-run bootstrap: install (and optionally enable) one or more default plugins
+  // when the registry is empty. Runs concurrently with server.listen — we don't block
+  // the daemon coming up on it. Errors are logged-but-swallowed: the daemon must still
+  // start even if bootstrap fails (missing sample dir, permission denied, etc.).
+  if (opts.bootstrapPlugins && opts.bootstrapPlugins.length > 0) {
     void (async () => {
       try {
         const registry = await listPlugins({ cwd: opts.cwd });
         if (registry.plugins.length > 0) return; // user has touched plugins before — skip
-        const installed = await installPlugin({ cwd: opts.cwd, pluginPath: opts.bootstrapPlugin!.path });
-        const wantEnable = opts.bootstrapPlugin!.autoEnable !== false;
-        if (!wantEnable) return;
+        // Pass 1: install every item. Capture which ones the caller wants enabled so we
+        // can pre-initialize the project config exactly once if needed.
+        const installedToEnable: string[] = [];
+        for (const item of opts.bootstrapPlugins!) {
+          try {
+            const r = await installPlugin({ cwd: opts.cwd, pluginPath: item.path });
+            if (item.autoEnable) installedToEnable.push(r.pluginId);
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(`[tierkit] bootstrap install "${item.path}" failed:`, (err as Error).message);
+          }
+        }
+        if (installedToEnable.length === 0) return;
         // enablePlugin throws "no-config" if tierkit.config.json doesn't exist yet. Auto-init.
         const cfg = await loadConfig(opts.cwd);
         if (!cfg.found) {
           await initProject({ cwd: opts.cwd });
         }
-        await enablePlugin({
-          cwd: opts.cwd,
-          pluginId: installed.pluginId,
-          ...(opts.adapters ? { adapters: opts.adapters } : {}),
-        });
+        for (const pluginId of installedToEnable) {
+          try {
+            await enablePlugin({
+              cwd: opts.cwd,
+              pluginId,
+              ...(opts.adapters ? { adapters: opts.adapters } : {}),
+            });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(`[tierkit] bootstrap enable "${pluginId}" failed:`, (err as Error).message);
+          }
+        }
       } catch (err) {
-        // Non-fatal — the GUI's empty-state install rows still work as a manual fallback.
         // eslint-disable-next-line no-console
-        console.error("[tierkit] bootstrapPlugin failed:", (err as Error).message);
+        console.error("[tierkit] bootstrap failed:", (err as Error).message);
       }
     })();
   }

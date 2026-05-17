@@ -109,6 +109,10 @@ export const GUI_HTML = `<!doctype html>
     display: grid;
     grid-template-columns: 1fr;
     gap: 12px;
+    /* min-width:0 — CSS grid items default to min-width:auto, which makes the column
+       widen to fit non-wrapping content (long file paths, mono lines). In a narrow
+       sidebar that pushes the tab-panel horizontally and clips the right edge. */
+    min-width: 0;
   }
   @media (min-width: 720px) {
     main { grid-template-columns: 1fr 1fr; }
@@ -119,7 +123,15 @@ export const GUI_HTML = `<!doctype html>
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 12px;
+    /* Same min-width fix at the card level — narrow flex / grid descendants would
+       otherwise stretch to their content. overflow-wrap:anywhere forces wrapping
+       on long tokens (URLs, paths, .config keys) without touching white-space. */
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
   }
+  /* Same for everything inside main so descendants don't escape past their grid cell. */
+  main > * { min-width: 0; }
   .card h2 {
     margin: 0 0 10px;
     font-size: 11px;
@@ -368,7 +380,11 @@ export const GUI_HTML = `<!doctype html>
     flex-wrap: wrap;
     font-family: var(--mono);
     grid-column: 1 / -1;
+    min-width: 0;
   }
+  /* Per-profile pills row inside the hero — must be allowed to shrink so its parent
+     can wrap, otherwise its intrinsic content width pushes the hero past the sidebar. */
+  #usage-by-profile { min-width: 0; flex: 1 1 auto; }
   .usage-hero .hero-stat { display: flex; align-items: baseline; gap: 4px; }
   .usage-hero .hero-stat .label { color: var(--fg-dim); font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
   .usage-hero .hero-stat .value { color: var(--fg); font-size: 14px; font-weight: 600; }
@@ -1233,10 +1249,12 @@ export const GUI_HTML = `<!doctype html>
       if (entries.length === 0) {
         byp.innerHTML = '';
       } else {
-        // Render inline so it fits next to the hero stats (single line, wraps on overflow).
+        // Render inline as wrapping pills. white-space:nowrap on each item keeps the
+        // "id $0.025" atom intact, but display:inline-block + the parent's flex-wrap
+        // (usage-hero) means rows of pills wrap cleanly in a narrow sidebar.
         byp.innerHTML = entries
           .map(([id, v]) =>
-            '<span class="mono" style="color:var(--accent);margin-right:10px;white-space:nowrap">' +
+            '<span class="mono" style="color:var(--accent);margin-right:10px;display:inline-block;white-space:nowrap">' +
               escapeHtml(id) + ' <span class="dim">' + fmtCost(v.costUsd) + '</span>' +
             '</span>',
           )

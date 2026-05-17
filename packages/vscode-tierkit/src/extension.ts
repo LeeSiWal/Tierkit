@@ -167,11 +167,18 @@ async function isTierkitDaemonAt(url: string): Promise<boolean> {
  *
  * Every step is logged to the "Tierkit" Output channel so failures are debuggable.
  */
-/** Pick the default sample to bootstrap on first run. `guided` is the recommended
- * starting point per the README; fall back to whichever sample is first if it's missing. */
-function pickBootstrapSample(): BundledSample | undefined {
-  if (bundledSamples.length === 0) return undefined;
-  return bundledSamples.find((s) => s.id === "superpowers-guided") ?? bundledSamples[0];
+/** Build the bootstrap-plugins list for the first run. Every bundled sample gets
+ * installed, but only `superpowers-guided` (or the first sample as a fallback) is
+ * marked autoEnable. The rest sit installed-but-disabled so the user can flip them
+ * on later from the sidebar. */
+function buildBootstrapPlugins(): Array<{ path: string; autoEnable: boolean }> {
+  if (bundledSamples.length === 0) return [];
+  const guidedId = bundledSamples.find((s) => s.id === "superpowers-guided")?.id
+    ?? bundledSamples[0].id;
+  return bundledSamples.map((s) => ({
+    path: s.path,
+    autoEnable: s.id === guidedId,
+  }));
 }
 
 async function maybeStartDaemon(): Promise<void> {
@@ -216,13 +223,13 @@ async function maybeStartDaemon(): Promise<void> {
     /* keep default */
   }
 
-  // Load bundled samples now so we can pass one as the bootstrap plugin to startServer.
+  // Load bundled samples now so we can pass them as bootstrap plugins to startServer.
   // (Until this completes, the GUI also has nothing to render in its Install dropdown.)
   bundledSamples = await loadBundledSamples();
   log(`bundled-samples: loaded ${bundledSamples.length} (${bundledSamples.map((s) => s.id).join(", ")})`);
-  const boot = pickBootstrapSample();
-  const bootstrapOpt = boot ? { bootstrapPlugin: { path: boot.path, autoEnable: true } } : {};
-  log(`bootstrap: ${boot ? boot.id : "(none — bundled samples missing)"}`);
+  const bootstrapPlugins = buildBootstrapPlugins();
+  const bootstrapOpt = bootstrapPlugins.length > 0 ? { bootstrapPlugins } : {};
+  log(`bootstrap: ${bootstrapPlugins.map((b) => b.path.split("/").pop() + (b.autoEnable ? "*" : "")).join(", ") || "(none — bundled samples missing)"}`);
 
   log(`auto-start: trying startServer({port:${port}})`);
   try {

@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.9.5 — 2026-05-17
+
+### All four superpowers presets install on first run; only guided is auto-enabled
+- `startServer` opt `bootstrapPlugin` (singular) → **`bootstrapPlugins[]`** (array) with per-item `autoEnable` flag.
+- The extension now passes every bundled sample with `autoEnable: true` set only on `superpowers-guided`. Outcome on first run:
+
+  ```
+  Active plugins
+   ●━━○  superpowers-guided    guided    ✕   ← enabled
+   ○━━●  superpowers-free      free      ✕   ← installed, disabled
+   ○━━●  superpowers-balanced  balanced  ✕   ← installed, disabled
+   ○━━●  superpowers-strict    strict    ✕   ← installed, disabled
+  ```
+
+  Flip any of the others on with the toggle whenever. Bootstrap still respects the "registry is empty" gate — once any plugin is touched, the daemon never re-installs on subsequent starts.
+
+- Bootstrap is robust per-item now: each install / each enable runs inside its own try/catch, so a single malformed sample dir won't take down the whole bootstrap.
+
+### Settings tab no longer clips in narrow sidebars
+Cards and rows were widening to fit non-wrapping mono content (long file paths in the Config card, profile pill list in the Today hero) — CSS grid items default to `min-width: auto`, so the column was sized to its widest atom and the right edge got cut off in 280–360px sidebars.
+
+Fix is layered min-width + word-break:
+
+```css
+main, main > *, .card { min-width: 0; }
+.card { overflow-wrap: anywhere; word-break: break-word; }
+.usage-hero { min-width: 0; }
+#usage-by-profile { min-width: 0; flex: 1 1 auto; }
+```
+
+Per-profile pills inside the hero keep `white-space: nowrap` per pill (so "claude $0.025" stays one token), but the row itself now wraps cleanly thanks to the parent's `flex-wrap: wrap` + the pill's `display: inline-block`.
+
+### How to apply
+1. Install `tierkit-vscode-0.9.5.vsix`.
+2. **Reload the VS Code window** (Cmd-Shift-P → Developer: Reload Window).
+3. In a workspace with no prior `.tierkit/plugins.json`, four superpowers samples install and `superpowers-guided` activates. Settings tab fits in narrow sidebars.
+
+### Verification
+- `unzip` of the .vsix shows all four `extension/samples/superpowers-*` directories.
+- 259/259 core tests pass.
+
+Bumps tierkit-vscode 0.9.4 → 0.9.5.
+
 ## 0.9.4 — 2026-05-17
 
 **Fixes 0.9.3 auto-bootstrap silently doing nothing in the published .vsix.**
