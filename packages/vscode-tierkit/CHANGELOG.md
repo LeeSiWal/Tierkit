@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.9.2 — 2026-05-17
+
+**Empty Active plugins card now shows the bundled samples inline + one-click "Install + Enable" that auto-initializes config.**
+
+### Why
+0.9.0 added install/uninstall to the GUI, but two friction points remained:
+1. When no plugins were installed, the card just said "no plugins active. + New ..." — users had to find the `+ Install` dropdown to discover the bundled samples.
+2. Even after install, clicking Enable failed with `no-config` if the workspace had no `tierkit.config.json`. The CLI tells you to run `tierkit init`; the GUI just bubbled the error.
+
+### Fix
+Empty state now lists the bundled samples directly as install rows. Each row has one `[Install + Enable]` button:
+
+```
+ACTIVE PLUGINS                          [+ Install] [+ New]
+┌──────────────────────────────────────────────────────────┐
+│ No plugins active. Click below to install + enable a    │
+│ bundled sample (one click — auto-initializes the project│
+│ config if needed).                                       │
+│                                                          │
+│ superpowers-balanced  balanced  + review step  [+ Install│
+│ superpowers-free      free      minimal — m…    + Enable]│
+│ superpowers-guided    guided    recommended …            │
+│ superpowers-strict    strict    enforced plan/approve    │
+└──────────────────────────────────────────────────────────┘
+```
+
+Two helpers added in the GUI script:
+- `safeEnable(pluginId)` — calls `POST /v1/plugins/enable`. If the response code is `no-config` (or message contains it), it `POST /v1/config/init` once and retries. Init is idempotent.
+- `installAndEnable(pluginPath)` — installs at the given path, then `safeEnable`s the returned plugin id. Used by the empty-state rows and by both branches of the `+ Install` dropdown (bundled + from-path).
+
+Individual `Enable` buttons on already-installed plugins also use `safeEnable`, so the no-config trap is closed everywhere.
+
+### What stays the same
+- All endpoints unchanged; this is pure GUI orchestration.
+- Browser mode (no extension) sees an empty `__TIERKIT_SAMPLES__` and falls back to the old "no plugins active" text — no degradation there.
+
+### Verification
+- 259/259 core tests pass.
+- `node --check` on the inline script: clean parse.
+
+Bumps tierkit-vscode 0.9.1 → 0.9.2.
+
 ## 0.9.1 — 2026-05-17
 
 **Fix: chat and sidebar dead in VS Code webviews — `acquireVsCodeApi` called twice in 0.9.0.**

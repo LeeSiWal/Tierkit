@@ -705,6 +705,8 @@ export const GUI_HTML = `<!doctype html>
       bundledSamplesLabel: 'Bundled samples',
       fromPathLabel: 'From path',
       noBundledSamples: 'No bundled samples available (open in VS Code to see them).',
+      installEnableBtn: 'Install + Enable',
+      emptyPluginsHint: 'No plugins active. Click below to install + enable a bundled sample (one click — auto-initializes the project config if needed).',
     },
     ko: {
       offline: '오프라인',
@@ -756,6 +758,8 @@ export const GUI_HTML = `<!doctype html>
       bundledSamplesLabel: '번들 샘플',
       fromPathLabel: '경로로 설치',
       noBundledSamples: '번들 샘플 없음 (VS Code 확장에서만 노출).',
+      installEnableBtn: '설치 + 활성화',
+      emptyPluginsHint: '활성 플러그인이 없습니다. 아래에서 번들 샘플을 클릭하면 한 번에 설치 + 활성화됩니다 (Tierkit 프로젝트 설정 없으면 자동 생성).',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -868,6 +872,39 @@ export const GUI_HTML = `<!doctype html>
   }
 
   // ── Card: Plugins ──────────────────────────────────────────────────────────
+  // ── Plugin install/enable helpers ──────────────────────────────────────────
+  // Enable needs tierkit.config.json to exist (lifecycle usecase throws "no-config" without
+  // it). The CLI flow tells the user to run "tierkit init" first; in the GUI we auto-
+  // initialize and retry once. Init is idempotent and safe (just writes default config if
+  // missing) — no destructive surprises.
+  async function safeEnable(pluginId) {
+    let resp = await jpost('/v1/plugins/enable', { pluginId });
+    if (!resp.ok && (resp.data?.code === 'no-config' || /no-config/.test(resp.data?.message || ''))) {
+      const initResp = await jpost('/v1/config/init', {});
+      if (initResp.ok) resp = await jpost('/v1/plugins/enable', { pluginId });
+    }
+    return resp;
+  }
+  // Single-click flow: install at a path, then immediately enable it (auto-init if needed).
+  // Used by the empty-state bundled-sample rows AND by the + Install dropdown.
+  async function installAndEnable(pluginPath) {
+    const installResp = await jpost('/v1/plugins/install', { pluginPath });
+    if (!installResp.ok) {
+      toast(installResp.data?.message || i18n.failed, 'err');
+      return false;
+    }
+    const pluginId = installResp.data?.pluginId || pluginPath;
+    const enableResp = await safeEnable(pluginId);
+    if (!enableResp.ok) {
+      toast(pluginId + ': ' + (enableResp.data?.message || i18n.failed), 'err');
+      await Promise.all([refreshPlugins(), refreshTools()]);
+      return false;
+    }
+    toast(pluginId + ' ✓ ' + (lang === 'ko' ? '설치 및 활성화됨' : 'installed + enabled'), 'ok');
+    await Promise.all([refreshPlugins(), refreshTools()]);
+    return true;
+  }
+
   async function refreshPlugins() {
     try {
       const r = await jget('/v1/plugins');
@@ -875,7 +912,37 @@ export const GUI_HTML = `<!doctype html>
       const root = $('plugins-list');
       root.innerHTML = '';
       if (list.length === 0) {
-        root.innerHTML = '<div class="empty">' + escapeHtml(i18n.noPlugins) + '</div>';
+        // Empty state — surface bundled samples right here so users don't have to hunt for
+        // the + Install dropdown. Each row installs AND enables in one click.
+        const samples = (typeof window !== 'undefined' && Array.isArray(window.__TIERKIT_SAMPLES__)) ? window.__TIERKIT_SAMPLES__ : [];
+        if (samples.length === 0) {
+          root.innerHTML = '<div class="empty">' + escapeHtml(i18n.noPlugins) + '</div>';
+          return;
+        }
+        const empty = document.createElement('div');
+        empty.innerHTML =
+          '<div class="dim" style="font-size:11px;margin-bottom:6px">' + escapeHtml(i18n.emptyPluginsHint) + '</div>';
+        for (const s of samples) {
+          const row = document.createElement('div');
+          row.className = 'row dense';
+          row.innerHTML =
+            '<div class="col-grow">' +
+              '<div><b>' + escapeHtml(s.id) + '</b>' +
+                (s.freedom ? ' <span class="pill pill-accent" style="font-size:9px">' + escapeHtml(s.freedom) + '</span>' : '') +
+              '</div>' +
+              (s.description ? '<div class="dim" style="font-size:10.5px;margin-top:1px">' + escapeHtml(s.description) + '</div>' : '') +
+            '</div>' +
+            '<button class="tiny primary" data-action="install-enable" data-path="' + escapeHtml(s.path) + '">' + escapeHtml(i18n.installEnableBtn) + '</button>';
+          empty.appendChild(row);
+        }
+        root.appendChild(empty);
+        empty.querySelectorAll('button[data-action="install-enable"]').forEach((b) => {
+          b.onclick = async () => {
+            b.disabled = true;
+            try { await installAndEnable(b.getAttribute('data-path')); }
+            finally { b.disabled = false; }
+          };
+        });
         return;
       }
       for (const p of list) {
@@ -900,7 +967,7 @@ export const GUI_HTML = `<!doctype html>
         b.onclick = async () => {
           const id = b.getAttribute('data-id'); b.disabled = true;
           try {
-            const resp = await jpost('/v1/plugins/enable', { pluginId: id });
+            const resp = await safeEnable(id);
             if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
             toast(id + ' ✓ ' + i18n.enabled, 'ok');
             await Promise.all([refreshPlugins(), refreshTools()]);
@@ -1050,23 +1117,11 @@ export const GUI_HTML = `<!doctype html>
           '<button id="pi-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
         '</div>' +
       '</div>';
-    async function doInstall(pluginPath, label) {
-      const resp = await jpost('/v1/plugins/install', { pluginPath });
-      if (!resp.ok) {
-        toast(resp.data?.message || i18n.failed, 'err');
-        return false;
-      }
-      const installedId = resp.data?.pluginId || label || pluginPath;
-      toast(installedId + ' ✓ ' + (lang === 'ko' ? '설치됨 (활성화하려면 Enable 누르세요)' : 'installed — click Enable to activate'), 'ok');
-      await refreshPlugins();
-      return true;
-    }
     host.querySelectorAll('button[data-action="install-bundled"]').forEach((b) => {
       b.onclick = async () => {
         const pluginPath = b.getAttribute('data-path');
-        const id = b.getAttribute('data-id');
         b.disabled = true;
-        try { if (await doInstall(pluginPath, id)) { host.style.display = 'none'; host.innerHTML = ''; } }
+        try { if (await installAndEnable(pluginPath)) { host.style.display = 'none'; host.innerHTML = ''; } }
         finally { b.disabled = false; }
       };
     });
@@ -1074,7 +1129,7 @@ export const GUI_HTML = `<!doctype html>
       const p = ($('pi-path').value || '').trim();
       if (!p) return;
       const btn = $('pi-install'); btn.disabled = true;
-      try { if (await doInstall(p, null)) { host.style.display = 'none'; host.innerHTML = ''; } }
+      try { if (await installAndEnable(p)) { host.style.display = 'none'; host.innerHTML = ''; } }
       finally { btn.disabled = false; }
     };
     $('pi-cancel').onclick = () => { host.style.display = 'none'; host.innerHTML = ''; };
