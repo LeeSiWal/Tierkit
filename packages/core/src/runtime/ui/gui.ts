@@ -24,7 +24,7 @@ import { TRANSPORT_INLINE_JS } from "./transport.js";
 // (typically: user installed a new vsix but didn't reload the VS Code window, so the
 // previous daemon is still serving the OLD GUI which had EXPECTED_GUI_VERSION = old value).
 // Bumped by the release commit alongside Server.ts VERSION and package.json files.
-const GUI_BUILD_VERSION = "0.10.9";
+const GUI_BUILD_VERSION = "0.10.10";
 
 export const GUI_HTML = `<!doctype html>
 <html lang="en">

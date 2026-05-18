@@ -179,7 +179,17 @@ export async function executeLlmCall(
   //   - "off": never apply (pass tools through to provider)
   const isRemote = profile.kind !== "local-device";
   const shimMode = cfg.config.runtime.toolShim ?? "auto";
+  // When the caller explicitly demands a tool call via toolChoice, we MUST pass tools
+  // through to the provider — the shim would strip both, and the model would just see
+  // an XML system-prompt nudge with no enforcement. For local Ollama, this means the
+  // provider's `format` JSON-schema injection kicks in (Ollama 0.5+ enforces it).
+  // For cloud, it means OpenAI/Anthropic see `tool_choice: "required"` natively.
+  const callerForcedChoice =
+    request.toolChoice !== undefined &&
+    request.toolChoice !== "auto" &&
+    request.toolChoice !== "none";
   const shimActive =
+    !callerForcedChoice &&
     request.tools !== undefined &&
     request.tools.length > 0 &&
     (shimMode === "on" || (shimMode === "auto" && !isRemote));

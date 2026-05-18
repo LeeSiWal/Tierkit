@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/adapter-continue",
-  "version": "0.10.9",
+  "version": "0.10.10",
   "description": "Tierkit adapter that exports plugins for Continue (.continue/{config.yaml, rules, prompts}).",
   "license": "MIT",
   "type": "module",
