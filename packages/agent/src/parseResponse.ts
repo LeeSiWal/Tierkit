@@ -44,6 +44,7 @@ export function parseAgentResponse(text: string, knownToolNames: string[]): Pars
   // Build the list of tag names we'll search for.
   const allNames = new Set<string>([...knownToolNames, ...RESERVED]);
 
+  // ── Strategy A: XML tags <tool_name>...</tool_name> (Cline / Roo style) ──
   // Repeatedly find the FIRST tag block of any known name, extract it, then re-scan the
   // remainder. This handles unordered names correctly (the for-each-name approach can
   // misorder when calls of different names interleave in the source text).
@@ -68,6 +69,45 @@ export function parseAgentResponse(text: string, knownToolNames: string[]): Pars
       });
     }
 
+    working = working.slice(0, start) + working.slice(end);
+  }
+
+  // ── Strategy B: Mistral-family native marker [TOOL_CALLS]name[ARGS]{json} ──
+  // Devstral / Mistral models trained on function calling emit this exact text when their
+  // native format isn't being interpreted by the runtime. We extract them here so they're
+  // not dumped as raw text into the chat.
+  const mistralRe = /\[TOOL_CALLS\]\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\[ARGS\]\s*(\{[\s\S]*?\})/g;
+  let mm: RegExpExecArray | null;
+  const mistralRanges: Array<{ start: number; end: number }> = [];
+  while ((mm = mistralRe.exec(working)) !== null) {
+    const name = mm[1]!;
+    const argsRaw = mm[2]!;
+    if (!allNames.has(name)) continue;
+    let args: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(argsRaw);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Malformed JSON args — skip; will be left in narrativeText.
+      continue;
+    }
+    if (name === "task_complete") {
+      const summary = String(args.summary ?? "(no summary)");
+      taskComplete = { summary };
+    } else {
+      toolCalls.push({
+        id: `call_${Date.now().toString(36)}_${toolCalls.length}`,
+        name,
+        args,
+      });
+    }
+    mistralRanges.push({ start: mm.index, end: mm.index + mm[0].length });
+  }
+  // Splice out the consumed ranges from working (back-to-front so offsets stay valid).
+  for (let i = mistralRanges.length - 1; i >= 0; i--) {
+    const { start, end } = mistralRanges[i]!;
     working = working.slice(0, start) + working.slice(end);
   }
 

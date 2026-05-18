@@ -86,3 +86,72 @@ describe("parseAgentResponse — degenerate inputs", () => {
     expect(r.toolCalls).toEqual([]);
   });
 });
+
+describe("parseAgentResponse — Mistral [TOOL_CALLS] format", () => {
+  it("extracts a single tool call written as [TOOL_CALLS]name[ARGS]{json}", () => {
+    const text = '[TOOL_CALLS]read_file[ARGS]{"path":"package.json"}';
+    const r = parseAgentResponse(text, ["read_file"]);
+    expect(r.toolCalls.length).toBe(1);
+    expect(r.toolCalls[0]!.name).toBe("read_file");
+    expect(r.toolCalls[0]!.args).toEqual({ path: "package.json" });
+    expect(r.narrativeText).toBe("");
+  });
+
+  it("strips Mistral markers from narrativeText so the chat doesn't show raw text", () => {
+    const text = "I will read the file now.\n[TOOL_CALLS]read_file[ARGS]{\"path\":\"foo.ts\"}\nThanks.";
+    const r = parseAgentResponse(text, ["read_file"]);
+    expect(r.toolCalls.length).toBe(1);
+    expect(r.narrativeText).not.toContain("[TOOL_CALLS]");
+    expect(r.narrativeText).toContain("I will read the file now.");
+    expect(r.narrativeText).toContain("Thanks.");
+  });
+
+  it("extracts multiple [TOOL_CALLS] in one response", () => {
+    const text =
+      '[TOOL_CALLS]read_file[ARGS]{"path":"a.txt"}\n' +
+      '[TOOL_CALLS]read_file[ARGS]{"path":"b.txt"}';
+    const r = parseAgentResponse(text, ["read_file"]);
+    expect(r.toolCalls.length).toBe(2);
+    expect(r.toolCalls[0]!.args.path).toBe("a.txt");
+    expect(r.toolCalls[1]!.args.path).toBe("b.txt");
+  });
+
+  it("ignores [TOOL_CALLS] for an unknown tool name (keeps it in narrativeText)", () => {
+    const text = '[TOOL_CALLS]frobnicate[ARGS]{"x":1}';
+    const r = parseAgentResponse(text, ["read_file"]);
+    expect(r.toolCalls).toEqual([]);
+    expect(r.narrativeText).toContain("[TOOL_CALLS]frobnicate");
+  });
+
+  it("ignores [TOOL_CALLS] with malformed JSON args (keeps narrative intact)", () => {
+    const text = '[TOOL_CALLS]read_file[ARGS]{not json';
+    const r = parseAgentResponse(text, ["read_file"]);
+    expect(r.toolCalls).toEqual([]);
+    expect(r.narrativeText).toContain("[TOOL_CALLS]");
+  });
+
+  it("can mix XML and [TOOL_CALLS] in the same response", () => {
+    const text =
+      "Plan:\n<read_file><path>a.txt</path></read_file>\n" +
+      'Then:\n[TOOL_CALLS]read_file[ARGS]{"path":"b.txt"}';
+    const r = parseAgentResponse(text, ["read_file"]);
+    expect(r.toolCalls.length).toBe(2);
+    expect(r.toolCalls.some((c) => c.args.path === "a.txt")).toBe(true);
+    expect(r.toolCalls.some((c) => c.args.path === "b.txt")).toBe(true);
+    expect(r.narrativeText).not.toContain("[TOOL_CALLS]");
+    expect(r.narrativeText).not.toContain("<read_file>");
+  });
+});
+
+describe("AgentLoop assistant_text — XML-stripped narrative only", () => {
+  // Smoke-level coverage: confirm parseAgentResponse strips known XML so the AgentLoop's
+  // narrativeText emission (now sourced from parsed.narrativeText) won't include raw tags.
+  it("strips <ask_followup_question> from narrativeText", () => {
+    const text =
+      "<ask_followup_question><question>What's next?</question></ask_followup_question>";
+    const r = parseAgentResponse(text, ["ask_followup_question"]);
+    expect(r.narrativeText).toBe("");
+    expect(r.toolCalls.length).toBe(1);
+    expect(r.toolCalls[0]!.name).toBe("ask_followup_question");
+  });
+});

@@ -139,13 +139,16 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
         ...(modelResponse.profileId ? { profileId: modelResponse.profileId } : {}),
       };
     }
-    // Surface the raw text so the UI can show "thinking" even before tools fire.
-    if (modelResponse.text && modelResponse.text.trim().length > 0) {
-      yield { type: "assistant_text", text: modelResponse.text };
-    }
-
-    // ── Parse for tool calls ──────────────────────────────────────────────
+    // ── Parse for tool calls FIRST so we can emit narrative text without raw XML ──
+    // Weak local models emit `<tool_name>...</tool_name>` blocks inline with their prose.
+    // We must strip those before surfacing `assistant_text` so the chat UI doesn't render
+    // the raw XML to the user. Tool calls are emitted later as their own `tool_call` events.
     const parsed = parseAgentResponse(modelResponse.text, knownToolNames);
+
+    // Surface the narrative (XML-stripped) text so the UI shows only the prose.
+    if (parsed.narrativeText && parsed.narrativeText.trim().length > 0) {
+      yield { type: "assistant_text", text: parsed.narrativeText };
+    }
 
     // Prefer Tierkit's parsed XML calls. If the provider also returned native tool_calls
     // (e.g., a strong model that did emit structured), merge them — but de-dup by name+args.
