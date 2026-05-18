@@ -325,6 +325,57 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, r);
       }
 
+      if (route === "POST /v1/plugins/generate") {
+        const body = await readJsonBody<{ description: string }>(req);
+        if (!body || typeof body.description !== "string") {
+          return sendJson(res, 400, { error: "request must be { description: string }" });
+        }
+        try {
+          const { generatePlugin } = await import("../usecases/generatePlugin.js");
+          const r = await generatePlugin({ description: body.description, cwd: opts.cwd, env });
+          return sendJson(res, 200, {
+            ok: true,
+            draftId: r.draftId,
+            manifest: r.manifest,
+            rules: r.rules,
+            modelUsed: r.modelUsed,
+          });
+        } catch (err) {
+          const e = err as { code?: string; message?: string; rawOutput?: string };
+          if (e.code === "invalid-description" || e.code === "description-too-long") {
+            return sendJson(res, 400, { ok: false, code: e.code, message: e.message });
+          }
+          return sendJson(res, 400, {
+            ok: false,
+            code: e.code ?? "generate-failed",
+            message: e.message ?? "generation failed",
+            ...(e.rawOutput ? { rawOutput: e.rawOutput } : {}),
+          });
+        }
+      }
+
+      if (route === "POST /v1/plugins/generate/install") {
+        const body = await readJsonBody<{ draftId: string; enable?: boolean }>(req);
+        if (!body || typeof body.draftId !== "string" || !/^[0-9a-f-]{36}$/.test(body.draftId)) {
+          return sendJson(res, 400, { error: "request must be { draftId: uuid }" });
+        }
+        const cfg = await loadConfig(opts.cwd);
+        const draftPath = path.join(opts.cwd, cfg.config.runtime.dataDir, "plugin-drafts", body.draftId);
+        try {
+          await fs.access(draftPath);
+        } catch {
+          return sendJson(res, 404, { ok: false, code: "draft-not-found", message: "draft not found or expired" });
+        }
+        const ins = await installPlugin({ pluginPath: draftPath, cwd: opts.cwd, force: true });
+        let enabled = false;
+        if (body.enable) {
+          await enablePlugin({ pluginId: ins.pluginId, cwd: opts.cwd });
+          enabled = true;
+        }
+        await fs.rm(draftPath, { recursive: true, force: true });
+        return sendJson(res, 200, { ok: true, pluginId: ins.pluginId, version: ins.version, installedPath: ins.installedPath, enabled });
+      }
+
       // ── Config mutation: add/remove model profiles, scaffold workspace config ──
       if (route === "POST /v1/config/profile") {
         const body = await readJsonBody<{ id: string; profile: unknown; scope?: ProfileScope }>(req);
