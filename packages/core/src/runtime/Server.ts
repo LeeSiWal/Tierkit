@@ -389,6 +389,20 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         }
       }
 
+      // ── Secrets management: GET/POST/DELETE /v1/secrets ──
+      if (route === "GET /v1/secrets") {
+        if (!opts.secrets) return sendJson(res, 501, { error: "secrets store not configured" });
+        const cfg = await loadConfig(opts.cwd);
+        const known = new Set<string>();
+        const profiles = cfg.config.modelProfiles ?? {};
+        for (const p of Object.values(profiles)) {
+          const k = (p as { apiKeyEnv?: string }).apiKeyEnv;
+          if (typeof k === "string" && k) known.add(k);
+        }
+        const r = opts.secrets.list({ knownKeys: [...known] });
+        return sendJson(res, 200, r);
+      }
+
       // ── Workspace file listing (used by @filename autocomplete in the GUI) ──
       if (route === "GET /v1/workspace/files") {
         const prefix = (url.searchParams.get("prefix") ?? "").slice(0, 200);
