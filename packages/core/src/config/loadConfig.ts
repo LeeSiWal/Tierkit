@@ -85,6 +85,7 @@ function mergeConfigs(
       o.activePlugins.length > 0 || rawProfileEntries === undefined ? o.activePlugins : base.activePlugins,
     defaultTarget: o.defaultTarget !== "generic" || base.defaultTarget === "generic" ? o.defaultTarget : base.defaultTarget,
     modelProfiles: mergedProfiles,
+    disabledProfileIds: [...new Set([...base.disabledProfileIds, ...o.disabledProfileIds])],
     routingPolicy: o.routingPolicy ?? base.routingPolicy,
     security: o.security ?? base.security,
     ...(o.budget !== undefined ? { budget: o.budget } : base.budget !== undefined ? { budget: base.budget } : {}),
@@ -153,6 +154,10 @@ export async function loadConfig(
     for (const id of Object.keys(bundled.modelProfiles)) profileSources[id] = "bundled";
   }
 
+  // Track profile ids the user explicitly suppressed (via `null` in their config).
+  // Discovery layer below MUST respect these so deletes of auto-discovered profiles stick.
+  const suppressedIds = new Set<string>();
+
   // ── User-level overlay ──
   const userRead = await readConfigFileRaw(userPath);
   let acc = bundled;
@@ -160,7 +165,7 @@ export async function loadConfig(
     const rawProfiles = (userRead.raw.modelProfiles ?? {}) as Record<string, unknown>;
     acc = mergeConfigs(acc, { config: userRead.config, rawProfiles });
     for (const [id, val] of Object.entries(rawProfiles)) {
-      if (val === null) delete profileSources[id];
+      if (val === null) { delete profileSources[id]; suppressedIds.add(id); }
     }
     for (const id of Object.keys(userRead.config.modelProfiles)) profileSources[id] = "user";
   }
@@ -171,7 +176,7 @@ export async function loadConfig(
     const rawProfiles = (wsRead.raw.modelProfiles ?? {}) as Record<string, unknown>;
     acc = mergeConfigs(acc, { config: wsRead.config, rawProfiles });
     for (const [id, val] of Object.entries(rawProfiles)) {
-      if (val === null) delete profileSources[id];
+      if (val === null) { delete profileSources[id]; suppressedIds.add(id); }
     }
     for (const id of Object.keys(wsRead.config.modelProfiles)) profileSources[id] = "workspace";
   }
@@ -184,12 +189,26 @@ export async function loadConfig(
   //
   // Discovered profiles NEVER override existing ones — if a workspace/user/bundled
   // profile has the same id (very unlikely given the `ollama-` prefix), it wins.
+  // Apply disabledProfileIds: any id in this list has enabled=false on its merged profile.
+  const userDisabled = (userRead?.config.disabledProfileIds ?? []);
+  const wsDisabled = (wsRead?.config.disabledProfileIds ?? []);
+  const allDisabled = new Set<string>([...userDisabled, ...wsDisabled]);
+  if (allDisabled.size > 0) {
+    const profilesCopy: ModelProfileMap = { ...acc.modelProfiles };
+    for (const id of allDisabled) {
+      const p = profilesCopy[id];
+      if (p) profilesCopy[id] = { ...p, enabled: false };
+    }
+    acc = { ...acc, modelProfiles: profilesCopy };
+  }
+
   if (acc.runtime.discoverOllamaModels !== false) {
     const discovered = await discoverOllamaProfiles();
     const merged: ModelProfileMap = { ...acc.modelProfiles };
     for (const [id, p] of Object.entries(discovered)) {
+      if (suppressedIds.has(id)) continue; // User explicitly deleted this — don't re-add.
       if (!(id in merged)) {
-        merged[id] = p;
+        merged[id] = allDisabled.has(id) ? { ...p, enabled: false } : p;
         profileSources[id] = "discovered";
       }
     }

@@ -21,7 +21,7 @@ import {
 import { listModels } from "../usecases/listModels.js";
 import { testModel, TestModelError } from "../usecases/testModel.js";
 import { listPlugins } from "../usecases/listPlugins.js";
-import { addProfile, removeProfile, ProfileCrudError, type ProfileScope } from "../usecases/profileCrud.js";
+import { addProfile, removeProfile, updateProfileEnabled, ProfileCrudError, type ProfileScope } from "../usecases/profileCrud.js";
 import { initProject } from "../usecases/initProject.js";
 import { shutdownSpawnedOllama } from "./../model/providers/ollamaAutoLaunch.js";
 import { handleOpenAIChatCompletions } from "./openaiCompat.js";
@@ -304,6 +304,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, r);
       }
 
+      if (route === "POST /v1/models/discover") {
+        const { discoverOllamaProfiles } = await import("../model/discoverOllamaProfiles.js");
+        // force: true busts the 30s cache so the user sees fresh results.
+        const discovered = await discoverOllamaProfiles({ force: true });
+        return sendJson(res, 200, { ok: true, count: Object.keys(discovered).length, ids: Object.keys(discovered) });
+      }
+
       if (route === "POST /v1/models/test") {
         const body = await readJsonBody<{ profileId: string }>(req);
         if (!body || typeof body.profileId !== "string") {
@@ -427,6 +434,23 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         if (!id) return sendJson(res, 400, { error: "missing profile id in path" });
         try {
           const r = await removeProfile({ cwd: opts.cwd, id, scope });
+          return sendJson(res, 200, r);
+        } catch (err) {
+          if (err instanceof ProfileCrudError) return sendJson(res, 400, { code: err.code, message: err.message });
+          throw err;
+        }
+      }
+
+      if (method === "PATCH" && url.pathname.startsWith("/v1/config/profile/")) {
+        const id = decodeURIComponent(url.pathname.slice("/v1/config/profile/".length));
+        if (!id) return sendJson(res, 400, { error: "missing profile id in path" });
+        const body = await readJsonBody<{ enabled?: boolean; scope?: ProfileScope }>(req);
+        if (!body || typeof body.enabled !== "boolean") {
+          return sendJson(res, 400, { error: "request must be { enabled: boolean, scope?: 'workspace'|'user' }" });
+        }
+        const scope: ProfileScope = body.scope === "user" ? "user" : "workspace";
+        try {
+          const r = await updateProfileEnabled({ cwd: opts.cwd, id, scope, enabled: body.enabled });
           return sendJson(res, 200, r);
         } catch (err) {
           if (err instanceof ProfileCrudError) return sendJson(res, 400, { code: err.code, message: err.message });

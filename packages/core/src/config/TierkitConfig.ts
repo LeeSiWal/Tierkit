@@ -109,6 +109,7 @@ export const TierkitConfigSchema = z
     activePlugins: z.array(z.string().min(1)).default([]),
     defaultTarget: z.enum(TARGETS).default("generic"),
     modelProfiles: ModelProfileMapSchema.default({}),
+    disabledProfileIds: z.array(z.string().min(1)).default([]),
     routingPolicy: RoutingPolicySchema.default({
       preferPrivateRemoteBeforePublicCloud: true,
       publicCloudRequiresApproval: true,

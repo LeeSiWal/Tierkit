@@ -36,6 +36,7 @@ export const ModelProfileSchema = z
     requiresApproval: z.boolean().optional(),
     defaultMode: z.enum(["execute", "review-only"]).optional(),
     goodAt: z.array(z.string().min(1)).optional(),
+    enabled: z.boolean().optional(),
     cost: ModelCostSchema.optional(),
   })
   .strict()

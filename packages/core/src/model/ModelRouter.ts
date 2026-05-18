@@ -51,7 +51,7 @@ function sortProfilesForTier(
   tier: ModelTier,
   taskType: string,
 ): string[] {
-  const inTier = Object.entries(profiles).filter(([, p]) => p.kind === tier);
+  const inTier = Object.entries(profiles).filter(([, p]) => p.kind === tier && p.enabled !== false);
   const rank = (p: ModelProfile): number => {
     if (!p.goodAt || p.goodAt.length === 0) return 1; // neutral
     if (p.goodAt.includes(taskType)) return 0;          // fit

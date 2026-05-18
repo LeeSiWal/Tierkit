@@ -640,6 +640,7 @@ export const GUI_HTML = `<!doctype html>
           <option value="public-cloud">public-cloud</option>
         </select>
       </span>
+      <button id="btn-discover-ollama" class="tiny" data-i18n="discoverBtn">🔍 Discover Ollama models</button>
     </div>
     <div id="models-list"><div class="empty" data-i18n="loading">loading…</div></div>
     <div id="profile-add-form" style="display:none"></div>
@@ -800,6 +801,11 @@ export const GUI_HTML = `<!doctype html>
       genDiscard: 'Discard',
       genInstalled: 'plugin installed',
       genRawOutputLabel: 'Last raw output (for debugging)',
+      enabledOn: 'ON',
+      enabledOff: 'OFF',
+      enableToggle: 'enable',
+      discoverBtn: '🔍 Discover Ollama models',
+      discoverDone: 'discovered',
     },
     ko: {
       offline: '오프라인',
@@ -884,6 +890,11 @@ export const GUI_HTML = `<!doctype html>
       genDiscard: '취소',
       genInstalled: '플러그인 설치됨',
       genRawOutputLabel: '마지막 원본 출력 (디버깅용)',
+      enabledOn: '활성',
+      enabledOff: '비활성',
+      enableToggle: '활성/비활성 토글',
+      discoverBtn: '🔍 Ollama 모델 자동 찾기',
+      discoverDone: '발견됨',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -1560,7 +1571,10 @@ export const GUI_HTML = `<!doctype html>
                 : '') +
             '</div>' +
           '</div>' +
-          '<button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
+          '<button class="tiny" data-action="toggle-enabled" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '" data-enabled="' + (p.enabled === false ? '0' : '1') + '">' +
+            (p.enabled === false ? escapeHtml(i18n.enabledOff) : escapeHtml(i18n.enabledOn)) +
+          '</button>' +
+          ' <button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
           ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>';
         root.appendChild(row);
       }
@@ -1589,6 +1603,19 @@ export const GUI_HTML = `<!doctype html>
           } finally { b.disabled = false; }
         };
       });
+      root.querySelectorAll('button[data-action="toggle-enabled"]').forEach((b) => {
+        b.onclick = async () => {
+          const id = b.getAttribute('data-id');
+          const scope = b.getAttribute('data-scope') === 'user' ? 'user' : 'workspace';
+          const currentlyEnabled = b.getAttribute('data-enabled') === '1';
+          b.disabled = true;
+          try {
+            const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id), { method: 'PATCH', body: { enabled: !currentlyEnabled, scope } });
+            if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+            await refreshModels();
+          } finally { b.disabled = false; }
+        };
+      });
       root.querySelectorAll('button[data-action="setkey"]').forEach((b) => {
         b.onclick = () => openSetKeyDialog(b.getAttribute('data-key'));
       });
@@ -1604,6 +1631,18 @@ export const GUI_HTML = `<!doctype html>
     const resp = await transport.request('/v1/config/routing', { method: 'PATCH', body: { autoEscalationCeiling: value } });
     if (!resp.ok) { toast((resp.data && resp.data.error) || i18n.failed, 'err'); return; }
     toast(i18n.autoCeilingSaved, 'ok');
+  };
+
+  $('btn-discover-ollama').onclick = async () => {
+    const btn = $('btn-discover-ollama');
+    btn.disabled = true;
+    try {
+      const resp = await jpost('/v1/models/discover', {});
+      if (!resp.ok) { toast((resp.data && resp.data.error) || i18n.failed, 'err'); return; }
+      const count = resp.data && resp.data.count !== undefined ? resp.data.count : 0;
+      toast(count + ' ' + i18n.discoverDone, 'ok');
+      await refreshModels();
+    } finally { btn.disabled = false; }
   };
 
   $('btn-profile-add').onclick = () => {
@@ -1628,7 +1667,7 @@ export const GUI_HTML = `<!doctype html>
           '</div>' +
           '<div class="form-grid">' +
             '<label>' + escapeHtml(i18n.idLabel) + '</label>' +
-            '<input id="pa-id" placeholder="' + escapeHtml(tpl.idHint) + '" />' +
+            '<input id="pa-id" value="' + escapeHtml(tpl.idHint) + '" />' +
             '<label>' + escapeHtml(i18n.modelLabel) + '</label>' +
             '<input id="pa-model" value="' + escapeHtml(tpl.model) + '" />' +
             (isLocal

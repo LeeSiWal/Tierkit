@@ -120,3 +120,36 @@ export async function removeProfile(input: RemoveProfileInput): Promise<ProfileC
 
   return { path: targetPath, scope, id: input.id };
 }
+
+export interface UpdateProfileEnabledInput {
+  id: string;
+  cwd?: string;
+  scope?: ProfileScope;
+  enabled: boolean;
+}
+
+export async function updateProfileEnabled(input: UpdateProfileEnabledInput): Promise<ProfileCrudResult> {
+  const cwd = input.cwd ?? process.cwd();
+  const scope = input.scope ?? "workspace";
+  const targetPath = resolveConfigPath(cwd, scope);
+
+  let raw: Record<string, unknown> = {};
+  try {
+    const text = await fs.readFile(targetPath, "utf8");
+    raw = JSON.parse(text) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    raw = { version: "0.1" };
+  }
+  const list = Array.isArray(raw.disabledProfileIds) ? (raw.disabledProfileIds as string[]) : [];
+  const filtered = list.filter((x) => x !== input.id);
+  if (!input.enabled) filtered.push(input.id);
+  raw.disabledProfileIds = filtered;
+
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const text2 = JSON.stringify(raw, null, 2) + "\n";
+  const tempPath = targetPath + ".tmp";
+  await fs.writeFile(tempPath, text2, "utf8");
+  await fs.rename(tempPath, targetPath);
+  return { path: targetPath, scope, id: input.id };
+}
