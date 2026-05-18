@@ -1,5 +1,5 @@
 import { loadConfig } from "../../config/loadConfig.js";
-import { decideRoute } from "../../model/ModelRouter.js";
+import { decideRoute, buildEscalationChain } from "../../model/ModelRouter.js";
 import type { ModelTier } from "../../model/ModelProfile.js";
 import { classifyTask, type TaskType } from "../../model/TaskClassifier.js";
 import { partitionByViability } from "../../model/profileViability.js";
@@ -62,19 +62,16 @@ export async function resolveAutoCandidates(
     if (dailyPct >= 80) {
       const down = TIER_DOWN[decision.tier];
       if (down) {
-        const rerouted = decideRoute({
-          task: { task: input.lastUserMessage },
-          profiles: cfg.config.modelProfiles,
-          thresholds: policy.riskThresholds,
-          ceiling: policy.autoEscalationCeiling,
+        const lowerChain = buildEscalationChain(
+          cfg.config.modelProfiles,
+          down,
+          policy.autoEscalationCeiling,
           taskType,
-          ...(cfg.config.modelPolicy ? { policy: cfg.config.modelPolicy } : {}),
-        });
-        // Filter chain to start from the downgraded tier.
-        chain = rerouted.escalationChain.filter((c) => {
-          return TIER_ORDER.indexOf(c.tier) >= TIER_ORDER.indexOf(down);
-        });
-        if (chain.length > 0) downgradedFromTier = decision.tier;
+        );
+        if (lowerChain.length > 0) {
+          chain = lowerChain;
+          downgradedFromTier = decision.tier;
+        }
       }
     }
 

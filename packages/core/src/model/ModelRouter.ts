@@ -63,7 +63,7 @@ function sortProfilesForTier(
     .map((x) => x.id);
 }
 
-function buildEscalationChain(
+export function buildEscalationChain(
   profiles: ModelProfileMap,
   primaryTier: ModelTier,
   ceiling: ModelTier,

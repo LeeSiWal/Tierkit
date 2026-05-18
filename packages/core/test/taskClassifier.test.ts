@@ -28,6 +28,10 @@ describe("TaskClassifier", () => {
     });
   }
 
+  it("does NOT classify 'nosummary' as summarize", () => {
+    expect(classifyTask("ship the executive nosummary")).not.toBe("summarize");
+  });
+
   it("exports a TASK_TYPES tuple", () => {
     expect(TASK_TYPES).toContain("general");
     expect(TASK_TYPES).toContain("code-review");

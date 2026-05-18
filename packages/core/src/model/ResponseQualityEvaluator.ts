@@ -13,7 +13,7 @@ const TERMINATORS = /[.!?。、:;\]\)}」』]$/;
  * Post-response quality check. Pure function, no I/O.
  *
  * Heuristics (any failing → unacceptable):
- *   - empty: trimmed length 0, OR length < 20 when the prompt is substantial (>100 chars)
+ *   - empty: trimmed length 0, OR length < 10 when the prompt is substantial (>100 chars)
  *   - refusal: head matches a known refusal pattern
  *   - truncated: finishReason indicates a non-graceful stop AND text ends mid-sentence
  *   - repetition: last 80 chars equal the preceding 80 chars (loop detector)

@@ -27,6 +27,23 @@ afterEach(async () => {
   if (tmp) await fs.rm(tmp, { recursive: true, force: true });
 });
 
+describe("PATCH /v1/config/routing — fresh directory", () => {
+  it("creates the file when tierkit.config.json doesn't exist yet", async () => {
+    // Boot without writing a config first.
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-routingep-fresh-"));
+    server = await startServer({ cwd: tmp, host: "127.0.0.1", port: 0 });
+    const baseUrl = `http://${server.address}:${server.port}`;
+    const r = await fetch(`${baseUrl}/v1/config/routing`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ autoEscalationCeiling: "private-remote" }),
+    });
+    expect(r.status).toBe(200);
+    const written = JSON.parse(await fs.readFile(path.join(tmp, "tierkit.config.json"), "utf8"));
+    expect(written.routingPolicy.autoEscalationCeiling).toBe("private-remote");
+  });
+});
+
 describe("PATCH /v1/config/routing", () => {
   it("updates autoEscalationCeiling", async () => {
     const baseUrl = await boot();

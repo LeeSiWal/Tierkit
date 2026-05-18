@@ -16,7 +16,7 @@ export type TaskType = (typeof TASK_TYPES)[number];
 const RULES: Array<{ type: TaskType; patterns: RegExp[] }> = [
   { type: "code-review",   patterns: [/\breview\b/i, /리뷰/, /검토/] },
   { type: "refactor",      patterns: [/\brefactor/i, /리팩토/, /재구성/] },
-  { type: "summarize",     patterns: [/\bsummariz|summary\b/i, /\btldr\b/i, /요약/] },
+  { type: "summarize",     patterns: [/\bsummariz|\bsummary\b/i, /\btldr\b/i, /요약/] },
   { type: "translate",     patterns: [/\btranslate\b/i, /번역/] },
   { type: "plan",          patterns: [/\b(?:plan|design|architect)\b/i, /계획/, /설계/] },
   { type: "code-generation", patterns: [/\b(?:write|implement|add|build|create)\b/i, /구현/, /작성/] },

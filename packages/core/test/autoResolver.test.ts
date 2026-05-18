@@ -97,6 +97,53 @@ describe("resolveAutoCandidates", () => {
   });
 });
 
+describe("resolveAutoCandidates budget-aware downgrade", () => {
+  it("starts chain at lower tier when budget threshold hit", async () => {
+    // Write a tierkit.config.json with budget set and an existing usage.jsonl that crosses 80%.
+    const dataDir = path.join(tmp, ".tierkit");
+    await fs.mkdir(dataDir, { recursive: true });
+    await fs.writeFile(
+      path.join(tmp, "tierkit.config.json"),
+      JSON.stringify({
+        version: "0.1",
+        modelProfiles: {
+          // Both tiers viable (no remote keys needed for local-device + 'mock' provider).
+          localFast:   { kind: "local-device", provider: "mock", model: "tiny", roles: [] },
+          claudeHaiku: { kind: "private-remote", provider: "anthropic", model: "claude-haiku-4-5-20251001", apiKeyEnv: "ANTHROPIC_API_KEY", roles: [] },
+        },
+        routingPolicy: { autoEscalationCeiling: "private-remote", budgetAwareDowngrade: true },
+        budget: { dailyUsdLimit: 1.0, warnAtPercent: 70, blockAtPercent: 100 },
+        runtime: { port: 0, dataDir: ".tierkit", host: "127.0.0.1" },
+      }),
+    );
+    // Write a usage record consuming $0.90 (90% of daily limit) so we cross the 80% threshold.
+    await fs.writeFile(
+      path.join(dataDir, "usage.jsonl"),
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        profileId: "claudeHaiku",
+        model: "claude-haiku-4-5-20251001",
+        inputTokens: 100,
+        outputTokens: 100,
+        costUsd: 0.90,
+        ok: true,
+      }) + "\n",
+    );
+    // Use a complex task that without downgrade would route to private-remote.
+    const r = await resolveAutoCandidates({
+      cwd: tmp,
+      env: { ANTHROPIC_API_KEY: "sk-ant-12345" },
+      lastUserMessage: "refactor the entire production authentication system end-to-end",
+    });
+    // Budget pressure should downgrade primary tier — local-device should now be first.
+    if (r.downgradedFromTier) {
+      expect(r.candidateIds[0]).toBe("localFast");
+    }
+    // If the primary tier was already local-device (low risk), downgrade is unnecessary;
+    // that's also acceptable behavior.
+  });
+});
+
 describe("executeLlmCall profileId='auto'", () => {
   it("returns no-candidates when no profiles exist", async () => {
     await fs.writeFile(

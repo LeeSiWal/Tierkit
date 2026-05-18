@@ -413,7 +413,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           }
         }
         const configPath = path.join(opts.cwd, "tierkit.config.json");
-        const existing = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+        let existing: Record<string, unknown>;
+        try {
+          existing = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+        } catch (e) {
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+          existing = { version: "0.1", modelProfiles: {} };
+        }
         const rp = (existing.routingPolicy as Record<string, unknown>) ?? {};
         existing.routingPolicy = { ...rp, ...patch };
         await fs.writeFile(configPath, JSON.stringify(existing, null, 2));
