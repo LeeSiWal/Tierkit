@@ -42,11 +42,23 @@ export interface RunAgentDeps {
    */
   callModel?: (req: ModelCallRequest) => Promise<ModelCallResponse>;
   /**
+   * Optional streaming transport. When provided AND the surrounding code is iterating
+   * agent events, AgentLoop uses this in preference to `callModel`. Yields raw text
+   * chunks as they arrive, then a final summary with the full text + tool_calls + usage.
+   * Tests can leave this undefined to fall back to non-streaming behavior.
+   */
+  streamModel?: (req: ModelCallRequest) => AsyncIterable<ModelStreamEvent>;
+  /**
    * Override the registered tools. Defaults to `DEFAULT_TOOLS`. The runtime layer can
    * narrow this set based on plugin mode permissions.
    */
   tools?: Tool[];
 }
+
+export type ModelStreamEvent =
+  | { type: "chunk"; text: string }
+  | { type: "done"; response: ModelCallResponse }
+  | { type: "error"; message: string };
 
 export interface ModelCallRequest {
   model: string;
@@ -73,6 +85,11 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS;
   const tools = deps.tools ?? DEFAULT_TOOLS;
   const callModel = deps.callModel ?? makeDefaultCallModel(tierkitBaseUrl);
+  // Streaming is OPTIONAL. When tests inject a callModel without a streamModel, we
+  // honor that (existing test contract) by leaving streamModel undefined and falling
+  // through to the non-streaming path inside the loop. Only when neither is overridden
+  // does the default streaming transport kick in.
+  const streamModel = deps.streamModel ?? (deps.callModel ? undefined : makeDefaultStreamModel(tierkitBaseUrl));
   const ctx: AgentContext = {
     cwd,
     env,
@@ -116,13 +133,46 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
       compressOldToolResults(messages, COMPRESS_KEEP_TAIL);
     }
 
-    // ── Call the model via Tierkit daemon ─────────────────────────────────
-    let modelResponse: ModelCallResponse;
+    // ── Call the model via Tierkit daemon (streaming when available) ──────
+    // Stream chunks straight to the UI so the user sees text appearing as it generates.
+    // After the stream completes we parse the full text for tool calls and emit a final
+    // assistant_text event whose text REPLACES the streamed bubble (this is how we
+    // strip raw <tool_xml> blocks out of the display without sacrificing streaming).
+    // When streamModel is undefined (test injects callModel only), use callModel.
+    let modelResponse: ModelCallResponse | undefined;
     try {
-      modelResponse = await callModel({
-        model: modelId,
-        messages: messages.map((m) => toWireMessage(m)),
-      });
+      if (streamModel) {
+        let streamFailed: string | undefined;
+        for await (const ev of streamModel({
+          model: modelId,
+          messages: messages.map((m) => toWireMessage(m)),
+        })) {
+          if (ev.type === "chunk") {
+            if (ev.text.length > 0) yield { type: "delta", text: ev.text, turn };
+          } else if (ev.type === "done") {
+            modelResponse = ev.response;
+          } else if (ev.type === "error") {
+            streamFailed = ev.message;
+            break;
+          }
+        }
+        if (streamFailed) {
+          // Fall back to non-streaming so we still get a response (and so existing
+          // fallback / candidate-walker behavior in openaiCompat still applies).
+          modelResponse = await callModel({
+            model: modelId,
+            messages: messages.map((m) => toWireMessage(m)),
+          });
+        }
+      } else {
+        modelResponse = await callModel({
+          model: modelId,
+          messages: messages.map((m) => toWireMessage(m)),
+        });
+      }
+      if (!modelResponse) {
+        throw new Error("model call ended without a response");
+      }
     } catch (err) {
       yield { type: "error", code: "model-call-failed", message: (err as Error).message };
       yield { type: "turn_end", reason: "error" };
@@ -350,6 +400,129 @@ function makeDefaultCallModel(tierkitBaseUrl: string) {
       ...(toolCalls.length > 0 ? { toolCalls } : {}),
       ...(usage ? { usage } : {}),
       ...(body.model ? { profileId: body.model } : {}),
+    };
+  };
+}
+
+/**
+ * Default streaming model caller. POSTs to Tierkit's openai-compat endpoint with
+ * `stream: true` and parses the SSE chunks. Yields one `chunk` event per non-empty
+ * delta, then a `done` event with the accumulated text + parsed tool_calls + usage.
+ *
+ * Note: when openaiCompat streams, it only tries the FIRST viable candidate (switching
+ * mid-stream isn't supported). So streaming sacrifices the auto-fallback behavior that
+ * non-streaming gets. The error path here triggers AgentLoop to fall back to the
+ * non-streaming callModel — which DOES walk candidates — so we still recover on hard
+ * failures (just without streaming UX).
+ */
+function makeDefaultStreamModel(tierkitBaseUrl: string) {
+  return async function* defaultStreamModel(req: ModelCallRequest): AsyncIterable<ModelStreamEvent> {
+    let res: Response;
+    try {
+      res = await fetch(`${tierkitBaseUrl}/v1/openai/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "accept": "text/event-stream" },
+        body: JSON.stringify({ model: req.model, messages: req.messages, stream: true }),
+      });
+    } catch (err) {
+      yield { type: "error", message: (err as Error).message };
+      return;
+    }
+    if (!res.ok || !res.body) {
+      yield { type: "error", message: `tierkit daemon HTTP ${res.status}` };
+      return;
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let fullText = "";
+    const toolCallBuffers: Record<number, { id?: string; name?: string; arguments: string }> = {};
+    let usage: ModelCallResponse["usage"] | undefined;
+    let profileId: string | undefined;
+
+    try {
+      while (true) {
+        const r = await reader.read();
+        if (r.done) break;
+        buf += decoder.decode(r.value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          const block = buf.slice(0, idx).trim();
+          buf = buf.slice(idx + 2);
+          if (!block.startsWith("data:")) continue;
+          const payload = block.slice(5).trim();
+          if (payload === "[DONE]") {
+            const tcs = Object.values(toolCallBuffers).filter((tc) => tc.name).map((tc) => {
+              let args: Record<string, unknown> = {};
+              try {
+                const parsed = JSON.parse(tc.arguments || "{}");
+                if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                  args = parsed as Record<string, unknown>;
+                }
+              } catch { /* empty */ }
+              return { id: tc.id ?? `call_${Date.now().toString(36)}`, name: tc.name!, args };
+            });
+            yield {
+              type: "done",
+              response: {
+                text: fullText,
+                ...(tcs.length > 0 ? { toolCalls: tcs } : {}),
+                ...(usage ? { usage } : {}),
+                ...(profileId ? { profileId } : {}),
+              },
+            };
+            return;
+          }
+          try {
+            const chunk = JSON.parse(payload) as {
+              model?: string;
+              usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+              choices?: Array<{
+                delta?: {
+                  content?: string | null;
+                  tool_calls?: Array<{ index: number; id?: string; function?: { name?: string; arguments?: string } }>;
+                };
+              }>;
+            };
+            if (chunk.model && !profileId) profileId = chunk.model;
+            if (chunk.usage) {
+              usage = {
+                promptTokens: chunk.usage.prompt_tokens ?? 0,
+                completionTokens: chunk.usage.completion_tokens ?? 0,
+                totalTokens:
+                  chunk.usage.total_tokens
+                  ?? (chunk.usage.prompt_tokens ?? 0) + (chunk.usage.completion_tokens ?? 0),
+              };
+            }
+            const delta = chunk.choices?.[0]?.delta;
+            if (delta?.content) {
+              fullText += delta.content;
+              yield { type: "chunk", text: delta.content };
+            }
+            if (delta?.tool_calls) {
+              for (const tc of delta.tool_calls) {
+                const buf2 = toolCallBuffers[tc.index] ?? { arguments: "" };
+                if (tc.id) buf2.id = tc.id;
+                if (tc.function?.name) buf2.name = tc.function.name;
+                if (tc.function?.arguments) buf2.arguments += tc.function.arguments;
+                toolCallBuffers[tc.index] = buf2;
+              }
+            }
+          } catch { /* skip malformed chunk */ }
+        }
+      }
+    } finally {
+      try { reader.cancel(); } catch { /* ignore */ }
+    }
+    // Stream ended without [DONE] — emit done with whatever we collected.
+    yield {
+      type: "done",
+      response: {
+        text: fullText,
+        ...(usage ? { usage } : {}),
+        ...(profileId ? { profileId } : {}),
+      },
     };
   };
 }

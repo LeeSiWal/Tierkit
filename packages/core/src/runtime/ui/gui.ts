@@ -24,7 +24,7 @@ import { TRANSPORT_INLINE_JS } from "./transport.js";
 // (typically: user installed a new vsix but didn't reload the VS Code window, so the
 // previous daemon is still serving the OLD GUI which had EXPECTED_GUI_VERSION = old value).
 // Bumped by the release commit alongside Server.ts VERSION and package.json files.
-const GUI_BUILD_VERSION = "0.10.7";
+const GUI_BUILD_VERSION = "0.10.8";
 
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
@@ -249,6 +249,18 @@ export const GUI_HTML = `<!doctype html>
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* Subtle pulse while a streaming bubble is still receiving chunks. The class is removed
+     when the final assistant_text event replaces the text — so the indicator stops as soon
+     as the model is done generating. */
+  .agent-msg-streaming::after {
+    content: "▊";
+    display: inline-block;
+    margin-left: 2px;
+    animation: tk-blink 1.05s steps(2, end) infinite;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  @keyframes tk-blink { to { visibility: hidden; } }
   .agent-msg-meta {
     font-size: 10.5px;
     color: var(--fg-dim);
@@ -2029,7 +2041,35 @@ export const GUI_HTML = `<!doctype html>
       appendAgent(el);
       return;
     }
+    if (evt.type === 'delta') {
+      // Streaming token chunks. Append into the current turn's assistant bubble — create
+      // one if needed. We key the bubble by turn so when tool_call events arrive between
+      // turns, the next turn starts a fresh bubble.
+      const turn = evt.turn ?? 0;
+      const existingId = 'agent-delta-bubble-turn-' + String(turn);
+      let bubble = document.getElementById(existingId);
+      if (!bubble) {
+        bubble = document.createElement('div');
+        bubble.id = existingId;
+        bubble.className = 'agent-msg agent-msg-assistant agent-msg-streaming';
+        bubble.textContent = '';
+        appendAgent(bubble);
+      }
+      bubble.textContent += evt.text;
+      return;
+    }
     if (evt.type === 'assistant_text') {
+      // Final cleaned narrative — replaces the streamed bubble for the current turn so
+      // raw XML tool tags (which were visible during streaming) are scrubbed from the
+      // user's view. If there was no streaming bubble (non-streaming path or zero deltas),
+      // we just append a fresh bubble.
+      const allDeltaBubbles = Array.from(document.querySelectorAll('[id^="agent-delta-bubble-turn-"]'));
+      const last = allDeltaBubbles[allDeltaBubbles.length - 1];
+      if (last && last.classList.contains('agent-msg-streaming')) {
+        last.textContent = evt.text;
+        last.classList.remove('agent-msg-streaming');
+        return;
+      }
       const el = document.createElement('div');
       el.className = 'agent-msg agent-msg-assistant';
       el.textContent = evt.text;

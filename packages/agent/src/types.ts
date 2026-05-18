@@ -102,6 +102,14 @@ export interface AgentContext {
  */
 export type AgentEvent =
   | { type: "task_start"; taskId: string; task: string }
+  /**
+   * Streaming token chunk from the model. Emitted incrementally during a turn so the
+   * GUI can show text as it arrives instead of waiting for the full response.
+   * After all deltas arrive, the AgentLoop emits an `assistant_text` whose text replaces
+   * what the deltas built up — this is how raw XML tool tags (`<read_file>...`) get
+   * cleaned out of the final display.
+   */
+  | { type: "delta"; text: string; turn: number }
   | { type: "assistant_text"; text: string }
   | {
       type: "model_usage";
