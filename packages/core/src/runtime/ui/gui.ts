@@ -631,6 +631,15 @@ export const GUI_HTML = `<!doctype html>
         <button id="btn-profile-add" class="tiny" data-i18n="profileAdd">+ Add</button>
       </span>
     </h2>
+    <div id="auto-ceiling-row" class="row dense" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">
+      <span class="col-grow"><span data-i18n="autoCeilingLabel">Auto-escalation up to</span>:
+        <select id="auto-ceiling-select" class="tiny">
+          <option value="local-device">local-device</option>
+          <option value="private-remote">private-remote</option>
+          <option value="public-cloud">public-cloud</option>
+        </select>
+      </span>
+    </div>
     <div id="models-list"><div class="empty" data-i18n="loading">loading…</div></div>
     <div id="profile-add-form" style="display:none"></div>
   </section>
@@ -770,6 +779,13 @@ export const GUI_HTML = `<!doctype html>
       sectionApiKeys: 'API Keys',
       keyExternal: 'set by shell env — cannot delete here',
       confirmCloseForm: 'Close the open form?',
+      autoCeilingLabel: 'Auto-escalation up to',
+      autoCeilingSaved: 'routing policy updated',
+      goodAtLabel: 'Good at (comma-separated)',
+      goodAtPlaceholder: 'code-review, korean, summarize',
+      moreOptionsLabel: 'More options',
+      escalatedNote: 'escalated',
+      qualityRejectedNote: 'quality-rejected',
     },
     ko: {
       offline: '오프라인',
@@ -834,6 +850,13 @@ export const GUI_HTML = `<!doctype html>
       sectionApiKeys: 'API 키',
       keyExternal: '셸 env에서 설정됨 — 여기서 삭제 불가',
       confirmCloseForm: '열려있는 폼을 닫을까요?',
+      autoCeilingLabel: '자동 escalation 한계',
+      autoCeilingSaved: '라우팅 정책 업데이트됨',
+      goodAtLabel: '잘하는 작업 (콤마 구분)',
+      goodAtPlaceholder: 'code-review, korean, summarize',
+      moreOptionsLabel: '추가 옵션',
+      escalatedNote: '상위 모델로 전환',
+      qualityRejectedNote: '응답 품질 미달',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -1376,6 +1399,15 @@ export const GUI_HTML = `<!doctype html>
   }
 
   // ── Card: Models ───────────────────────────────────────────────────────────
+  async function refreshAutoCeiling() {
+    try {
+      const r = await jget('/v1/config');
+      const cur = (r.config && r.config.routingPolicy && r.config.routingPolicy.autoEscalationCeiling) || 'public-cloud';
+      const sel = $('auto-ceiling-select');
+      if (sel) sel.value = cur;
+    } catch (e) { /* ignore */ }
+  }
+
   async function refreshModels() {
     try {
       const [r, secretsR] = await Promise.all([
@@ -1453,6 +1485,13 @@ export const GUI_HTML = `<!doctype html>
     }
   }
 
+  $('auto-ceiling-select').onchange = async () => {
+    const value = $('auto-ceiling-select').value;
+    const resp = await transport.request('/v1/config/routing', { method: 'PATCH', body: { autoEscalationCeiling: value } });
+    if (!resp.ok) { toast((resp.data && resp.data.error) || i18n.failed, 'err'); return; }
+    toast(i18n.autoCeilingSaved, 'ok');
+  };
+
   $('btn-profile-add').onclick = () => {
     const host = $('profile-add-form');
     host.style.display = 'block';
@@ -1494,6 +1533,8 @@ export const GUI_HTML = `<!doctype html>
               '<option value="workspace">' + escapeHtml(i18n.scopeWorkspace) + '</option>' +
               '<option value="user">' + escapeHtml(i18n.scopeUser) + '</option>' +
             '</select>' +
+            '<label>' + escapeHtml(i18n.goodAtLabel) + '</label>' +
+            '<input id="pa-goodAt" placeholder="' + escapeHtml(i18n.goodAtPlaceholder) + '" />' +
           '</div>' +
           '<div class="actions">' +
             '<button id="pa-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
@@ -1521,6 +1562,10 @@ export const GUI_HTML = `<!doctype html>
         if (apiKeyEnv) profile.apiKeyEnv = apiKeyEnv;
         if (baseUrl) profile.baseUrl = baseUrl;
         if (tpl.kind === 'public-cloud') { profile.requiresApproval = true; profile.defaultMode = 'review-only'; }
+        const goodAtRaw = $('pa-goodAt') ? $('pa-goodAt').value.trim() : '';
+        if (goodAtRaw) {
+          profile.goodAt = goodAtRaw.split(',').map((s) => s.trim()).filter(Boolean);
+        }
         const resp = await jpost('/v1/config/profile', { id, profile, scope });
         if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
         toast(id + ' ✓ ' + i18n.added, 'ok');
@@ -2322,7 +2367,7 @@ export const GUI_HTML = `<!doctype html>
 
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
-    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), loadAgentModesAndCommands(), refreshSettings()]);
+    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), refreshAutoCeiling(), loadAgentModesAndCommands(), refreshSettings()]);
   }
   $('btn-refresh').onclick = refreshAll;
 
