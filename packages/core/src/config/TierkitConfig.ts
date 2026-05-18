@@ -17,6 +17,9 @@ export const RoutingPolicySchema = z
     preferPrivateRemoteBeforePublicCloud: z.boolean().default(true),
     publicCloudRequiresApproval: z.boolean().default(true),
     publicCloudDefaultMode: z.enum(["execute", "review-only"]).default("review-only"),
+    autoEscalationCeiling: z.enum(["local-device", "private-remote", "public-cloud"]).default("public-cloud"),
+    budgetAwareDowngrade: z.boolean().default(true),
+    responseQualityCheck: z.boolean().default(true),
     riskThresholds: RiskThresholdsSchema.default({
       localFastMax: 25,
       localStrongMax: 50,
