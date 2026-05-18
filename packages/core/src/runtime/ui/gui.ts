@@ -769,6 +769,7 @@ export const GUI_HTML = `<!doctype html>
       apiKeyValuePlaceholder: 'paste sk-… (optional)',
       sectionApiKeys: 'API Keys',
       keyExternal: 'set by shell env — cannot delete here',
+      confirmCloseForm: 'Close the open form?',
     },
     ko: {
       offline: '오프라인',
@@ -832,6 +833,7 @@ export const GUI_HTML = `<!doctype html>
       apiKeyValuePlaceholder: 'sk-… 붙여넣기 (선택)',
       sectionApiKeys: 'API 키',
       keyExternal: '셸 env에서 설정됨 — 여기서 삭제 불가',
+      confirmCloseForm: '열려있는 폼을 닫을까요?',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -1288,6 +1290,9 @@ export const GUI_HTML = `<!doctype html>
   }
 
   function openSetKeyDialog(presetKey) {
+    const host = $('profile-add-form');
+    const hostHasContent = host.innerHTML.trim() !== '' && !document.getElementById('secret-dialog');
+    if (hostHasContent && !confirm(i18n.confirmCloseForm)) return;
     const existing = document.getElementById('secret-dialog');
     if (existing) existing.remove();
     const dlg = document.createElement('div');
@@ -1296,7 +1301,7 @@ export const GUI_HTML = `<!doctype html>
     dlg.style.marginTop = '8px';
     dlg.innerHTML =
       '<div class="form-grid">' +
-        '<label>env name</label>' +
+        '<label>' + escapeHtml(i18n.apiKeyLabel) + '</label>' +
         '<input id="sk-key" value="' + escapeHtml(presetKey || '') + '" placeholder="ANTHROPIC_API_KEY" />' +
         '<label>' + escapeHtml(i18n.apiKeyValueLabel) + '</label>' +
         '<input id="sk-val" type="password" placeholder="sk-…" />' +
@@ -1444,6 +1449,7 @@ export const GUI_HTML = `<!doctype html>
       renderApiKeysSection(secretMap);
     } catch (e) {
       $('models-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+      renderApiKeysSection({});
     }
   }
 
