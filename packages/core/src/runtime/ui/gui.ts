@@ -941,7 +941,7 @@ export const GUI_HTML = `<!doctype html>
   }
   async function jpost(p, b) {
     const r = await transport.request(p, { method: 'POST', body: b });
-    if (!r.ok && r.status !== 400) throw new Error(r.data?.error || r.data?.message || ('HTTP ' + r.status));
+    if (!r.ok && r.status !== 400 && r.status !== 404) throw new Error(r.data?.error || r.data?.message || ('HTTP ' + r.status));
     return { ok: r.ok, status: r.status, data: r.data };
   }
 

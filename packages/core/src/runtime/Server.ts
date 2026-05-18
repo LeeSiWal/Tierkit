@@ -325,6 +325,9 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, r);
       }
 
+      // NOTE: drafts under `.tierkit/runtime/plugin-drafts/<uuid>/` are cleaned up on
+      // successful install only. TTL-based cleanup at daemon startup (spec §2) is a
+      // known follow-up — abandoned drafts will accumulate until manual cleanup.
       if (route === "POST /v1/plugins/generate") {
         const body = await readJsonBody<{ description: string }>(req);
         if (!body || typeof body.description !== "string") {
@@ -342,10 +345,17 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           });
         } catch (err) {
           const e = err as { code?: string; message?: string; rawOutput?: string };
-          if (e.code === "invalid-description" || e.code === "description-too-long") {
-            return sendJson(res, 400, { ok: false, code: e.code, message: e.message });
+          // Client errors → 400
+          if (e.code === "invalid-description" || e.code === "description-too-long" || e.code === "validation-failed") {
+            return sendJson(res, 400, {
+              ok: false,
+              code: e.code,
+              message: e.message,
+              ...(e.rawOutput ? { rawOutput: e.rawOutput } : {}),
+            });
           }
-          return sendJson(res, 400, {
+          // Server-side errors (LLM unreachable, budget exhausted, no candidates) → 503
+          return sendJson(res, 503, {
             ok: false,
             code: e.code ?? "generate-failed",
             message: e.message ?? "generation failed",
@@ -369,8 +379,20 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         const ins = await installPlugin({ pluginPath: draftPath, cwd: opts.cwd, force: true });
         let enabled = false;
         if (body.enable) {
-          await enablePlugin({ pluginId: ins.pluginId, cwd: opts.cwd });
-          enabled = true;
+          try {
+            await enablePlugin({ pluginId: ins.pluginId, cwd: opts.cwd });
+            enabled = true;
+          } catch (err) {
+            const e = err as { code?: string };
+            if (e.code === "no-config") {
+              // Auto-init the workspace so Enable can succeed on first run.
+              await initProject({ cwd: opts.cwd });
+              await enablePlugin({ pluginId: ins.pluginId, cwd: opts.cwd });
+              enabled = true;
+            } else {
+              throw err;
+            }
+          }
         }
         await fs.rm(draftPath, { recursive: true, force: true });
         return sendJson(res, 200, { ok: true, pluginId: ins.pluginId, version: ins.version, installedPath: ins.installedPath, enabled });

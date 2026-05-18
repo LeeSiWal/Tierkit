@@ -111,6 +111,9 @@ function parseAndValidate(raw: string): GeneratedPluginShape {
     }
     rules.push({ filename: entry.filename, content: entry.content });
   }
+  if (rules.length === 0) {
+    throw new Error("no rules generated — a plugin needs at least one rule");
+  }
   manifest.components.rules = rules.map((r) => `rules/${r.filename}`);
   return { manifest, rules };
 }

@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { generatePlugin, PluginGenerateError } from "../src/usecases/generatePlugin.js";
-import { GENERATE_PLUGIN_EXAMPLE_JSON } from "../src/usecases/generatePluginExample.js";
+import { GENERATE_PLUGIN_EXAMPLE, GENERATE_PLUGIN_EXAMPLE_JSON } from "../src/usecases/generatePluginExample.js";
 import * as llmCallModule from "../src/runtime/proxy/llmCall.js";
 
 let tmp: string;
@@ -113,5 +113,59 @@ describe("generatePlugin — retry", () => {
       expect(err.rawOutput).toBe(badText);
     }
     expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("generatePlugin — security", () => {
+  it("rejects rule filenames with path traversal", async () => {
+    const malicious = JSON.stringify({
+      manifest: GENERATE_PLUGIN_EXAMPLE.manifest,
+      rules: [{ filename: "../etc-passwd.md", content: "evil" }],
+    });
+    vi.spyOn(llmCallModule, "executeLlmCall").mockResolvedValue({
+      ok: true, text: malicious, inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 1, profileId: "p", model: "m",
+      redactionHits: [], commandClassifications: [], budget: { status: "ok" },
+    });
+    try {
+      await generatePlugin({ description: "x", cwd: tmp, env: {} });
+      expect.fail("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(PluginGenerateError);
+    }
+  });
+
+  it("auto-corrects components.rules to match generated rules", async () => {
+    // Build a payload where components.rules is wrong (lists fictional filenames)
+    // but the actual rules array is valid.
+    const desync = JSON.parse(GENERATE_PLUGIN_EXAMPLE_JSON) as { manifest: { components: { rules: string[] } }; rules: unknown[] };
+    desync.manifest.components.rules = ["rules/nonexistent.md"];
+    vi.spyOn(llmCallModule, "executeLlmCall").mockResolvedValue({
+      ok: true, text: JSON.stringify(desync),
+      inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 1, profileId: "p", model: "m",
+      redactionHits: [], commandClassifications: [], budget: { status: "ok" },
+    });
+    const r = await generatePlugin({ description: "x", cwd: tmp, env: {} });
+    expect(r.manifest.components.rules).toEqual([
+      "rules/01-failing-test-first.md",
+      "rules/02-prefer-pytest.md",
+      "rules/03-small-commits.md",
+    ]);
+  });
+
+  it("rejects zero-rule plugins", async () => {
+    const empty = JSON.parse(GENERATE_PLUGIN_EXAMPLE_JSON) as { manifest: { components: { rules: string[] } }; rules: unknown[] };
+    empty.rules = [];
+    empty.manifest.components.rules = [];
+    vi.spyOn(llmCallModule, "executeLlmCall").mockResolvedValue({
+      ok: true, text: JSON.stringify(empty),
+      inputTokens: 0, outputTokens: 0, costUsd: 0, latencyMs: 1, profileId: "p", model: "m",
+      redactionHits: [], commandClassifications: [], budget: { status: "ok" },
+    });
+    try {
+      await generatePlugin({ description: "x", cwd: tmp, env: {} });
+      expect.fail("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(PluginGenerateError);
+    }
   });
 });

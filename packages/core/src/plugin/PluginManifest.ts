@@ -46,6 +46,7 @@ export const PluginManifestSchema = z
     id: z
       .string()
       .min(1)
+      .max(40, "plugin id must be at most 40 characters")
       .regex(/^[a-z][a-z0-9-]*$/, "plugin id must be kebab-case starting with a letter"),
     name: z.string().min(1),
     version: z.string().regex(SEMVER, "version must be semver"),
