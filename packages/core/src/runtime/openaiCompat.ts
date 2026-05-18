@@ -8,8 +8,8 @@
  * budget enforcement, workflow session gate, usage log.
  *
  * The `model` field from the incoming request is interpreted as a Tierkit profile id
- * (e.g., "localCoder", "claudeSonnet"). The magic value `auto` runs `explainRoute` first
- * to pick a profile based on task content.
+ * (e.g., "localCoder", "claudeSonnet"). The magic value `auto` delegates to `resolveAutoCandidates`
+ * to pick and rank profiles based on task content, viability, and budget state.
  *
  * Streaming uses SSE in the OpenAI delta format. Tools that disable streaming get a single
  * JSON response. Errors map to OpenAI's `{error: {message, type, code}}` envelope so caller
@@ -17,9 +17,6 @@
  */
 import type http from "node:http";
 import { executeLlmCall, type LlmCallRequest } from "./proxy/llmCall.js";
-import { explainRoute } from "../usecases/explainRoute.js";
-import { loadConfig } from "../config/loadConfig.js";
-import { partitionByViability } from "../model/profileViability.js";
 import type { ToolCall, ToolDefinition, ToolChoice, ChatMessage } from "../model/providers/chatTypes.js";
 
 interface OpenAIChatMessage {
@@ -58,52 +55,31 @@ export async function handleOpenAIChatCompletions(
   }
   const { request: req2 } = parsed;
 
-  // ── Resolve profile (explicit id, or "auto" via the route explainer) ─────
-  //
-  // For "auto", we don't just pick one profile and bail on failure — we get the ordered
-  // candidate list for the chosen tier and try each in sequence on TRANSIENT failures
-  // (`unreachable`, `bad-status`, `missing-api-key`, `not-implemented`). This means if the
-  // primary local profile points at a model the user hasn't pulled, we automatically fall
-  // back to the next local profile that works, before giving up. Policy failures
-  // (budget-exceeded, dangerous-command-blocked, plan-not-approved) are NOT fallback-able
-  // — those are intentional decisions, not transient problems.
+  // ── Resolve profile (explicit id, or "auto" via the shared resolver) ─────
   const isAuto = req2.model === "auto" || req2.model === "tierkit";
   let candidateIds: string[];
+  let autoTaskType: string | undefined;
   if (isAuto) {
     const lastUserMsg = [...req2.messages].reverse().find((m) => m.role === "user")?.content ?? "";
     try {
-      const decision = await explainRoute({ cwd: context.cwd, task: lastUserMsg });
-      candidateIds = decision.candidates.map((c) => c.id);
-      // Move the primary pick to position 0 if it isn't already there.
-      if (decision.decision.profileId) {
-        const primary = decision.decision.profileId;
-        const idx = candidateIds.indexOf(primary);
-        if (idx > 0) candidateIds.splice(idx, 1), candidateIds.unshift(primary);
-        else if (idx === -1) candidateIds.unshift(primary);
-      }
+      const { resolveAutoCandidates } = await import("./proxy/autoResolver.js");
+      const resolved = await resolveAutoCandidates({
+        cwd: context.cwd,
+        env: context.env,
+        lastUserMessage: typeof lastUserMsg === "string" ? lastUserMsg : "",
+      });
+      candidateIds = resolved.candidateIds;
+      autoTaskType = resolved.taskType;
       if (candidateIds.length === 0) {
         return sendError(res, 400, "auto-route: no profile matched", "invalid_request_error");
       }
-
-      // ── Viability pre-flight ──────────────────────────────────────────────
-      // Probe each candidate cheaply (Ollama /api/tags + env-var check) before walking
-      // the fallback chain. If we have ANY viable candidate, drop the non-viable ones —
-      // no point burning request round-trips on profiles whose model isn't installed or
-      // whose API key isn't set. If none are viable, keep them all so the user sees the
-      // informative provider error (rather than a vague "no candidates").
-      const cfg = await loadConfig(context.cwd);
-      const { viable, nonViable } = await partitionByViability(
-        candidateIds.map((id) => ({ id })),
-        (id) => cfg.config.modelProfiles[id],
-        context.env,
-      );
-      candidateIds = viable.length > 0 ? viable.map((v) => v.id) : nonViable.map((v) => v.id);
     } catch (err) {
       return sendError(res, 400, `auto-route failed: ${(err as Error).message}`, "invalid_request_error");
     }
   } else {
     candidateIds = [req2.model];
   }
+  void autoTaskType; // will be used by Phase 2b activity log
 
   const baseLlmReq = {
     // ChatMessage keeps the "tool" role distinct (Anthropic needs it to build tool_result
@@ -129,13 +105,31 @@ export async function handleOpenAIChatCompletions(
     return;
   }
 
-  // Non-streaming: walk candidates, fall back on transient failures.
+  // Non-streaming: walk candidates, fall back on transient OR quality failures (auto only).
+  const cfgForQuality = isAuto ? await (await import("../config/loadConfig.js")).loadConfig(context.cwd) : undefined;
+  const qualityCheckOn = isAuto && cfgForQuality?.config.routingPolicy.responseQualityCheck !== false;
+  const lastUserMsgForQuality = qualityCheckOn
+    ? (typeof [...req2.messages].reverse().find((m) => m.role === "user")?.content === "string"
+        ? ([...req2.messages].reverse().find((m) => m.role === "user")?.content as string)
+        : "")
+    : "";
+
   const attempts: { profileId: string; code: string; message: string }[] = [];
   let result: Awaited<ReturnType<typeof executeLlmCall>> | undefined;
   for (const candidate of candidateIds) {
     result = await executeLlmCall({ profileId: candidate, ...baseLlmReq }, { cwd: context.cwd, env: context.env });
-    if (result.ok) break;
-    if (!isTransientFailure(result.code)) break; // policy failure or terminal error — don't fallback
+    if (result.ok) {
+      if (qualityCheckOn) {
+        const { evaluateResponse } = await import("../model/ResponseQualityEvaluator.js");
+        const verdict = evaluateResponse(result.text, result.finishReason, lastUserMsgForQuality);
+        if (!verdict.acceptable) {
+          attempts.push({ profileId: candidate, code: `quality-rejected:${verdict.reason}`, message: `response rejected by quality check (${verdict.reason})` });
+          continue;
+        }
+      }
+      break;
+    }
+    if (!isTransientFailure(result.code)) break;
     attempts.push({ profileId: candidate, code: result.code, message: result.message });
   }
   if (!result || !result.ok) {
