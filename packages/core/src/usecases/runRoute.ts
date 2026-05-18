@@ -153,6 +153,7 @@ export async function runRoute(input: RunRouteInput): Promise<RunRouteResult> {
       reasons: [`profile forced via --profile ${input.profileId}`],
       requiresApproval: profile.kind === "public-cloud" ? true : Boolean(profile.requiresApproval),
       mode: profile.kind === "public-cloud" ? (profile.defaultMode ?? "review-only") : "execute",
+      escalationChain: [{ id: profileId, tier: profile.kind, isEscalation: false }],
     };
   } else {
     const explained = await explainRoute({

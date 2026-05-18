@@ -75,6 +75,37 @@ export async function executeLlmCall(
   request: LlmCallRequest,
   context: LlmCallContext,
 ): Promise<LlmCallResult> {
+  if (request.profileId === "auto" || request.profileId === "tierkit") {
+    const { resolveAutoCandidates } = await import("./autoResolver.js");
+    const { evaluateResponse } = await import("../../model/ResponseQualityEvaluator.js");
+    const lastUserMsg = [...request.messages].reverse().find((m) => m.role === "user")?.content ?? "";
+    const resolved = await resolveAutoCandidates({
+      cwd: context.cwd,
+      env: context.env,
+      lastUserMessage: typeof lastUserMsg === "string" ? lastUserMsg : "",
+    });
+    if (resolved.candidateIds.length === 0) {
+      return { ok: false, code: "no-candidates", message: "auto-route: no profile matched" };
+    }
+    const cfg = await loadConfig(context.cwd);
+    const qualityOn = cfg.config.routingPolicy.responseQualityCheck !== false;
+    const lastUserMsgStr = typeof lastUserMsg === "string" ? lastUserMsg : "";
+    let lastResult: LlmCallResult | undefined;
+    for (const candidate of resolved.candidateIds) {
+      const r = await executeLlmCall({ ...request, profileId: candidate }, context);
+      lastResult = r;
+      if (r.ok) {
+        if (qualityOn) {
+          const v = evaluateResponse(r.text, r.finishReason, lastUserMsgStr);
+          if (!v.acceptable) continue;
+        }
+        return r;
+      }
+      if (!isTransientFailure(r.code)) return r;
+    }
+    return lastResult ?? { ok: false, code: "no-candidates", message: "no candidates tried" };
+  }
+
   // We no longer reject when `tierkit.config.json` is absent — the 3-tier loader
   // (bundled < user < workspace) means profile lookup can succeed against bundled defaults.
   // If the requested profile is unknown, the `unknown-profile` check below catches it.
@@ -266,4 +297,15 @@ export async function executeLlmCall(
     })),
     budget: { status: budgetCheck.status, ...(budgetCheck.reason ? { reason: budgetCheck.reason } : {}) },
   };
+}
+
+function isTransientFailure(code: string): boolean {
+  return (
+    code === "unreachable" ||
+    code === "bad-status" ||
+    code === "missing-api-key" ||
+    code === "not-implemented" ||
+    code === "network-error" ||
+    code === "timeout"
+  );
 }

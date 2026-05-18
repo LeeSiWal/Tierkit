@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { resolveAutoCandidates } from "../src/runtime/proxy/autoResolver.js";
+import { executeLlmCall } from "../src/runtime/proxy/llmCall.js";
 
 let tmp: string;
 let originalHome: string | undefined;
@@ -93,5 +94,25 @@ describe("resolveAutoCandidates", () => {
     );
     const r = await resolveAutoCandidates({ cwd: tmp, env: {}, lastUserMessage: "x" });
     expect(r.candidateIds).toEqual([]);
+  });
+});
+
+describe("executeLlmCall profileId='auto'", () => {
+  it("returns no-candidates when no profiles exist", async () => {
+    await fs.writeFile(
+      path.join(tmp, "tierkit.config.json"),
+      JSON.stringify({
+        version: "0.1",
+        modelProfiles: {},
+        routingPolicy: { autoEscalationCeiling: "public-cloud" },
+        runtime: { port: 0, dataDir: ".tierkit", host: "127.0.0.1" },
+      }),
+    );
+    const r = await executeLlmCall(
+      { profileId: "auto", messages: [{ role: "user", content: "hi" }] },
+      { cwd: tmp, env: {} },
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("no-candidates");
   });
 });
