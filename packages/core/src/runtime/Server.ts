@@ -106,7 +106,7 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
-const VERSION = "0.10.5";
+const VERSION = "0.10.6";
 
 /**
  * Start the Tierkit runtime HTTP daemon. Returns once the server is listening.

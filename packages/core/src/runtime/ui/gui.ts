@@ -19,6 +19,13 @@
  */
 import { TRANSPORT_INLINE_JS } from "./transport.js";
 
+// Stamped at build time. The GUI HTML carries this version inline so the running webview
+// can compare it against the daemon's reported version and show a banner when they diverge
+// (typically: user installed a new vsix but didn't reload the VS Code window, so the
+// previous daemon is still serving the OLD GUI which had EXPECTED_GUI_VERSION = old value).
+// Bumped by the release commit alongside Server.ts VERSION and package.json files.
+const GUI_BUILD_VERSION = "0.10.6";
+
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -801,8 +808,11 @@ export const GUI_HTML = `<!doctype html>
       genDiscard: 'Discard',
       genInstalled: 'plugin installed',
       genRawOutputLabel: 'Last raw output (for debugging)',
-      enabledOn: 'ON',
-      enabledOff: 'OFF',
+      enabledOn: 'ON · click to disable',
+      enabledOff: 'OFF · click to enable',
+      enabledNowOn: 'enabled',
+      enabledNowOff: 'disabled',
+      daemonMismatch: 'Daemon shows v{daemon} but expected v{expected}. Reload the VS Code window (Cmd+Shift+P → "Developer: Reload Window") so the new code picks up.',
       enableToggle: 'enable',
       discoverBtn: '🔍 Discover Ollama models',
       discoverDone: 'discovered',
@@ -890,8 +900,11 @@ export const GUI_HTML = `<!doctype html>
       genDiscard: '취소',
       genInstalled: '플러그인 설치됨',
       genRawOutputLabel: '마지막 원본 출력 (디버깅용)',
-      enabledOn: '활성',
-      enabledOff: '비활성',
+      enabledOn: '활성 · 클릭하여 비활성화',
+      enabledOff: '비활성 · 클릭하여 활성화',
+      enabledNowOn: '활성화됨',
+      enabledNowOff: '비활성화됨',
+      daemonMismatch: '데몬은 v{daemon} 표시. 확장은 v{expected} 기대. VS Code window를 reload 하세요 (Cmd+Shift+P → "Developer: Reload Window").',
       enableToggle: '활성/비활성 토글',
       discoverBtn: '🔍 Ollama 모델 자동 찾기',
       discoverDone: '발견됨',
@@ -1625,10 +1638,19 @@ export const GUI_HTML = `<!doctype html>
           const id = b.getAttribute('data-id');
           const scope = b.getAttribute('data-scope') === 'user' ? 'user' : 'workspace';
           const currentlyEnabled = b.getAttribute('data-enabled') === '1';
+          const nextEnabled = !currentlyEnabled;
           b.disabled = true;
           try {
-            const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id), { method: 'PATCH', body: { enabled: !currentlyEnabled, scope } });
-            if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+            const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id), { method: 'PATCH', body: { enabled: nextEnabled, scope } });
+            if (!resp.ok) {
+              // 404 = old daemon without the PATCH endpoint. Surface this clearly.
+              const msg = resp.status === 404
+                ? id + ': PATCH endpoint not found — daemon is older than v0.10.1. Reload the VS Code window.'
+                : (resp.data && resp.data.message) || i18n.failed;
+              toast(msg, 'err');
+              return;
+            }
+            toast(id + ' ✓ ' + (nextEnabled ? i18n.enabledNowOn : i18n.enabledNowOff), 'ok');
             await refreshModels();
           } finally { b.disabled = false; }
         };
@@ -1747,17 +1769,53 @@ export const GUI_HTML = `<!doctype html>
   };
 
   // ── Card: Daemon ───────────────────────────────────────────────────────────
+  // The version pill at top of sidebar shows the DAEMON's version (from /v1/health).
+  // When the user installs a new vsix but doesn't reload the window, the previous extension
+  // is still running and so is its daemon. The GUI source itself comes from THAT old daemon
+  // (the new vsix's GUI never gets loaded). So the pill version is the daemon version, full
+  // stop. If user sees an unexpected version here, they need to reload the VS Code window.
+  //
+  // EXPECTED_GUI_VERSION is stamped at build time (the GUI string IS this version). If the
+  // daemon reports a different number, the daemon is running stale code — surface a banner.
+  const EXPECTED_GUI_VERSION = '${GUI_BUILD_VERSION}';
   async function refreshHealth() {
     try {
       const h = await jget('/v1/health');
       $('health-pill').textContent = 'v' + h.version;
       $('health-pill').className = 'pill pill-ok';
       $('daemon-info').textContent = h.cwd;
+      // Surface mismatch loudly. If the user is talking to a stale daemon, none of the
+      // newer endpoints (PATCH /v1/config/profile/:id, /v1/secrets, etc.) will exist —
+      // toggles and saves will silently 404. Better to scream.
+      if (EXPECTED_GUI_VERSION && EXPECTED_GUI_VERSION !== 'dev' && h.version !== EXPECTED_GUI_VERSION) {
+        showVersionMismatchBanner(h.version, EXPECTED_GUI_VERSION);
+      } else {
+        hideVersionMismatchBanner();
+      }
     } catch (e) {
       $('health-pill').textContent = i18n.offline;
       $('health-pill').className = 'pill pill-err';
       $('daemon-info').textContent = e.message;
     }
+  }
+
+  function showVersionMismatchBanner(daemonV, expectedV) {
+    let banner = document.getElementById('version-mismatch-banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'version-mismatch-banner';
+      banner.style.cssText = 'background:var(--warn);color:#0f1115;padding:8px 12px;font-size:12px;border-radius:6px;margin:8px 0;font-weight:600';
+      const host = document.querySelector('.tab-panel[data-tab-panel="chat"], .tab-panel[data-tab-panel="settings"]');
+      if (host && host.firstChild) host.insertBefore(banner, host.firstChild);
+    }
+    banner.textContent = i18n.daemonMismatch
+      .replace('{daemon}', daemonV)
+      .replace('{expected}', expectedV);
+  }
+
+  function hideVersionMismatchBanner() {
+    const b = document.getElementById('version-mismatch-banner');
+    if (b) b.remove();
   }
   async function refreshFreedom() {
     try {
