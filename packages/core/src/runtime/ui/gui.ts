@@ -1287,8 +1287,88 @@ export const GUI_HTML = `<!doctype html>
     }
   }
 
-  function openSetKeyDialog(_key) { /* implemented in Task 9 */ }
-  function renderApiKeysSection(_secretMap) { /* implemented in Task 9 */ }
+  function openSetKeyDialog(presetKey) {
+    const existing = document.getElementById('secret-dialog');
+    if (existing) existing.remove();
+    const dlg = document.createElement('div');
+    dlg.id = 'secret-dialog';
+    dlg.className = 'inline-form';
+    dlg.style.marginTop = '8px';
+    dlg.innerHTML =
+      '<div class="form-grid">' +
+        '<label>env name</label>' +
+        '<input id="sk-key" value="' + escapeHtml(presetKey || '') + '" placeholder="ANTHROPIC_API_KEY" />' +
+        '<label>' + escapeHtml(i18n.apiKeyValueLabel) + '</label>' +
+        '<input id="sk-val" type="password" placeholder="sk-…" />' +
+      '</div>' +
+      '<div class="actions">' +
+        '<button id="sk-cancel">' + escapeHtml(i18n.cancelBtn) + '</button>' +
+        '<button id="sk-save" class="primary">' + escapeHtml(i18n.saveBtn) + '</button>' +
+      '</div>';
+    $('profile-add-form').style.display = 'block';
+    $('profile-add-form').innerHTML = '';
+    $('profile-add-form').appendChild(dlg);
+    $('sk-cancel').onclick = () => { $('profile-add-form').innerHTML = ''; $('profile-add-form').style.display = 'none'; };
+    $('sk-save').onclick = async () => {
+      const key = ($('sk-key').value || '').trim();
+      const value = ($('sk-val').value || '').trim();
+      if (!key || !value) { toast('key + value required', 'err'); return; }
+      const resp = await jpost('/v1/secrets', { key, value });
+      if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+      toast(key + ' ✓ ' + i18n.keySaved, 'ok');
+      $('profile-add-form').innerHTML = '';
+      $('profile-add-form').style.display = 'none';
+      await refreshModels();
+    };
+  }
+
+  function renderApiKeysSection(secretMap) {
+    const keys = Object.keys(secretMap).sort();
+    let section = document.getElementById('api-keys-section');
+    if (!section) {
+      const card = $('models-list').parentElement;
+      section = document.createElement('div');
+      section.id = 'api-keys-section';
+      section.className = 'card-divider';
+      card.insertBefore(section, $('profile-add-form'));
+    }
+    if (keys.length === 0) { section.innerHTML = ''; return; }
+    let html = '<div class="card-divider-label">' + escapeHtml(i18n.sectionApiKeys) + '</div>';
+    for (const k of keys) {
+      const e = secretMap[k];
+      const status = e.set
+        ? '<span class="mono dim">' + escapeHtml(e.masked || 'set') + '</span>'
+        : '<span style="color:var(--warn)">⚠ ' + escapeHtml(i18n.keyMissing) + '</span>';
+      html +=
+        '<div class="row dense">' +
+          '<div class="col-grow"><span class="mono">' + escapeHtml(k) + '</span> · ' + status + '</div>' +
+          (e.set
+            ? '<button class="tiny" data-action="delete-key" data-key="' + escapeHtml(k) + '">' + escapeHtml(i18n.deleteBtn) + '</button>'
+            : '<button class="tiny" data-action="setkey" data-key="' + escapeHtml(k) + '">' + escapeHtml(i18n.setKeyBtn) + '</button>') +
+        '</div>';
+    }
+    section.innerHTML = html;
+    section.querySelectorAll('button[data-action="setkey"]').forEach((b) => {
+      b.onclick = () => openSetKeyDialog(b.getAttribute('data-key'));
+    });
+    section.querySelectorAll('button[data-action="delete-key"]').forEach((b) => {
+      b.onclick = async () => {
+        const key = b.getAttribute('data-key');
+        if (!confirm(i18n.confirmDeleteProfile.replace('{id}', key))) return;
+        b.disabled = true;
+        try {
+          const resp = await transport.request('/v1/secrets/' + encodeURIComponent(key), { method: 'DELETE' });
+          if (!resp.ok) {
+            const msg = resp.data && resp.data.code === 'external' ? i18n.keyExternal : (resp.data && resp.data.message) || i18n.failed;
+            toast(key + ': ' + msg, 'err');
+            return;
+          }
+          toast(key + ' ✓ ' + i18n.deletedOk, 'ok');
+          await refreshModels();
+        } finally { b.disabled = false; }
+      };
+    });
+  }
 
   // ── Card: Models ───────────────────────────────────────────────────────────
   async function refreshModels() {
