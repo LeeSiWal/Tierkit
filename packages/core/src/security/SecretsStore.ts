@@ -70,9 +70,14 @@ export function createSecretsStore(opts: CreateSecretsStoreOptions): SecretsStor
   async function writeFileAtomic(values: Record<string, string>): Promise<void> {
     await fs.mkdir(opts.dataDir, { recursive: true });
     const tmpPath = secretsPath + ".tmp";
-    await fs.writeFile(tmpPath, JSON.stringify(values, null, 2), { mode: 0o600 });
-    await fs.rename(tmpPath, secretsPath);
-    await fs.chmod(secretsPath, 0o600);
+    try {
+      await fs.writeFile(tmpPath, JSON.stringify(values, null, 2), { mode: 0o600 });
+      await fs.rename(tmpPath, secretsPath);
+      await fs.chmod(secretsPath, 0o600);
+    } catch (err) {
+      await fs.unlink(tmpPath).catch(() => {});
+      throw err;
+    }
   }
 
   async function ensureGitignore(): Promise<void> {
@@ -125,9 +130,10 @@ export function createSecretsStore(opts: CreateSecretsStoreOptions): SecretsStor
         throw new Error("invalid env var name (must match /^[A-Z][A-Z0-9_]*$/)");
       }
       if (!value) throw new Error("value must be non-empty");
-      fileValues = { ...fileValues, [key]: value };
-      await writeFileAtomic(fileValues);
+      const next = { ...fileValues, [key]: value };
+      await writeFileAtomic(next);
       await ensureGitignore();
+      fileValues = next;
       env[key] = value;
       injectedKeys.add(key);
     },
