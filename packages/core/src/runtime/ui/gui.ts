@@ -759,6 +759,16 @@ export const GUI_HTML = `<!doctype html>
       noBundledSamples: 'No bundled samples available (open in VS Code to see them).',
       installEnableBtn: 'Install + Enable',
       emptyPluginsHint: 'No plugins active. Click below to install + enable a bundled sample (one click — auto-initializes the project config if needed).',
+      deleteBtn: 'Delete',
+      confirmDeleteProfile: 'Delete profile "{id}"?',
+      deletedOk: 'deleted',
+      keyMissing: 'API key not set',
+      setKeyBtn: 'Set key',
+      keySaved: 'API key saved',
+      apiKeyValueLabel: 'API key value',
+      apiKeyValuePlaceholder: 'paste sk-… (optional)',
+      sectionApiKeys: 'API Keys',
+      keyExternal: 'set by shell env — cannot delete here',
     },
     ko: {
       offline: '오프라인',
@@ -812,6 +822,16 @@ export const GUI_HTML = `<!doctype html>
       noBundledSamples: '번들 샘플 없음 (VS Code 확장에서만 노출).',
       installEnableBtn: '설치 + 활성화',
       emptyPluginsHint: '활성 플러그인이 없습니다. 아래에서 번들 샘플을 클릭하면 한 번에 설치 + 활성화됩니다 (Tierkit 프로젝트 설정 없으면 자동 생성).',
+      deleteBtn: '삭제',
+      confirmDeleteProfile: '"{id}" 프로파일을 삭제할까요?',
+      deletedOk: '삭제됨',
+      keyMissing: 'API 키 미설정',
+      setKeyBtn: '키 입력',
+      keySaved: 'API 키 저장됨',
+      apiKeyValueLabel: 'API 키 값',
+      apiKeyValuePlaceholder: 'sk-… 붙여넣기 (선택)',
+      sectionApiKeys: 'API 키',
+      keyExternal: '셸 env에서 설정됨 — 여기서 삭제 불가',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -1267,15 +1287,24 @@ export const GUI_HTML = `<!doctype html>
     }
   }
 
+  function openSetKeyDialog(_key) { /* implemented in Task 9 */ }
+  function renderApiKeysSection(_secretMap) { /* implemented in Task 9 */ }
+
   // ── Card: Models ───────────────────────────────────────────────────────────
   async function refreshModels() {
     try {
-      const r = await jget('/v1/models');
+      const [r, secretsR] = await Promise.all([
+        jget('/v1/models'),
+        jget('/v1/secrets').catch(() => ({ entries: [] })),
+      ]);
       const entries = r.entries || [];
+      const secretMap = {};
+      for (const s of (secretsR.entries || [])) secretMap[s.key] = s;
       const root = $('models-list');
       root.innerHTML = '';
       if (entries.length === 0) {
         root.innerHTML = '<div class="empty">no profiles</div>';
+        renderApiKeysSection(secretMap);
         return;
       }
       const srcLabel = lang === 'ko'
@@ -1283,6 +1312,7 @@ export const GUI_HTML = `<!doctype html>
         : { bundled: 'bundled', user: 'user', workspace: 'workspace' };
       for (const e of entries) {
         const p = e.profile || {};
+        const keyMissing = p.apiKeyEnv && !(secretMap[p.apiKeyEnv] && secretMap[p.apiKeyEnv].set);
         const row = document.createElement('div');
         row.className = 'row dense';
         row.innerHTML =
@@ -1293,9 +1323,14 @@ export const GUI_HTML = `<!doctype html>
               escapeHtml(p.provider || '') + ' · ' + escapeHtml(p.model || '') +
               ' · <span style="color:var(--fg-dim)">' + escapeHtml(srcLabel[e.source] || e.source) + '</span>' +
               (p.requiresApproval ? ' · <span style="color:var(--warn)">⚠</span>' : '') +
+              (keyMissing
+                ? ' · <span style="color:var(--warn)">⚠ ' + escapeHtml(i18n.keyMissing) + '</span>' +
+                  ' <button class="tiny" data-action="setkey" data-key="' + escapeHtml(p.apiKeyEnv) + '">' + escapeHtml(i18n.setKeyBtn) + '</button>'
+                : '') +
             '</div>' +
           '</div>' +
-          '<button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>';
+          '<button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
+          ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>';
         root.appendChild(row);
       }
       root.querySelectorAll('button[data-action="test"]').forEach((b) => {
@@ -1309,6 +1344,24 @@ export const GUI_HTML = `<!doctype html>
           } finally { b.disabled = false; b.textContent = 'test'; }
         };
       });
+      root.querySelectorAll('button[data-action="delete-profile"]').forEach((b) => {
+        b.onclick = async () => {
+          const id = b.getAttribute('data-id');
+          const scope = b.getAttribute('data-scope') === 'user' ? 'user' : 'workspace';
+          if (!confirm(i18n.confirmDeleteProfile.replace('{id}', id))) return;
+          b.disabled = true;
+          try {
+            const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id) + '?scope=' + scope, { method: 'DELETE' });
+            if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+            toast(id + ' ✓ ' + i18n.deletedOk, 'ok');
+            await refreshModels();
+          } finally { b.disabled = false; }
+        };
+      });
+      root.querySelectorAll('button[data-action="setkey"]').forEach((b) => {
+        b.onclick = () => openSetKeyDialog(b.getAttribute('data-key'));
+      });
+      renderApiKeysSection(secretMap);
     } catch (e) {
       $('models-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
     }
