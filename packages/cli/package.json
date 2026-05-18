@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/cli",
-  "version": "0.10.10",
+  "version": "0.10.11",
   "description": "Tierkit command-line interface — thin clipanion layer over @tierkit/core usecases.",
   "license": "MIT",
   "type": "module",

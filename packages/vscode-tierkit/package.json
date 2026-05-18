@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.10.10",
+  "version": "0.10.11",
   "private": true,
   "description": "%description%",
   "license": "MIT",

@@ -24,7 +24,7 @@ import { TRANSPORT_INLINE_JS } from "./transport.js";
 // (typically: user installed a new vsix but didn't reload the VS Code window, so the
 // previous daemon is still serving the OLD GUI which had EXPECTED_GUI_VERSION = old value).
 // Bumped by the release commit alongside Server.ts VERSION and package.json files.
-const GUI_BUILD_VERSION = "0.10.10";
+const GUI_BUILD_VERSION = "0.10.11";
 
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
@@ -665,6 +665,33 @@ export const GUI_HTML = `<!doctype html>
       </span>
       <button id="btn-discover-ollama" class="tiny" data-i18n="discoverBtn">🔍 Discover Ollama models</button>
     </div>
+    <div id="presets-row" class="row dense" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px;align-items:center;flex-wrap:wrap;gap:4px">
+      <span data-i18n="presetsLabel">Preset:</span>
+      <button class="tiny" data-preset="local-coder-first" title="Optimized for strong local coders (Qwen3-Coder, DeepSeek-Coder, ...)">🚀 <span data-i18n="presetLocalCoder">Local-coder-first</span></button>
+      <button class="tiny" data-preset="private-only" title="Local + private-remote only — no public cloud">🔒 <span data-i18n="presetPrivateOnly">Private only</span></button>
+      <button class="tiny" data-preset="tierkit-default" title="Reset to Tierkit defaults">↺ <span data-i18n="presetDefault">Defaults</span></button>
+    </div>
+    <details id="risk-thresholds-row" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">
+      <summary style="cursor:pointer;outline:none;user-select:none"><span data-i18n="riskThresholdsLabel">Risk score thresholds</span></summary>
+      <div style="display:grid;grid-template-columns:auto 80px auto;gap:4px 8px;align-items:center;padding:6px 0 0 0;font-size:11px">
+        <label for="rt-local-fast" style="white-space:nowrap"><code>localFastMax</code></label>
+        <input type="number" id="rt-local-fast" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
+        <span class="dim" data-i18n="rtLocalFastHint">small tasks → local-fast</span>
+        <label for="rt-local-strong" style="white-space:nowrap"><code>localStrongMax</code></label>
+        <input type="number" id="rt-local-strong" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
+        <span class="dim" data-i18n="rtLocalStrongHint">most coding tasks → strong local</span>
+        <label for="rt-private-remote" style="white-space:nowrap"><code>privateRemoteMax</code></label>
+        <input type="number" id="rt-private-remote" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
+        <span class="dim" data-i18n="rtPrivateRemoteHint">complex / sensitive → private-remote</span>
+        <label for="rt-public-cloud" style="white-space:nowrap"><code>publicCloudReviewMin</code></label>
+        <input type="number" id="rt-public-cloud" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
+        <span class="dim" data-i18n="rtPublicCloudHint">≥ this score → public-cloud (review-only)</span>
+      </div>
+      <div style="margin-top:6px;display:flex;gap:6px">
+        <button id="rt-save" class="tiny primary" data-i18n="saveBtn">Save</button>
+        <span id="rt-status" class="dim"></span>
+      </div>
+    </details>
     <div id="models-list"><div class="empty" data-i18n="loading">loading…</div></div>
     <div id="profile-add-form" style="display:none"></div>
   </section>
@@ -805,6 +832,17 @@ export const GUI_HTML = `<!doctype html>
       keyExternal: 'set by shell env — cannot delete here',
       confirmCloseForm: 'Close the open form?',
       forceEditLabel: '🪄 force edit',
+      presetsLabel: 'Preset:',
+      presetLocalCoder: 'Local-coder-first',
+      presetPrivateOnly: 'Private only',
+      presetDefault: 'Defaults',
+      presetApplied: 'preset applied',
+      riskThresholdsLabel: 'Risk score thresholds',
+      rtLocalFastHint: 'small tasks → local-fast',
+      rtLocalStrongHint: 'most coding → strong local',
+      rtPrivateRemoteHint: 'complex/sensitive → private-remote',
+      rtPublicCloudHint: '≥ this → public-cloud (review-only)',
+      thresholdsSaved: 'thresholds saved',
       autoCeilingLabel: 'Auto-escalation up to',
       autoCeilingSaved: 'routing policy updated',
       goodAtLabel: 'Good at (comma-separated)',
@@ -898,6 +936,17 @@ export const GUI_HTML = `<!doctype html>
       keyExternal: '셸 env에서 설정됨 — 여기서 삭제 불가',
       confirmCloseForm: '열려있는 폼을 닫을까요?',
       forceEditLabel: '🪄 강제 편집',
+      presetsLabel: '프리셋:',
+      presetLocalCoder: '로컬-코더 우선',
+      presetPrivateOnly: '비공개만',
+      presetDefault: '기본값',
+      presetApplied: '프리셋 적용됨',
+      riskThresholdsLabel: '위험도 임계값',
+      rtLocalFastHint: '작은 task → 빠른 로컬',
+      rtLocalStrongHint: '일반 코딩 → 강한 로컬',
+      rtPrivateRemoteHint: '복잡/민감 → private-remote',
+      rtPublicCloudHint: '이 이상 → public-cloud (검토만)',
+      thresholdsSaved: '임계값 저장됨',
       autoCeilingLabel: '자동 escalation 한계',
       autoCeilingSaved: '라우팅 정책 업데이트됨',
       goodAtLabel: '잘하는 작업 (콤마 구분)',
@@ -1575,10 +1624,58 @@ export const GUI_HTML = `<!doctype html>
   async function refreshAutoCeiling() {
     try {
       const r = await jget('/v1/config');
-      const cur = (r.config && r.config.routingPolicy && r.config.routingPolicy.autoEscalationCeiling) || 'public-cloud';
+      const rp = (r.config && r.config.routingPolicy) || {};
+      const cur = rp.autoEscalationCeiling || 'public-cloud';
       const sel = $('auto-ceiling-select');
       if (sel) sel.value = cur;
+      // Sync the risk threshold inputs in the disclosure too.
+      const rt = rp.riskThresholds || {};
+      const set = (id, value) => { const el = $(id); if (el && value !== undefined) el.value = String(value); };
+      set('rt-local-fast', rt.localFastMax);
+      set('rt-local-strong', rt.localStrongMax);
+      set('rt-private-remote', rt.privateRemoteMax);
+      set('rt-public-cloud', rt.publicCloudReviewMin);
     } catch (e) { /* ignore */ }
+  }
+
+  // Preset buttons: POST /v1/config/preset { name }, then re-pull config so the
+  // auto-ceiling select + threshold inputs reflect what just got written.
+  function wirePresetButtons() {
+    document.querySelectorAll('#presets-row button[data-preset]').forEach((b) => {
+      b.onclick = async () => {
+        const name = b.getAttribute('data-preset');
+        b.disabled = true;
+        try {
+          const resp = await jpost('/v1/config/preset', { name });
+          if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+          toast(name + ' ✓ ' + i18n.presetApplied, 'ok');
+          await refreshAutoCeiling();
+          await refreshModels();
+        } finally { b.disabled = false; }
+      };
+    });
+    const saveBtn = $('rt-save');
+    if (saveBtn) saveBtn.onclick = async () => {
+      const grab = (id) => {
+        const el = $(id);
+        if (!el || el.value === '') return undefined;
+        const n = Number(el.value);
+        return Number.isFinite(n) ? n : undefined;
+      };
+      const riskThresholds = {};
+      const fast = grab('rt-local-fast');           if (fast !== undefined) riskThresholds.localFastMax = fast;
+      const strong = grab('rt-local-strong');       if (strong !== undefined) riskThresholds.localStrongMax = strong;
+      const priv = grab('rt-private-remote');       if (priv !== undefined) riskThresholds.privateRemoteMax = priv;
+      const pub = grab('rt-public-cloud');          if (pub !== undefined) riskThresholds.publicCloudReviewMin = pub;
+      saveBtn.disabled = true;
+      try {
+        const resp = await transport.request('/v1/config/routing', { method: 'PATCH', body: { riskThresholds } });
+        if (!resp.ok) { toast((resp.data && resp.data.error) || i18n.failed, 'err'); return; }
+        const status = $('rt-status');
+        if (status) { status.textContent = '✓ ' + i18n.thresholdsSaved; setTimeout(() => { status.textContent = ''; }, 2500); }
+        toast(i18n.thresholdsSaved, 'ok');
+      } finally { saveBtn.disabled = false; }
+    };
   }
 
   async function refreshModels() {
@@ -2642,6 +2739,7 @@ export const GUI_HTML = `<!doctype html>
 
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
+    wirePresetButtons();
     await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), refreshAutoCeiling(), loadAgentModesAndCommands(), refreshSettings()]);
   }
   $('btn-refresh').onclick = refreshAll;

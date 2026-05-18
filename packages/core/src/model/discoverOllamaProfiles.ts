@@ -68,12 +68,14 @@ export async function discoverOllamaProfiles(opts: DiscoverOptions = {}): Promis
     for (const m of models) {
       if (!isUsableForChat(m)) continue;
       const id = sanitizeId(m.name);
+      const goodAt = inferGoodAt(m.name);
       profiles[id] = {
         kind: "local-device",
         provider: "ollama",
         model: m.name,
         baseUrl,
         roles: detectRoles(m.name),
+        ...(goodAt.length > 0 ? { goodAt } : {}),
         cost: { type: "free" },
       };
     }
@@ -96,6 +98,58 @@ function isUsableForChat(m: OllamaModelEntry): boolean {
   if (name.startsWith("bge-")) return false;
   if (name.startsWith("snowflake-arctic-embed")) return false;
   return true;
+}
+
+/**
+ * Best-effort goodAt tags based on model name. Used by the router to sort profiles
+ * within a tier — a profile whose goodAt matches the detected task type bubbles to the
+ * front. Conservative: only return tags we have strong evidence the model handles well
+ * (based on the model's training corpus / family). Unknown families get an empty array,
+ * which keeps them as "neutral" in the router's sort (better than an anti-fit signal).
+ */
+function inferGoodAt(name: string): string[] {
+  const lower = name.toLowerCase();
+  const tags = new Set<string>();
+  // Coder families — strong code generation/refactor/review across the board.
+  if (
+    lower.includes("coder") ||
+    lower.includes("codestral") ||
+    lower.includes("codellama") ||
+    lower.includes("deepseek-coder") ||
+    lower.includes("starcoder") ||
+    lower.includes("granite-code") ||
+    lower.includes("codeqwen")
+  ) {
+    tags.add("code-generation");
+    tags.add("refactor");
+    tags.add("code-review");
+  }
+  // Qwen / Yi / EXAONE — Korean+Chinese training corpora known to handle Korean well.
+  if (
+    lower.startsWith("qwen") ||
+    lower.includes("qwen3") ||
+    lower.includes("qwen2.5") ||
+    lower.startsWith("yi") ||
+    lower.includes("exaone")
+  ) {
+    tags.add("korean");
+  }
+  // Small / fast models — biased toward summarize/translate (cheaper for those).
+  // We only tag this for known-small variants to avoid mis-tagging large general models.
+  if (/\b(0\.5b|1b|1\.5b|3b|tiny|small|nano)\b/.test(lower)) {
+    tags.add("summarize");
+    tags.add("translate");
+  }
+  // Strong general / planning models — Llama 3.x / Mistral-Large / Mixtral / Qwen 14B+.
+  if (
+    /\b(70b|72b|405b|405)\b/.test(lower) ||
+    lower.includes("mistral-large") ||
+    lower.includes("mixtral") ||
+    /qwen.*(?:14b|32b|30b|72b)/.test(lower)
+  ) {
+    tags.add("plan");
+  }
+  return Array.from(tags);
 }
 
 /** Best-effort role tags based on model name. */

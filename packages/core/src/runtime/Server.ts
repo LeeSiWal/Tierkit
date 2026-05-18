@@ -106,7 +106,7 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
-const VERSION = "0.10.10";
+const VERSION = "0.10.11";
 
 /**
  * Start the Tierkit runtime HTTP daemon. Returns once the server is listening.
@@ -491,6 +491,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           autoEscalationCeiling?: unknown;
           budgetAwareDowngrade?: unknown;
           responseQualityCheck?: unknown;
+          riskThresholds?: unknown;
         }>(req);
         if (!body || typeof body !== "object") {
           return sendJson(res, 400, { error: "request must be JSON object" });
@@ -509,6 +510,25 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
             return sendJson(res, 400, { error: `${k} must be boolean` });
           }
         }
+        // riskThresholds: shallow validate each numeric field, allow partial patches.
+        if (body.riskThresholds !== undefined) {
+          if (typeof body.riskThresholds !== "object" || body.riskThresholds === null || Array.isArray(body.riskThresholds)) {
+            return sendJson(res, 400, { error: "riskThresholds must be an object" });
+          }
+          const rt = body.riskThresholds as Record<string, unknown>;
+          const rtAllowed = ["localFastMax", "localStrongMax", "privateRemoteMax", "publicCloudReviewMin"] as const;
+          const validated: Record<string, number> = {};
+          for (const k of rtAllowed) {
+            if (k in rt) {
+              const v = rt[k];
+              if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 100) {
+                return sendJson(res, 400, { error: `${k} must be an integer in [0, 100]` });
+              }
+              validated[k] = v;
+            }
+          }
+          patch.riskThresholds = validated;
+        }
         const configPath = path.join(opts.cwd, "tierkit.config.json");
         let existing: Record<string, unknown>;
         try {
@@ -518,9 +538,35 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           existing = { version: "0.1", modelProfiles: {} };
         }
         const rp = (existing.routingPolicy as Record<string, unknown>) ?? {};
+        // riskThresholds must merge deeply so partial patches don't drop the unspecified fields.
+        if (patch.riskThresholds) {
+          patch.riskThresholds = { ...(rp.riskThresholds as Record<string, unknown> | undefined), ...(patch.riskThresholds as Record<string, unknown>) };
+        }
         existing.routingPolicy = { ...rp, ...patch };
         await fs.writeFile(configPath, JSON.stringify(existing, null, 2));
         return sendJson(res, 200, { ok: true, routingPolicy: existing.routingPolicy });
+      }
+
+      // Preset endpoints — list available presets + apply one by name.
+      if (route === "GET /v1/config/presets") {
+        const { listPresets } = await import("../usecases/applyConfigPreset.js");
+        return sendJson(res, 200, { presets: listPresets() });
+      }
+      if (route === "POST /v1/config/preset") {
+        const body = await readJsonBody<{ name?: string }>(req);
+        if (!body || typeof body.name !== "string") {
+          return sendJson(res, 400, { error: "request must be { name: string }" });
+        }
+        try {
+          const { applyConfigPreset, PresetError } = await import("../usecases/applyConfigPreset.js");
+          const r = await applyConfigPreset({ cwd: opts.cwd, name: body.name });
+          return sendJson(res, 200, { ok: true, ...r });
+        } catch (err) {
+          if ((err as { code?: string }).code === "unknown-preset") {
+            return sendJson(res, 400, { ok: false, code: "unknown-preset", message: (err as Error).message });
+          }
+          throw err;
+        }
       }
 
       // ── Secrets management: GET/POST/DELETE /v1/secrets ──
