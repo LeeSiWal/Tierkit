@@ -65,6 +65,22 @@ export interface ModelCallRequest {
   /** Each message's content may be a plain string or an array of OpenAI content parts
    *  (text + image_url). Tools and helpers normalize between the two as needed. */
   messages: { role: string; content: string | unknown[]; tool_calls?: unknown; tool_call_id?: string }[];
+  /**
+   * Optional OpenAI-format tools array. Sent only when we want to force the model into
+   * a specific tool call via `tool_choice` (otherwise the system prompt's XML catalog is
+   * enough). When provided, the provider passes these through; Ollama uses them to bias
+   * its native tool_calls AND, when `tool_choice: "required"` is set, to drive its
+   * `format` JSON schema.
+   */
+  tools?: Array<{
+    type: "function";
+    function: { name: string; description?: string; parameters?: Record<string, unknown> };
+  }>;
+  /**
+   * Force a tool call. "required" → model MUST call one of `tools`. {type:function,...} →
+   * force a specific tool. Anthropic/OpenAI honor this natively; Ollama maps to `format`.
+   */
+  tool_choice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 }
 
 export interface ModelCallResponse {
@@ -85,6 +101,19 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS;
   const tools = deps.tools ?? DEFAULT_TOOLS;
   const callModel = deps.callModel ?? makeDefaultCallModel(tierkitBaseUrl);
+  // Edit-intent auto-detection. Matches Korean + English action verbs. Used as a heuristic:
+  // when the user's initial task hits this regex AND a turn ends with no tool calls, we
+  // retry once with forced tool_choice. Conservative — false positives just mean ONE extra
+  // turn with forced tooling, which the model can still satisfy by calling read first if
+  // it wants (read tools are also in the force schema when intent is detected from a
+  // fresh task with no read context yet).
+  const EDIT_INTENT_RE = /\b(fix|edit|change|modify|implement|add|remove|write|refactor|replace|create|update|rewrite|delete|insert)\b|수정|고쳐|바꿔|구현|만들어|추가|삭제|작성|리팩토|덮어|편집/i;
+  const editIntent = EDIT_INTENT_RE.test(input.task);
+  const forceEditMode = input.forceEdit === true;
+  // Tracks whether the manual or auto force has already been used. Caps auto-retry at 1
+  // per task so a stuck model doesn't loop forever on the force path.
+  let autoForceUsed = false;
+  let forceToolThisTurn = false;
   // Streaming is OPTIONAL. When tests inject a callModel without a streamModel, we
   // honor that (existing test contract) by leaving streamModel undefined and falling
   // through to the non-streaming path inside the loop. Only when neither is overridden
@@ -133,6 +162,26 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
       compressOldToolResults(messages, COMPRESS_KEEP_TAIL);
     }
 
+    // ── Force-tool-call gate ──────────────────────────────────────────────
+    // When forceToolThisTurn is set (either from manual `forceEdit` toggle after stall,
+    // or auto-detected via edit intent + previous-turn stall), narrow the tools array
+    // to write-class tools only and ask the provider to enforce `tool_choice: "required"`.
+    // Read tools stay out of the force schema so the model commits to an edit instead
+    // of looping on read.
+    const FORCE_TOOL_NAMES = ["write_file", "apply_diff", "search_and_replace"];
+    const forceTools = forceToolThisTurn
+      ? tools
+          .filter((t) => FORCE_TOOL_NAMES.includes(t.name))
+          .map((t) => ({
+            type: "function" as const,
+            function: {
+              name: t.name,
+              description: t.description,
+              parameters: toolParamsToJsonSchema(t.parameters),
+            },
+          }))
+      : undefined;
+
     // ── Call the model via Tierkit daemon (streaming when available) ──────
     // Stream chunks straight to the UI so the user sees text appearing as it generates.
     // After the stream completes we parse the full text for tool calls and emit a final
@@ -146,6 +195,7 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
         for await (const ev of streamModel({
           model: modelId,
           messages: messages.map((m) => toWireMessage(m)),
+          ...(forceTools ? { tools: forceTools, tool_choice: "required" as const } : {}),
         })) {
           if (ev.type === "chunk") {
             if (ev.text.length > 0) yield { type: "delta", text: ev.text, turn };
@@ -162,12 +212,14 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
           modelResponse = await callModel({
             model: modelId,
             messages: messages.map((m) => toWireMessage(m)),
+            ...(forceTools ? { tools: forceTools, tool_choice: "required" as const } : {}),
           });
         }
       } else {
         modelResponse = await callModel({
           model: modelId,
           messages: messages.map((m) => toWireMessage(m)),
+          ...(forceTools ? { tools: forceTools, tool_choice: "required" as const } : {}),
         });
       }
       if (!modelResponse) {
@@ -223,11 +275,27 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
       return;
     }
 
-    // ── No tool calls → conversation done (or stuck) ──────────────────────
+    // ── No tool calls → maybe stalled; retry once with forced tool_choice ──
     if (allCalls.length === 0) {
+      const shouldForce = (forceEditMode || editIntent) && !autoForceUsed && turn < maxTurns;
+      if (shouldForce) {
+        autoForceUsed = true;
+        forceToolThisTurn = true;
+        // Nudge: append a user message explaining that we expect a tool call this time.
+        messages.push({
+          role: "user",
+          content:
+            "You did not call any tool. The user is asking for an actual code change — " +
+            "use write_file, apply_diff, or search_and_replace now. Do not describe — execute.",
+        });
+        continue; // re-enter the loop without emitting turn_end
+      }
       yield { type: "turn_end", reason: "no_tool_calls" };
       return;
     }
+    // We did get tool calls this turn — reset the forced-turn flag so subsequent normal
+    // turns don't carry the restricted toolset.
+    forceToolThisTurn = false;
 
     // ── Execute each tool call in order ──────────────────────────────────
     for (const call of allCalls) {
@@ -357,6 +425,8 @@ function makeDefaultCallModel(tierkitBaseUrl: string) {
       body: JSON.stringify({
         model: req.model,
         messages: req.messages,
+        ...(req.tools ? { tools: req.tools } : {}),
+        ...(req.tool_choice ? { tool_choice: req.tool_choice } : {}),
       }),
     });
     if (!res.ok && res.status !== 400) {
@@ -422,7 +492,13 @@ function makeDefaultStreamModel(tierkitBaseUrl: string) {
       res = await fetch(`${tierkitBaseUrl}/v1/openai/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", "accept": "text/event-stream" },
-        body: JSON.stringify({ model: req.model, messages: req.messages, stream: true }),
+        body: JSON.stringify({
+          model: req.model,
+          messages: req.messages,
+          stream: true,
+          ...(req.tools ? { tools: req.tools } : {}),
+          ...(req.tool_choice ? { tool_choice: req.tool_choice } : {}),
+        }),
       });
     } catch (err) {
       yield { type: "error", message: (err as Error).message };
@@ -525,4 +601,23 @@ function makeDefaultStreamModel(tierkitBaseUrl: string) {
       },
     };
   };
+}
+
+/**
+ * Convert Tierkit's ToolParam[] declaration into an OpenAI-shape JSON Schema object.
+ * Used only on force-tool-call turns, so the model can be told exactly what shape
+ * `arguments` should be when we set tool_choice: "required". The provider that ultimately
+ * fields this (Anthropic / OpenAI / Gemini-openai-compat / Ollama-via-format) all
+ * understand standard JSON Schema for the parameter object.
+ */
+function toolParamsToJsonSchema(
+  params: Array<{ name: string; type: string; description: string; required?: boolean }>,
+): Record<string, unknown> {
+  const properties: Record<string, unknown> = {};
+  const required: string[] = [];
+  for (const p of params) {
+    properties[p.name] = { type: p.type, description: p.description };
+    if (p.required === true) required.push(p.name);
+  }
+  return { type: "object", properties, required };
 }

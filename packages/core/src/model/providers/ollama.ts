@@ -1,8 +1,74 @@
 import type { ModelProfile } from "../ModelProfile.js";
 import type { ProbeResult, ProviderClient } from "./types.js";
-import type { ChatRequest, ChatResult, StreamEvent, ChatMessage, ToolCall } from "./chatTypes.js";
+import type { ChatRequest, ChatResult, StreamEvent, ChatMessage, ToolCall, ToolDefinition, ToolChoice } from "./chatTypes.js";
 import { iterNDJSON } from "./streamUtils.js";
 import { tryEnsureOllamaRunning } from "./ollamaAutoLaunch.js";
+
+/**
+ * When the caller wants `tool_choice: "required"` (or a specific function) but the model
+ * is local Ollama, we can't use OpenAI's tool_choice keyword — Ollama doesn't honor it.
+ * Instead we use Ollama's `format` parameter (v0.5+ accepts a JSON schema) to constrain
+ * the model's text output to a JSON object naming a tool + its arguments. The text body
+ * of the response becomes that JSON, which we parse here and convert into Tierkit's
+ * `toolCalls` shape — invisible to the AgentLoop, which sees a normal tool_calls result.
+ *
+ * Tradeoff: stricter Ollama JSON-schema constraint (anyOf with per-tool argument schemas)
+ * is brittle on smaller models — they sometimes 0-token or repeat. We stick to a coarse
+ * schema (enum of tool_name, free-form arguments object) so the model still has room to
+ * "think" while being forced into the right shape. The model has already seen each tool's
+ * parameters via the `tools` array sent alongside.
+ */
+function buildToolChoiceFormat(
+  tools: ToolDefinition[] | undefined,
+  choice: ToolChoice | undefined,
+): Record<string, unknown> | undefined {
+  if (!tools || tools.length === 0 || !choice) return undefined;
+  let names: string[] = [];
+  if (choice === "required") {
+    names = tools.map((t) => t.function.name);
+  } else if (typeof choice === "object" && choice.type === "function") {
+    names = tools.filter((t) => t.function.name === choice.function.name).map((t) => t.function.name);
+  } else {
+    return undefined; // "auto" / "none" don't force anything
+  }
+  if (names.length === 0) return undefined;
+  return {
+    type: "object",
+    properties: {
+      tool_name: { type: "string", enum: names },
+      arguments: { type: "object" },
+    },
+    required: ["tool_name", "arguments"],
+  };
+}
+
+/**
+ * When `format` constraint was applied, Ollama returns the JSON document as `message.content`
+ * (not `tool_calls`). Parse and adapt to OpenAI-shape toolCalls so downstream code (AgentLoop,
+ * openaiCompat walker) can treat it identically.
+ */
+function adoptFormatJsonAsToolCalls(rawContent: string | undefined): ToolCall[] | undefined {
+  if (!rawContent) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawContent);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+  const obj = parsed as { tool_name?: unknown; arguments?: unknown };
+  if (typeof obj.tool_name !== "string" || !obj.tool_name) return undefined;
+  const args = obj.arguments && typeof obj.arguments === "object" && !Array.isArray(obj.arguments)
+    ? (obj.arguments as Record<string, unknown>)
+    : {};
+  return [
+    {
+      id: `call_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      type: "function",
+      function: { name: obj.tool_name, arguments: JSON.stringify(args) },
+    },
+  ];
+}
 
 interface OllamaTagsResponse {
   models?: { name: string }[];
@@ -173,6 +239,10 @@ export class OllamaClient implements ProviderClient {
     // Forward tools to Ollama 0.4+ (older versions ignore the field). Ollama accepts the
     // OpenAI tool format verbatim, so we just pass `request.tools` through unchanged.
     if (request.tools && request.tools.length > 0) body.tools = request.tools;
+    // tool_choice: "required" → use Ollama's JSON-schema `format` to force the model to
+    // emit a tool-call envelope. See buildToolChoiceFormat for the schema shape.
+    const forcedFormat = buildToolChoiceFormat(request.tools, request.toolChoice);
+    if (forcedFormat) body.format = forcedFormat;
     const start = performance.now();
     try {
       const res = await ensureUpThenFetch(profile.baseUrl, url, {
@@ -193,12 +263,20 @@ export class OllamaClient implements ProviderClient {
       const parsed = (await res.json()) as OllamaChatResponse;
       const text = parsed.message?.content ?? "";
       const ollamaToolCalls = parsed.message?.tool_calls;
-      const toolCalls = ollamaToolCalls && ollamaToolCalls.length > 0
+      // Prefer native tool_calls (Ollama 0.4+ structured output). Fall back to parsing the
+      // forced-JSON envelope ONLY when our forced-format path is active and no native
+      // tool_calls came back — that's the local-tool_choice path.
+      let toolCalls = ollamaToolCalls && ollamaToolCalls.length > 0
         ? ollamaToolCallsToOpenAI(ollamaToolCalls)
         : undefined;
+      if (!toolCalls && forcedFormat) {
+        toolCalls = adoptFormatJsonAsToolCalls(text);
+      }
       return {
         ok: true,
-        text,
+        // When we adopted forced-format JSON as tool_calls, the raw JSON content is no
+        // longer meant for the user — clear it so the UI doesn't show the envelope blob.
+        text: toolCalls && forcedFormat ? "" : text,
         usage: {
           inputTokens: parsed.prompt_eval_count ?? 0,
           outputTokens: parsed.eval_count ?? 0,

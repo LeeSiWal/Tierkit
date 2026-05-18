@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/plugin-superpowers",
-  "version": "0.10.8",
+  "version": "0.10.9",
   "description": "Bundled Superpowers-like sample plugins for Tierkit (free / guided / balanced / strict).",
   "license": "MIT",
   "type": "module",

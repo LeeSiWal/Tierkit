@@ -174,6 +174,14 @@ export interface AgentRunInput {
    * support drop attachments silently — choose a vision-capable profile via `modelId`.
    */
   attachments?: ImageAttachment[];
+  /**
+   * Force-edit mode. When true, the AgentLoop will retry the model call with
+   * `tool_choice: "required"` (restricted to write_file / apply_diff /
+   * search_and_replace) on the FIRST turn that ends with no tool calls. Without this
+   * flag, the same behavior auto-triggers when the task contains edit-intent verbs
+   * (수정/고쳐/fix/edit/...). Defaults to false.
+   */
+  forceEdit?: boolean;
 }
 
 export interface ImageAttachment {

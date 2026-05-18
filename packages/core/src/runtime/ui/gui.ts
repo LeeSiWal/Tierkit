@@ -24,7 +24,7 @@ import { TRANSPORT_INLINE_JS } from "./transport.js";
 // (typically: user installed a new vsix but didn't reload the VS Code window, so the
 // previous daemon is still serving the OLD GUI which had EXPECTED_GUI_VERSION = old value).
 // Bumped by the release commit alongside Server.ts VERSION and package.json files.
-const GUI_BUILD_VERSION = "0.10.8";
+const GUI_BUILD_VERSION = "0.10.9";
 
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
@@ -592,6 +592,10 @@ export const GUI_HTML = `<!doctype html>
         <option value="auto" data-i18n="approvalAuto">auto</option>
         <option value="interactive" data-i18n="approvalInteractive">ask each</option>
       </select>
+      <label style="display:flex;align-items:center;gap:3px;cursor:pointer" title="force the model to call write_file / apply_diff / search_and_replace when it would otherwise just describe">
+        <input type="checkbox" id="agent-force-edit" style="margin:0">
+        <span data-i18n="forceEditLabel">🪄 force edit</span>
+      </label>
       <span class="spacer" style="flex:1"></span>
       <span><span class="kbd" style="font-family:var(--mono);background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:10px">/</span> <span data-i18n="forSlash">for plugin commands</span></span>
     </div>
@@ -800,6 +804,7 @@ export const GUI_HTML = `<!doctype html>
       sectionApiKeys: 'API Keys',
       keyExternal: 'set by shell env — cannot delete here',
       confirmCloseForm: 'Close the open form?',
+      forceEditLabel: '🪄 force edit',
       autoCeilingLabel: 'Auto-escalation up to',
       autoCeilingSaved: 'routing policy updated',
       goodAtLabel: 'Good at (comma-separated)',
@@ -892,6 +897,7 @@ export const GUI_HTML = `<!doctype html>
       sectionApiKeys: 'API 키',
       keyExternal: '셸 env에서 설정됨 — 여기서 삭제 불가',
       confirmCloseForm: '열려있는 폼을 닫을까요?',
+      forceEditLabel: '🪄 강제 편집',
       autoCeilingLabel: '자동 escalation 한계',
       autoCeilingSaved: '라우팅 정책 업데이트됨',
       goodAtLabel: '잘하는 작업 (콤마 구분)',
@@ -2478,6 +2484,7 @@ export const GUI_HTML = `<!doctype html>
     // Pick up mode + approval mode from composer dropdowns.
     const selectedMode = agentModeSelect.value || undefined;
     const approvalMode = agentApprovalSelect.value === 'interactive' ? 'interactive' : 'auto';
+    const forceEdit = !!($('agent-force-edit') && $('agent-force-edit').checked);
     // Expand /cmdname args into a Command preamble + rest as the agent task.
     let finalTask = task;
     const slashMatch = /^\\/([a-z][a-z0-9-]*)(?:\\s+([\\s\\S]*))?$/i.exec(task.trim());
@@ -2507,7 +2514,7 @@ export const GUI_HTML = `<!doctype html>
       suppressNextTaskStart = true;
       pendingAttachments.length = 0;
       renderAttachments();
-      const reqBody = { task: finalTask, mode: selectedMode, approvalMode, ...(attachmentsForSubmit ? { attachments: attachmentsForSubmit } : {}) };
+      const reqBody = { task: finalTask, mode: selectedMode, approvalMode, ...(attachmentsForSubmit ? { attachments: attachmentsForSubmit } : {}), ...(forceEdit ? { forceEdit: true } : {}) };
       try {
         for await (const ev of transport.stream('/v1/agent/run', { method: 'POST', body: reqBody, signal: agentController.signal })) {
           if (ev.data === '[DONE]') return;

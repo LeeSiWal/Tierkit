@@ -176,6 +176,7 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
           ...(body.mode ? { mode: body.mode } : {}),
           ...(body.maxTurns !== undefined ? { maxTurns: body.maxTurns } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(body.forceEdit ? { forceEdit: true } : {}),
           approve: approveImpl,
           abortSignal: runAbort.signal,
         };
