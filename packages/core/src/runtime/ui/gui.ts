@@ -964,6 +964,23 @@ export const GUI_HTML = `<!doctype html>
     setTimeout(() => el.remove(), 2500);
   }
 
+  // VS Code webviews disable window.confirm() (returns undefined / silently no-ops). Using
+  // the bare browser confirm() in a webview made every "Delete?" click silently abort —
+  // the early-return on a falsy result fired and the action never reached the daemon. Our
+  // safeConfirm shows the native dialog in plain-browser mode AND lets the action proceed
+  // when confirm() isn't usable. Trade-off: VS Code users get effectively one-click delete
+  // (they already clicked an explicit Delete button — that IS the confirmation).
+  function safeConfirm(msg) {
+    try {
+      if (typeof window.confirm !== 'function') return true;
+      const r = window.confirm(msg);
+      if (typeof r === 'boolean') return r;
+      return true;
+    } catch {
+      return true;
+    }
+  }
+
   // ── Card: Connected tools ──────────────────────────────────────────────────
   async function refreshTools() {
     try {
@@ -1121,8 +1138,8 @@ export const GUI_HTML = `<!doctype html>
       root.querySelectorAll('button[data-action="remove"]').forEach((b) => {
         b.onclick = async () => {
           const id = b.getAttribute('data-id');
-          // Plain confirm() works in both VS Code webviews and browser mode.
-          if (!confirm((lang === 'ko' ? '플러그인을 삭제할까요? ' : 'Remove plugin? ') + id)) return;
+          // safeConfirm: native confirm() is blocked in VS Code webviews. See its definition.
+          if (!safeConfirm((lang === 'ko' ? '플러그인을 삭제할까요? ' : 'Remove plugin? ') + id)) return;
           b.disabled = true;
           try {
             const resp = await jpost('/v1/plugins/remove', { pluginId: id });
@@ -1440,7 +1457,7 @@ export const GUI_HTML = `<!doctype html>
   function openSetKeyDialog(presetKey) {
     const host = $('profile-add-form');
     const hostHasContent = host.innerHTML.trim() !== '' && !document.getElementById('secret-dialog');
-    if (hostHasContent && !confirm(i18n.confirmCloseForm)) return;
+    if (hostHasContent && !safeConfirm(i18n.confirmCloseForm)) return;
     const existing = document.getElementById('secret-dialog');
     if (existing) existing.remove();
     const dlg = document.createElement('div');
@@ -1507,7 +1524,7 @@ export const GUI_HTML = `<!doctype html>
     section.querySelectorAll('button[data-action="delete-key"]').forEach((b) => {
       b.onclick = async () => {
         const key = b.getAttribute('data-key');
-        if (!confirm(i18n.confirmDeleteProfile.replace('{id}', key))) return;
+        if (!safeConfirm(i18n.confirmDeleteProfile.replace('{id}', key))) return;
         b.disabled = true;
         try {
           const resp = await transport.request('/v1/secrets/' + encodeURIComponent(key), { method: 'DELETE' });
@@ -1593,7 +1610,7 @@ export const GUI_HTML = `<!doctype html>
         b.onclick = async () => {
           const id = b.getAttribute('data-id');
           const scope = b.getAttribute('data-scope') === 'user' ? 'user' : 'workspace';
-          if (!confirm(i18n.confirmDeleteProfile.replace('{id}', id))) return;
+          if (!safeConfirm(i18n.confirmDeleteProfile.replace('{id}', id))) return;
           b.disabled = true;
           try {
             const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id) + '?scope=' + scope, { method: 'DELETE' });

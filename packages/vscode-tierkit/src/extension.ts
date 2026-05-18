@@ -22,7 +22,7 @@ import * as path from "node:path";
 import * as fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import { TierkitClient, TierkitClientError } from "@tierkit/client";
-import { GUI_HTML, startServer, type RunningServer } from "@tierkit/core";
+import { GUI_HTML, startServer, createSecretsStore, loadConfig, type RunningServer } from "@tierkit/core";
 import { RooAdapter } from "@tierkit/adapter-roo";
 import { ClineAdapter } from "@tierkit/adapter-cline";
 import { ContinueAdapter } from "@tierkit/adapter-continue";
@@ -231,6 +231,20 @@ async function maybeStartDaemon(): Promise<void> {
   const bootstrapOpt = bootstrapPlugins.length > 0 ? { bootstrapPlugins } : {};
   log(`bootstrap: ${bootstrapPlugins.map((b) => b.path.split("/").pop() + (b.autoEnable ? "*" : "")).join(", ") || "(none — bundled samples missing)"}`);
 
+  // Wire secrets store so /v1/secrets endpoints work in the extension's daemon. Without
+  // this, POST /v1/secrets returns 501 and the GUI's API-key paste flow silently fails.
+  let secretsStore: ReturnType<typeof createSecretsStore> | undefined;
+  try {
+    const cfg = await loadConfig(workspace.uri.fsPath);
+    const dataDir = path.join(workspace.uri.fsPath, cfg.config.runtime.dataDir);
+    await fs.mkdir(dataDir, { recursive: true });
+    secretsStore = createSecretsStore({ dataDir });
+    await secretsStore.loadIntoEnv();
+    log(`secrets: store ready at ${dataDir}/secrets.json`);
+  } catch (e) {
+    log(`secrets: failed to initialize (${(e as Error).message}) — /v1/secrets will return 501`);
+  }
+
   log(`auto-start: trying startServer({port:${port}})`);
   try {
     serverHandle = await startServer({
@@ -243,6 +257,7 @@ async function maybeStartDaemon(): Promise<void> {
         // per-request from the approvalMode body field set by the GUI's composer dropdown.
         createAgentRouteExtension(),
       ],
+      ...(secretsStore ? { secrets: secretsStore } : {}),
       ...bootstrapOpt,
     });
     effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
@@ -257,6 +272,7 @@ async function maybeStartDaemon(): Promise<void> {
         port: 0,
         adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
         routeExtensions: [createAgentRouteExtension()],
+        ...(secretsStore ? { secrets: secretsStore } : {}),
         ...bootstrapOpt,
       });
       effectiveBaseUrl = `http://127.0.0.1:${serverHandle.port}`;
