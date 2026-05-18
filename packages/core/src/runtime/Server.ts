@@ -142,7 +142,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       // treats as cross-origin relative to `http://localhost:4101`) get blocked by CORS
       // before the request even leaves the page.
       res.setHeader("access-control-allow-origin", "*");
-      res.setHeader("access-control-allow-methods", "GET, POST, OPTIONS");
+      res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
       res.setHeader("access-control-allow-headers", "content-type, authorization");
       res.setHeader("access-control-max-age", "600");
       if (method === "OPTIONS") {
@@ -401,6 +401,37 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         }
         const r = opts.secrets.list({ knownKeys: [...known] });
         return sendJson(res, 200, r);
+      }
+
+      if (route === "POST /v1/secrets") {
+        if (!opts.secrets) return sendJson(res, 501, { error: "secrets store not configured" });
+        const body = await readJsonBody<{ key: string; value: string }>(req);
+        if (!body || typeof body.key !== "string" || typeof body.value !== "string") {
+          return sendJson(res, 400, { error: "request must be { key: string, value: string }" });
+        }
+        try {
+          await opts.secrets.set(body.key, body.value);
+          const listed = opts.secrets.list({ knownKeys: [body.key] });
+          const entry = listed.entries.find((e) => e.key === body.key);
+          return sendJson(res, 200, { ok: true, masked: entry?.masked ?? "" });
+        } catch (err) {
+          return sendJson(res, 400, { code: "invalid", message: (err as Error).message });
+        }
+      }
+
+      if (method === "DELETE" && url.pathname.startsWith("/v1/secrets/")) {
+        if (!opts.secrets) return sendJson(res, 501, { error: "secrets store not configured" });
+        const key = decodeURIComponent(url.pathname.slice("/v1/secrets/".length));
+        if (!key) return sendJson(res, 400, { error: "missing key in path" });
+        const ok = await opts.secrets.remove(key);
+        if (!ok) {
+          return sendJson(res, 400, {
+            ok: false,
+            code: "external",
+            message: "key was set by the shell env, not by Tierkit — cannot remove",
+          });
+        }
+        return sendJson(res, 200, { ok: true });
       }
 
       // ── Workspace file listing (used by @filename autocomplete in the GUI) ──
