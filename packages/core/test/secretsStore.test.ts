@@ -86,3 +86,51 @@ describe("SecretsStore — set", () => {
     expect(matches?.length).toBe(1);
   });
 });
+
+describe("SecretsStore — env injection + remove", () => {
+  it("injects file values into env on loadIntoEnv (when env is empty)", async () => {
+    await fs.mkdir(tmp, { recursive: true });
+    await fs.writeFile(
+      path.join(tmp, "secrets.json"),
+      JSON.stringify({ ANTHROPIC_API_KEY: "sk-ant-fromdisk1234567" }),
+      { mode: 0o600 },
+    );
+    const env: Record<string, string | undefined> = {};
+    const store = createSecretsStore({ dataDir: tmp, env });
+    await store.loadIntoEnv();
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-fromdisk1234567");
+  });
+
+  it("shell env wins over file (file value not injected)", async () => {
+    await fs.mkdir(tmp, { recursive: true });
+    await fs.writeFile(
+      path.join(tmp, "secrets.json"),
+      JSON.stringify({ ANTHROPIC_API_KEY: "sk-ant-fromdisk1234567" }),
+      { mode: 0o600 },
+    );
+    const env: Record<string, string | undefined> = { ANTHROPIC_API_KEY: "sk-ant-fromshell" };
+    const store = createSecretsStore({ dataDir: tmp, env });
+    await store.loadIntoEnv();
+    expect(env.ANTHROPIC_API_KEY).toBe("sk-ant-fromshell");
+  });
+
+  it("set() then remove() deletes from env (since we injected it)", async () => {
+    const env: Record<string, string | undefined> = {};
+    const store = createSecretsStore({ dataDir: tmp, env });
+    await store.loadIntoEnv();
+    await store.set("OPENAI_API_KEY", "sk-ohai-1234567890xyz");
+    expect(env.OPENAI_API_KEY).toBe("sk-ohai-1234567890xyz");
+    const ok = await store.remove("OPENAI_API_KEY");
+    expect(ok).toBe(true);
+    expect(env.OPENAI_API_KEY).toBeUndefined();
+  });
+
+  it("remove() returns false when key was never in our store", async () => {
+    const env: Record<string, string | undefined> = { OPENAI_API_KEY: "sk-ohai-fromshell" };
+    const store = createSecretsStore({ dataDir: tmp, env });
+    await store.loadIntoEnv();
+    const ok = await store.remove("OPENAI_API_KEY");
+    expect(ok).toBe(false);
+    expect(env.OPENAI_API_KEY).toBe("sk-ohai-fromshell"); // untouched
+  });
+});
