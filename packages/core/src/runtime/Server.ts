@@ -35,6 +35,7 @@ import type { TierkitAdapter } from "../adapter/TierkitAdapter.js";
 import type { Target } from "../plugin/PluginManifest.js";
 import { GUI_HTML } from "./ui/gui.js";
 import type { SessionState } from "./session/ExecutionSession.js";
+import type { SecretsStore } from "../security/SecretsStore.js";
 
 export interface ServerOptions {
   /** Project root the runtime operates on. */
@@ -80,6 +81,12 @@ export interface ServerOptions {
     /** When true, enable this plugin after install. Default false (install only). */
     autoEnable?: boolean;
   }>;
+  /**
+   * Optional store for runtime-managed API keys (read/written via /v1/secrets).
+   * The daemon caller is expected to call `secrets.loadIntoEnv()` BEFORE startServer,
+   * so providers see the keys via process.env. Without this field, /v1/secrets returns 501.
+   */
+  secrets?: SecretsStore;
 }
 
 export interface RouteExtension {

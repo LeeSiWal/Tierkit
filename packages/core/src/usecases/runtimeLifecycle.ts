@@ -64,7 +64,12 @@ export async function startRuntime(input: RuntimeStartInput = {}): Promise<Runti
 
   const host = input.host ?? rc.host;
   const port = input.port ?? rc.port;
-  const server = await startServer({ cwd: projectRoot, host, port });
+
+  const { createSecretsStore } = await import("../security/SecretsStore.js");
+  const secrets = createSecretsStore({ dataDir });
+  await secrets.loadIntoEnv();
+
+  const server = await startServer({ cwd: projectRoot, host, port, secrets });
   await fs.writeFile(pidPath, String(process.pid), "utf8");
   await fs.writeFile(portPath, String(server.port), "utf8");
 

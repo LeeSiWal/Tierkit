@@ -99,6 +99,8 @@ export {
   type DangerRule,
   type CommandClassification,
 } from "./security/dangerousCommands.js";
+export { createSecretsStore } from "./security/SecretsStore.js";
+export type { SecretsStore, SecretsStoreEntry, SecretsStoreListOptions } from "./security/SecretsStore.js";
 
 // Adapter
 export type {
