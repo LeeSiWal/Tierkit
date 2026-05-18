@@ -1,4 +1,4 @@
-import type { ModelTier, ModelProfileMap, ModelPolicy } from "./ModelProfile.js";
+import type { ModelTier, ModelProfile, ModelProfileMap, ModelPolicy } from "./ModelProfile.js";
 import {
   DEFAULT_RISK_THRESHOLDS,
   scoreRisk,
@@ -7,6 +7,13 @@ import {
   type RiskThresholds,
 } from "./RiskScorer.js";
 
+export interface RouteCandidate {
+  id: string;
+  tier: ModelTier;
+  /** False for primary-tier candidates, true for candidates added by escalation. */
+  isEscalation: boolean;
+}
+
 export interface RouteDecision {
   tier: ModelTier;
   profileId: string | null;
@@ -14,6 +21,8 @@ export interface RouteDecision {
   reasons: string[];
   requiresApproval: boolean;
   mode: "execute" | "review-only";
+  /** Ordered list — walker tries in sequence on transient failures. */
+  escalationChain: RouteCandidate[];
 }
 
 export interface ExplainRouteInput {
@@ -21,14 +30,68 @@ export interface ExplainRouteInput {
   profiles: ModelProfileMap;
   policy?: ModelPolicy;
   thresholds?: RiskThresholds;
+  /** Cap for escalation tiers. Defaults to "public-cloud". */
+  ceiling?: ModelTier;
+  /** Used to sort profiles within each tier (goodAt-aware). Defaults to "general". */
+  taskType?: string;
+}
+
+const TIER_ORDER: ModelTier[] = ["local-device", "private-remote", "public-cloud"];
+
+function tierRank(t: ModelTier): number {
+  return TIER_ORDER.indexOf(t);
+}
+
+/**
+ * goodAt-aware sort: profiles matching taskType first, then neutral (no goodAt), then anti-fit.
+ * Declaration order breaks ties (Object.entries preserves insertion order on modern V8).
+ */
+function sortProfilesForTier(
+  profiles: ModelProfileMap,
+  tier: ModelTier,
+  taskType: string,
+): string[] {
+  const inTier = Object.entries(profiles).filter(([, p]) => p.kind === tier);
+  const rank = (p: ModelProfile): number => {
+    if (!p.goodAt || p.goodAt.length === 0) return 1; // neutral
+    if (p.goodAt.includes(taskType)) return 0;          // fit
+    return 2;                                            // anti-fit
+  };
+  return inTier
+    .map(([id, p], idx) => ({ id, p, idx }))
+    .sort((a, b) => rank(a.p) - rank(b.p) || a.idx - b.idx)
+    .map((x) => x.id);
+}
+
+function buildEscalationChain(
+  profiles: ModelProfileMap,
+  primaryTier: ModelTier,
+  ceiling: ModelTier,
+  taskType: string,
+): RouteCandidate[] {
+  const chain: RouteCandidate[] = [];
+  const ceilingRank = tierRank(ceiling);
+  for (const tier of TIER_ORDER) {
+    if (tierRank(tier) < tierRank(primaryTier)) continue;
+    if (tierRank(tier) > ceilingRank) break;
+    const sorted = sortProfilesForTier(profiles, tier, taskType);
+    for (const id of sorted) {
+      chain.push({ id, tier, isEscalation: tier !== primaryTier });
+    }
+  }
+  return chain;
 }
 
 export function decideRoute(input: ExplainRouteInput): RouteDecision {
   const { task, profiles, policy, thresholds = DEFAULT_RISK_THRESHOLDS } = input;
+  const ceiling = input.ceiling ?? "public-cloud";
+  const taskType = input.taskType ?? "general";
+
   const { score, reasons } = scoreRisk(task);
   const tier = tierForScore(score, thresholds);
 
-  const profileId = pickProfileIdForTier(profiles, tier);
+  const escalationChain = buildEscalationChain(profiles, tier, ceiling, taskType);
+  const profileId = escalationChain.find((c) => c.tier === tier)?.id ?? null;
   const profile = profileId ? profiles[profileId] : undefined;
 
   let requiresApproval = false;
@@ -41,12 +104,5 @@ export function decideRoute(input: ExplainRouteInput): RouteDecision {
     requiresApproval = true;
   }
 
-  return { tier, profileId: profileId ?? null, score, reasons, requiresApproval, mode };
-}
-
-function pickProfileIdForTier(profiles: ModelProfileMap, tier: ModelTier): string | undefined {
-  for (const [id, profile] of Object.entries(profiles)) {
-    if (profile.kind === tier) return id;
-  }
-  return undefined;
+  return { tier, profileId, score, reasons, requiresApproval, mode, escalationChain };
 }
