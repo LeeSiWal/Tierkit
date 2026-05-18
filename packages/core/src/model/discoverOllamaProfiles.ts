@@ -69,6 +69,7 @@ export async function discoverOllamaProfiles(opts: DiscoverOptions = {}): Promis
       if (!isUsableForChat(m)) continue;
       const id = sanitizeId(m.name);
       const goodAt = inferGoodAt(m.name);
+      const notGoodAt = inferNotGoodAt(m.name);
       profiles[id] = {
         kind: "local-device",
         provider: "ollama",
@@ -76,6 +77,7 @@ export async function discoverOllamaProfiles(opts: DiscoverOptions = {}): Promis
         baseUrl,
         roles: detectRoles(m.name),
         ...(goodAt.length > 0 ? { goodAt } : {}),
+        ...(notGoodAt.length > 0 ? { notGoodAt } : {}),
         cost: { type: "free" },
       };
     }
@@ -108,48 +110,93 @@ function isUsableForChat(m: OllamaModelEntry): boolean {
  * which keeps them as "neutral" in the router's sort (better than an anti-fit signal).
  */
 function inferGoodAt(name: string): string[] {
+  return Array.from(inferCapabilities(name).good);
+}
+
+/**
+ * Companion to inferGoodAt: returns task types the model is KNOWN to handle poorly.
+ * The router hard-filters these out — they stay visible in the GUI list (so the user can
+ * still pick them explicitly) but never enter the auto-route chain for those task types.
+ * Used by discovery + by `local-coder-first` preset to keep small / generic models out of
+ * code-review / refactor / plan chains.
+ */
+function inferNotGoodAt(name: string): string[] {
+  return Array.from(inferCapabilities(name).bad);
+}
+
+/**
+ * Single pass over the model name → produce both goodAt + notGoodAt sets. Keeping the
+ * heuristic in one place avoids drift between the two functions.
+ *
+ * Capability tiers by model name:
+ *  - small (<7B, "tiny", "small", "nano"): summarize + translate are fine. code-* + plan
+ *    are explicitly weak.
+ *  - mid 7B-13B general (not coder): no opinion either way (neutral).
+ *  - mid 7B-13B coder: code-generation + refactor are fine. code-review still risky →
+ *    notGoodAt (review needs more capability).
+ *  - large 14B+ coder (qwen-coder/deepseek-coder/codestral/...): goodAt all code-* + plan.
+ *  - large 14B+ general (llama-70b/mixtral/mistral-large): goodAt plan.
+ *  - Qwen / Yi / EXAONE: also tag "korean" (training corpus signal).
+ *
+ * Anything we can't classify is left empty (neutral) — better than a wrong tag.
+ */
+function inferCapabilities(name: string): { good: Set<string>; bad: Set<string> } {
   const lower = name.toLowerCase();
-  const tags = new Set<string>();
-  // Coder families — strong code generation/refactor/review across the board.
-  if (
+  const good = new Set<string>();
+  const bad = new Set<string>();
+
+  const isCoder =
     lower.includes("coder") ||
     lower.includes("codestral") ||
     lower.includes("codellama") ||
     lower.includes("deepseek-coder") ||
     lower.includes("starcoder") ||
     lower.includes("granite-code") ||
-    lower.includes("codeqwen")
-  ) {
-    tags.add("code-generation");
-    tags.add("refactor");
-    tags.add("code-review");
-  }
-  // Qwen / Yi / EXAONE — Korean+Chinese training corpora known to handle Korean well.
-  if (
+    lower.includes("codeqwen");
+
+  const isSmall = /\b(0\.5b|1b|1\.5b|2b|3b|4b|5b|tiny|small|nano)\b/.test(lower);
+  const isLarge =
+    /\b(70b|72b|405b|405)\b/.test(lower) ||
+    lower.includes("mistral-large") ||
+    lower.includes("mixtral") ||
+    /qwen.*(?:14b|22b|30b|32b|34b|72b)/.test(lower) ||
+    /\b(14b|22b|30b|32b|34b)\b/.test(lower);
+
+  const isKorean =
     lower.startsWith("qwen") ||
     lower.includes("qwen3") ||
     lower.includes("qwen2.5") ||
     lower.startsWith("yi") ||
-    lower.includes("exaone")
-  ) {
-    tags.add("korean");
+    lower.includes("exaone");
+
+  if (isCoder && isLarge) {
+    good.add("code-generation");
+    good.add("refactor");
+    good.add("code-review");
+    good.add("plan");
+  } else if (isCoder && !isSmall) {
+    // 7B–13B coder: capable of generation/refactor but code-review needs more.
+    good.add("code-generation");
+    good.add("refactor");
+    bad.add("code-review");
+  } else if (isLarge && !isCoder) {
+    // 70B-class generic — strong on plan, not specifically coder-tuned but capable.
+    good.add("plan");
   }
-  // Small / fast models — biased toward summarize/translate (cheaper for those).
-  // We only tag this for known-small variants to avoid mis-tagging large general models.
-  if (/\b(0\.5b|1b|1\.5b|3b|tiny|small|nano)\b/.test(lower)) {
-    tags.add("summarize");
-    tags.add("translate");
+
+  if (isSmall) {
+    good.add("summarize");
+    good.add("translate");
+    // Hard exclusion from coding chains. Better to escalate than ship 3B code work.
+    bad.add("code-generation");
+    bad.add("refactor");
+    bad.add("code-review");
+    bad.add("plan");
   }
-  // Strong general / planning models — Llama 3.x / Mistral-Large / Mixtral / Qwen 14B+.
-  if (
-    /\b(70b|72b|405b|405)\b/.test(lower) ||
-    lower.includes("mistral-large") ||
-    lower.includes("mixtral") ||
-    /qwen.*(?:14b|32b|30b|72b)/.test(lower)
-  ) {
-    tags.add("plan");
-  }
-  return Array.from(tags);
+
+  if (isKorean) good.add("korean");
+
+  return { good, bad };
 }
 
 /** Best-effort role tags based on model name. */

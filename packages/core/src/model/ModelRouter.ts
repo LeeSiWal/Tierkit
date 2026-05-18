@@ -43,15 +43,26 @@ function tierRank(t: ModelTier): number {
 }
 
 /**
- * goodAt-aware sort: profiles matching taskType first, then neutral (no goodAt), then anti-fit.
- * Declaration order breaks ties (Object.entries preserves insertion order on modern V8).
+ * goodAt-aware sort + notGoodAt hard filter. Profiles whose `notGoodAt` includes the
+ * current taskType are EXCLUDED from the chain entirely (not just demoted). The remaining
+ * profiles sort by goodAt match: fit first, then neutral (no goodAt), then anti-fit (has
+ * goodAt but taskType not in it). Declaration order breaks ties.
+ *
+ * Why hard-filter instead of just demoting: weak local models (e.g., llama3.2:3b) flagged
+ * with `notGoodAt: ["code-review"]` should NEVER be tried for a code-review task — better
+ * to escalate to private-remote than to ship a bad 3B-model review. The fallback walker
+ * would otherwise eventually reach them when stronger candidates fail.
  */
 function sortProfilesForTier(
   profiles: ModelProfileMap,
   tier: ModelTier,
   taskType: string,
 ): string[] {
-  const inTier = Object.entries(profiles).filter(([, p]) => p.kind === tier && p.enabled !== false);
+  const inTier = Object.entries(profiles).filter(([, p]) =>
+    p.kind === tier &&
+    p.enabled !== false &&
+    !(p.notGoodAt && p.notGoodAt.includes(taskType)),
+  );
   const rank = (p: ModelProfile): number => {
     if (!p.goodAt || p.goodAt.length === 0) return 1; // neutral
     if (p.goodAt.includes(taskType)) return 0;          // fit

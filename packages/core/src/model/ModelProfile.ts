@@ -36,6 +36,15 @@ export const ModelProfileSchema = z
     requiresApproval: z.boolean().optional(),
     defaultMode: z.enum(["execute", "review-only"]).optional(),
     goodAt: z.array(z.string().min(1)).optional(),
+    /**
+     * Task types this profile should NOT be considered for. Hard filter (not just sort
+     * deprioritization) — applied in ModelRouter.sortProfilesForTier. Used to keep weak
+     * models (e.g., llama3.2:3b) out of code-* chains even when they're the only local
+     * option available. When the filter empties a tier, escalation moves to the next tier
+     * (typically private-remote → cloud), which is what we want: better to escalate than
+     * to send code-review work to a 3B model.
+     */
+    notGoodAt: z.array(z.string().min(1)).optional(),
     enabled: z.boolean().optional(),
     cost: ModelCostSchema.optional(),
   })

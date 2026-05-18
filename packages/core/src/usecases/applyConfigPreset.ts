@@ -55,6 +55,11 @@ interface PresetDef {
    * don't match are untouched.
    */
   goodAtByModelPattern?: Array<{ pattern: RegExp; goodAt: string[] }>;
+  /**
+   * Same idea as goodAtByModelPattern but for notGoodAt — explicit exclusions for weak /
+   * tiny models so they stay out of code-* chains. The router hard-filters these.
+   */
+  notGoodAtByModelPattern?: Array<{ pattern: RegExp; notGoodAt: string[] }>;
 }
 
 const PRESETS: Record<string, PresetDef> = {
@@ -80,8 +85,27 @@ const PRESETS: Record<string, PresetDef> = {
     },
     goodAtByModelPattern: [
       {
-        pattern: /coder|codestral|codellama|starcoder|granite-code|codeqwen/i,
+        // 14B+ coder. Tagged as primary for code-* + plan.
+        pattern: /(?:coder|codestral|codellama|starcoder|granite-code|codeqwen).*(?:14b|22b|30b|32b|34b|70b|72b)/i,
         goodAt: ["code-generation", "refactor", "code-review", "plan"],
+      },
+      {
+        // Smaller coders — still goodAt code-generation + refactor but not review.
+        pattern: /coder|codestral|codellama|starcoder|granite-code|codeqwen/i,
+        goodAt: ["code-generation", "refactor"],
+      },
+    ],
+    notGoodAtByModelPattern: [
+      {
+        // < 7B and "tiny"/"small"/"nano" — never try for code-* / plan.
+        pattern: /\b(0\.5b|1b|1\.5b|2b|3b|4b|5b|tiny|small|nano)\b/i,
+        notGoodAt: ["code-generation", "refactor", "code-review", "plan"],
+      },
+      {
+        // Mid-size general models (7B-13B not coder) — code-review excluded.
+        // (Pattern: 7b/8b/9b/10b/11b/12b/13b that's NOT one of the coder families.)
+        pattern: /^(?!.*(?:coder|codestral|codellama|starcoder|granite-code|codeqwen)).*\b(7b|8b|9b|10b|11b|12b|13b)\b/i,
+        notGoodAt: ["code-review"],
       },
     ],
   },
@@ -165,20 +189,31 @@ export async function applyConfigPreset(input: ApplyPresetInput): Promise<ApplyP
   if (def.routing.budgetAwareDowngrade !== undefined) routing.budgetAwareDowngrade = def.routing.budgetAwareDowngrade;
   if (def.routing.responseQualityCheck !== undefined) routing.responseQualityCheck = def.routing.responseQualityCheck;
 
-  // Apply goodAt patterns to any existing profile whose model name matches. We only
-  // touch profiles already declared in the workspace config — discovery layer profiles
-  // are matched by discoverOllamaProfiles.ts's own inferGoodAt at load time.
-  const profilesUpdated: string[] = [];
-  if (def.goodAtByModelPattern && def.goodAtByModelPattern.length > 0) {
-    const profiles = raw.modelProfiles as Record<string, unknown>;
-    for (const [id, p] of Object.entries(profiles)) {
-      if (!p || typeof p !== "object") continue;
-      const profile = p as Record<string, unknown>;
-      const model = typeof profile.model === "string" ? profile.model : "";
+  // Apply goodAt + notGoodAt patterns to any existing profile whose model name matches.
+  // We only touch profiles already declared in the workspace config — discovery layer
+  // profiles are matched by discoverOllamaProfiles.ts's own inferCapabilities at load
+  // time. First-matching rule wins per dimension so finer patterns (large coder) come
+  // before coarser ones (any coder) in PRESETS.
+  const profilesUpdated = new Set<string>();
+  const profiles = raw.modelProfiles as Record<string, unknown>;
+  for (const [id, p] of Object.entries(profiles)) {
+    if (!p || typeof p !== "object") continue;
+    const profile = p as Record<string, unknown>;
+    const model = typeof profile.model === "string" ? profile.model : "";
+    if (def.goodAtByModelPattern) {
       for (const rule of def.goodAtByModelPattern) {
         if (rule.pattern.test(model)) {
           profile.goodAt = rule.goodAt;
-          profilesUpdated.push(id);
+          profilesUpdated.add(id);
+          break;
+        }
+      }
+    }
+    if (def.notGoodAtByModelPattern) {
+      for (const rule of def.notGoodAtByModelPattern) {
+        if (rule.pattern.test(model)) {
+          profile.notGoodAt = rule.notGoodAt;
+          profilesUpdated.add(id);
           break;
         }
       }
@@ -194,7 +229,7 @@ export async function applyConfigPreset(input: ApplyPresetInput): Promise<ApplyP
   const changes: ApplyPresetResult["changes"] = {};
   if (def.routing.riskThresholds) changes.riskThresholds = def.routing.riskThresholds;
   if (def.routing.autoEscalationCeiling) changes.autoEscalationCeiling = def.routing.autoEscalationCeiling;
-  if (profilesUpdated.length > 0) changes.profilesUpdated = profilesUpdated;
+  if (profilesUpdated.size > 0) changes.profilesUpdated = Array.from(profilesUpdated);
 
   return { name: input.name, path: targetPath, changes };
 }

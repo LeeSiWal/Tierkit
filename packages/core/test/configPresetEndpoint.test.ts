@@ -61,14 +61,17 @@ describe("POST /v1/config/preset", () => {
     expect(r.status).toBe(200);
     const body = await r.json() as { ok: boolean; changes: { profilesUpdated?: string[] } };
     expect(body.ok).toBe(true);
-    expect(body.changes.profilesUpdated).toContain("qwen3");          // coder pattern matches
-    expect(body.changes.profilesUpdated).not.toContain("llama");      // no coder in name
+    expect(body.changes.profilesUpdated).toContain("qwen3");          // coder pattern matches goodAt rule
+    expect(body.changes.profilesUpdated).toContain("llama");          // mid-size general → notGoodAt: [code-review]
 
     const written = JSON.parse(await fs.readFile(path.join(tmp, "tierkit.config.json"), "utf8")) as Record<string, any>;
     expect(written.routingPolicy.riskThresholds.localStrongMax).toBe(65);
     expect(written.routingPolicy.autoEscalationCeiling).toBe("public-cloud");
+    // Strong coder (30B) → all code-* + plan in goodAt.
     expect(written.modelProfiles.qwen3.goodAt).toEqual(["code-generation", "refactor", "code-review", "plan"]);
+    // Mid-size general (llama3:8b) → no goodAt (neutral), but notGoodAt excludes code-review.
     expect(written.modelProfiles.llama.goodAt).toBeUndefined();
+    expect(written.modelProfiles.llama.notGoodAt).toEqual(["code-review"]);
   });
 
   it("private-only sets ceiling to private-remote + lifts thresholds for local", async () => {

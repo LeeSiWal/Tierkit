@@ -37,22 +37,27 @@ describe("discoverOllamaProfiles + inferGoodAt", () => {
     expect(p.goodAt).toContain("plan"); // 30b → plan tag
   });
 
-  it("tags DeepSeek-Coder with code-* (but not korean — DeepSeek isn't Korean-strong)", async () => {
+  it("tags mid-size DeepSeek-Coder (6.7B) with code-generation+refactor only; code-review is notGoodAt (needs bigger model)", async () => {
     const r = await discoverWithModels(["deepseek-coder:6.7b"]);
     const p = r["ollama-deepseek-coder-6-7b"];
     expect(p).toBeDefined();
     expect(p.goodAt).toContain("code-generation");
     expect(p.goodAt).toContain("refactor");
-    expect(p.goodAt).toContain("code-review");
+    expect(p.goodAt).not.toContain("code-review");      // explicit notGoodAt for mid-size
+    expect(p.notGoodAt).toContain("code-review");
     expect(p.goodAt).not.toContain("korean");
   });
 
-  it("tags small models with summarize/translate", async () => {
+  it("tags small models (3B) with summarize/translate AND notGoodAt for all code-* / plan", async () => {
     const r = await discoverWithModels(["llama3.2:3b"]);
     const p = r["ollama-llama3-2-3b"];
     expect(p).toBeDefined();
     expect(p.goodAt).toContain("summarize");
     expect(p.goodAt).toContain("translate");
+    expect(p.notGoodAt).toContain("code-generation");
+    expect(p.notGoodAt).toContain("refactor");
+    expect(p.notGoodAt).toContain("code-review");
+    expect(p.notGoodAt).toContain("plan");
   });
 
   it("tags 70B-class models with plan", async () => {
