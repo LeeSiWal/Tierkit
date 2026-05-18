@@ -4,7 +4,7 @@ Tierkit is a local-first hybrid plugin runtime for AI coding agents.
 
 It lets you write one plugin format and adapt it to tools like Cline, Zoo/Roo Code, and Continue — while routing work across local models, private remote models, and public cloud models based on risk, cost, and workflow policy.
 
-> Status: **v0.3.3.** Tool-shim for weak local models, plugin-rule system-prompt injection, profile viability pre-flighting, mission-control sidebar, OpenAI-compatible endpoint for Roo/Cline/Continue/aider/etc. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
+> Status: **v0.3.4.** Adds model management UI (add/delete profiles, paste API keys from the GUI), Gemini preset, cross-tier auto-fallback (local → private-remote → public-cloud), response quality evaluator (retries on refusal/empty/truncated/repetition), task-type classifier + per-profile `goodAt[]`, and budget-aware downgrade. Prior: tool-shim for weak local models, plugin-rule system-prompt injection, profile viability pre-flighting, mission-control sidebar, OpenAI-compatible endpoint for Roo/Cline/Continue/aider/etc. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
 
 > 🇰🇷 **한글 안내**
 > - 빠른 시작: 아래 [한국어 안내](#한국어-안내) 섹션
@@ -81,6 +81,14 @@ node packages/cli/dist/index.js plugin remove superpowers-free
 #   GET  /v1/models                   ← list configured profiles
 #   POST /v1/models/test              { profileId }      ← probe reachability + model availability
 #   GET  /v1/plugins                  ← list installed plugins
+#
+# v0.3.4 — model management + auto-fallback endpoints
+#   GET    /v1/secrets                ← list env-var keys + masked previews (never plaintext)
+#   POST   /v1/secrets                { key, value }   ← paste an API key from the GUI; persisted under .tierkit/secrets.json (mode 0600, .gitignore'd) and injected into process.env
+#   DELETE /v1/secrets/:key           ← remove a key the GUI stored (shell-env values are never touched)
+#   POST   /v1/config/profile         { id, profile, scope? }   ← add a model profile from the GUI
+#   DELETE /v1/config/profile/:id     ← remove a profile
+#   PATCH  /v1/config/routing         { autoEscalationCeiling?, budgetAwareDowngrade?, responseQualityCheck? }
 
 # Browser GUI — once `tierkit runtime start` is up:
 #   open http://127.0.0.1:4101/       # run tasks, drive sessions, watch usage, no terminal
@@ -129,11 +137,14 @@ See [docs/SPEC.md](docs/SPEC.md) for the full design specification — positioni
 **Tierkit**은 AI 코딩 에이전트(Roo Code · Cline · Continue · aider 등)를 위한 **로컬 우선 정책·라우팅 레이어**입니다. 에이전트를 대체하지 않고 그 **뒤에 깔려서** 모든 모델 호출을 가로채:
 
 - **위험도·비용에 따라 모델 자동 라우팅** (작은 일은 로컬 무료, 큰 일은 클라우드)
+- **Tier 간 자동 fallback** (local 실패 → private-remote → public-cloud, ceiling 설정 가능)
+- **응답 품질 평가 + 자동 재시도** (거부/빈 응답/잘림/반복-루프 감지)
 - **시크릿 자동 마스킹** 후 원격 호출
 - **위험 명령(`rm -rf` 등) 사전 차단**
-- **예산·세션 게이트** (strict는 plan 승인 후만 execute)
+- **예산·세션 게이트** (strict는 plan 승인 후만 execute, budget 80% 이상 시 자동 다운그레이드)
 - **활성 Tierkit 플러그인의 룰** 자동으로 system prompt에 주입
 - **OpenAI 구조화 tool calling을 약한 로컬 모델에서도 작동**시키는 자동 shim (XML 태그/JSON 변환)
+- **GUI에서 API 키 직접 입력** (Claude / ChatGPT / Gemini 모두 OK, 키는 `.tierkit/secrets.json`에 0600으로 저장)
 
 한 번 작성한 Tierkit 플러그인을 활성화하면 모든 연결된 도구에 자동 동기화돼서 일관된 행동.
 
@@ -214,20 +225,44 @@ Roo → Tierkit → [라우팅 → viability 체크 → shim → 룰 주입 → 
 
 Tierkit 사이드바 **"최근 활동"** 카드에 호출이 실시간으로 등장 → 연동 정상 확인.
 
-## 클라우드 모델 쓰기 (Anthropic / OpenAI)
+## 클라우드 모델 쓰기 (Claude / ChatGPT / Gemini)
 
-도구 호출 100% 신뢰성을 원하면:
+**v0.3.4부터:** GUI에서 직접 키를 붙여넣을 수 있습니다 (셸 환경변수 export 불필요).
+
+사이드바 → **Model profiles** 카드 → `+ Add` → provider 선택 (`anthropic` / `openai` / `gemini` / `ollama`) → `API key value` 필드에 키 붙여넣기 → 저장. 키는 `.tierkit/secrets.json`에 `0600` 권한으로 저장되고 자동으로 `.gitignore`에 추가됩니다.
+
+이미 등록된 profile 옆에 ⚠ API key not set이 보이면 `[Set key]` 버튼으로 인라인 입력. 별도 **API Keys** 서브섹션에서 키 일괄 관리(보기/삭제).
+
+또는 기존 방식대로 셸 환경변수도 여전히 동작:
 
 ```bash
-# 환경변수 설정
-export ANTHROPIC_API_KEY="sk-ant-..."
-# 또는
-export OPENAI_API_KEY="sk-..."
+export ANTHROPIC_API_KEY="sk-ant-..."   # Claude
+export OPENAI_API_KEY="sk-..."          # ChatGPT
+export GEMINI_API_KEY="..."             # Google Gemini (OpenAI-compat 엔드포인트 사용)
 ```
 
-그 셸에서 VS Code를 다시 열어 (`code .`) 환경변수 상속. Tierkit이 자동으로 `claudeSonnet`/`claudeHaiku`/`gpt4o` 프로파일을 viable로 인식. Roo의 Model ID를 `claudeHaiku` (싸고 빠름) 또는 `claudeSonnet`으로 변경.
+셸 env가 있으면 셸 env가 우선합니다. 둘 다 동작.
 
-`auto`로 두면 Tierkit이 task 위험도에 따라 자동 선택 — 작은 일은 로컬, 큰 일은 클라우드.
+Roo의 Model ID에 `claudeHaiku`(싸고 빠름) / `claudeSonnet` / `gpt4o` / 추가한 Gemini profile id를 지정하거나, **`auto`** 로 두면 Tierkit이 자동 선택.
+
+### 자동 라우팅 + fallback (v0.3.4)
+
+`model: "auto"` 호출에서 Tierkit이 다음을 자동으로 수행합니다:
+
+1. **Task 분류** — 메시지에서 task type 감지 (`code-review`, `refactor`, `summarize`, `translate`, `plan`, `code-generation`, `general`)
+2. **Tier 결정** — 위험도 점수로 시작 tier 결정 (local-device / private-remote / public-cloud)
+3. **Escalation chain 구성** — 시작 tier부터 ceiling(기본 `public-cloud`)까지 viable profile을 순서대로 나열. 같은 tier 안에서는 profile의 `goodAt: [...]` 배열에 현재 task type이 들어있는 것을 먼저
+4. **Viability pre-flight** — 죽은 후보 자동 제거 (ollama 미설치, API 키 없음 등)
+5. **Budget-aware downgrade** — 일일 예산 80% 이상 소진 시 primary tier를 한 단계 낮춤. 100% 도달 시 public-cloud 후보 제거
+6. **Walker + 품질 평가** — 후보를 순서대로 호출. 실패 시 다음 후보. 응답이 거부(`I cannot…`/`할 수 없습니다`)/비어있음/잘림/반복-루프이면 transient failure로 취급하고 다음 후보로
+
+GUI **Model profiles** 카드 상단 `Auto-escalation up to [public-cloud ▼]` 드롭다운으로 ceiling 즉시 변경 가능 (`local-device`로 두면 fallback 비활성, `private-remote`로 두면 과금 API 절대 자동 호출 안 함).
+
+각 profile 폼에 `Good at (comma-separated)` 필드로 capability 선언:
+```
+code-review, korean, summarize
+```
+같은 tier에서 task type이 일치하는 profile이 우선 선택됩니다.
 
 ## 사이드바 미션 컨트롤 (사용 중 보이는 것)
 
@@ -254,8 +289,17 @@ export OPENAI_API_KEY="sk-..."
 │   localCoder    24 · $0.00              │
 ├─────────────────────────────────────────┤
 │ 모델 프로파일                        [+ 추가]│
-│   localCoder    ollama · qwen2.5-…  test │
-│   claudeSonnet  anthropic · ⚠ key   test │
+│   Auto-escalation up to [public-cloud ▼] │
+│   localCoder    ollama · qwen2.5-…       │
+│                              [test] [삭제]│
+│   claudeSonnet  anthropic · claude-…     │
+│      ⚠ API key not set [Set key]         │
+│                              [test] [삭제]│
+│   geminiFast   openai · gemini-2.0-flash │
+│                              [test] [삭제]│
+│ ── API Keys ──                           │
+│   ANTHROPIC_API_KEY  ⚠ not set    [Set]  │
+│   GEMINI_API_KEY     sk-ai-…xyz4  [삭제]  │
 └─────────────────────────────────────────┘
 ```
 
