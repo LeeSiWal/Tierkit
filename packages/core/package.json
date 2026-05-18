@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/core",
-  "version": "0.10.6",
+  "version": "0.10.7",
   "description": "Tierkit core: plugin format, validator, loader, model profiles, adapter interface, usecases. Tool- and CLI-framework-agnostic.",
   "license": "MIT",
   "type": "module",

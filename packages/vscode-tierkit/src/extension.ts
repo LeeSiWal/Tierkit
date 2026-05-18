@@ -139,18 +139,33 @@ function makeClient(): TierkitClient {
 }
 
 /**
- * Probe `${url}/v1/health`. Returns true only if a Tierkit-shaped response comes back —
- * that protects against accidentally adopting some unrelated service on the same port.
+ * Probe `${url}/v1/health` and return the daemon's reported version. Null when the URL
+ * doesn't respond with a Tierkit-shaped health payload (so the caller can treat that as
+ * "no daemon here"). Used by maybeStartDaemon to decide whether to adopt an existing
+ * daemon or start a fresh one.
  */
-async function isTierkitDaemonAt(url: string): Promise<boolean> {
+async function probeTierkitDaemonAt(url: string): Promise<{ version: string } | null> {
   try {
     const res = await fetch(`${url}/v1/health`, { signal: AbortSignal.timeout(800) });
-    if (!res.ok) return false;
+    if (!res.ok) return null;
     const body = (await res.json()) as { ok?: unknown; version?: unknown };
-    return Boolean(body?.ok && typeof body?.version === "string");
+    if (!body?.ok || typeof body?.version !== "string") return null;
+    return { version: body.version };
   } catch {
-    return false;
+    return null;
   }
+}
+
+/** The @tierkit/core version we ship with — used to decide whether to adopt an existing daemon. */
+function expectedDaemonVersion(): string {
+  try {
+    const req = createRequire(import.meta.url);
+    const corePkg = req("@tierkit/core/package.json") as { version?: string };
+    if (typeof corePkg.version === "string") return corePkg.version;
+  } catch {
+    /* fall through */
+  }
+  return "unknown";
 }
 
 /**
@@ -195,12 +210,26 @@ async function maybeStartDaemon(): Promise<void> {
 
   const configured = configBaseUrl();
   log(`auto-start: probing existing daemon at ${configured}`);
-  if (await isTierkitDaemonAt(configured)) {
-    effectiveBaseUrl = configured;
-    log(`auto-start: reusing existing daemon at ${configured}`);
-    sidebarRef?.render();
-    void refreshStatus();
-    return;
+  const existing = await probeTierkitDaemonAt(configured);
+  const expected = expectedDaemonVersion();
+  if (existing) {
+    // Reuse only when versions match. A stale daemon (from a previous extension session or
+    // a `tierkit runtime start` CLI in another terminal) at the configured port will
+    // silently shadow new endpoints (PATCH /v1/config/profile, /v1/secrets, /v1/plugins/
+    // generate, …) and the user thinks "nothing works". Better to skip the old daemon
+    // and start a fresh one on an OS-assigned port — the webview's effectiveBaseUrl
+    // points to the new one so the user always gets the version they installed.
+    if (existing.version === expected || expected === "unknown") {
+      effectiveBaseUrl = configured;
+      log(`auto-start: reusing existing daemon at ${configured} (version ${existing.version})`);
+      sidebarRef?.render();
+      void refreshStatus();
+      return;
+    }
+    log(
+      `auto-start: existing daemon at ${configured} is v${existing.version} but extension shipped with v${expected} — ` +
+        `NOT adopting; will start a fresh daemon on a free port instead.`,
+    );
   }
 
   const workspace = vscode.workspace.workspaceFolders?.[0];

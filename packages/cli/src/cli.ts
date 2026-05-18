@@ -39,7 +39,7 @@ export function buildCli(): Cli<CliContext> {
   const cli = new Cli<CliContext>({
     binaryLabel: "Tierkit",
     binaryName: "tierkit",
-    binaryVersion: "0.10.6",
+    binaryVersion: "0.10.7",
   });
 
   cli.register(Builtins.HelpCommand);
