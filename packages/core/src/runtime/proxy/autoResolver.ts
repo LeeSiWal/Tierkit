@@ -32,10 +32,7 @@ const TIER_DOWN: Record<ModelTier, ModelTier | null> = {
 export async function resolveAutoCandidates(
   input: AutoResolveInput,
 ): Promise<AutoResolveResult> {
-  const cfg = await loadConfig(input.cwd, {
-    includeBundled: false,
-    homeDirOverride: input.cwd, // isolate from real ~/.tierkit in tests
-  });
+  const cfg = await loadConfig(input.cwd);
   const taskType = classifyTask(input.lastUserMessage);
   const policy = cfg.config.routingPolicy;
 

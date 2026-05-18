@@ -5,9 +5,12 @@ import path from "node:path";
 import { resolveAutoCandidates } from "../src/runtime/proxy/autoResolver.js";
 
 let tmp: string;
+let originalHome: string | undefined;
 
 beforeEach(async () => {
   tmp = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-autoresolver-"));
+  originalHome = process.env.HOME;
+  process.env.HOME = tmp; // isolate from real ~/.tierkit in tests
   await fs.writeFile(
     path.join(tmp, "tierkit.config.json"),
     JSON.stringify({
@@ -30,6 +33,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  if (originalHome !== undefined) process.env.HOME = originalHome;
+  else delete process.env.HOME;
   if (tmp) await fs.rm(tmp, { recursive: true, force: true });
 });
 
