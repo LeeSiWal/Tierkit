@@ -4,7 +4,7 @@ Tierkit is a local-first hybrid plugin runtime for AI coding agents.
 
 It lets you write one plugin format and adapt it to tools like Cline, Zoo/Roo Code, and Continue — while routing work across local models, private remote models, and public cloud models based on risk, cost, and workflow policy.
 
-> Status: **v0.3.4.** Adds model management UI (add/delete profiles, paste API keys from the GUI), Gemini preset, cross-tier auto-fallback (local → private-remote → public-cloud), response quality evaluator (retries on refusal/empty/truncated/repetition), task-type classifier + per-profile `goodAt[]`, and budget-aware downgrade. Prior: tool-shim for weak local models, plugin-rule system-prompt injection, profile viability pre-flighting, mission-control sidebar, OpenAI-compatible endpoint for Roo/Cline/Continue/aider/etc. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
+> Status: **v0.3.5.** Adds LLM-generated plugins (describe a plugin in natural language → Tierkit auto-routes the description through an LLM → previews a manifest + rule files → one-click install). v0.3.4: model management UI (add/delete profiles, paste API keys from the GUI), Gemini preset, cross-tier auto-fallback (local → private-remote → public-cloud), response quality evaluator (retries on refusal/empty/truncated/repetition), task-type classifier + per-profile `goodAt[]`, and budget-aware downgrade. Prior: tool-shim for weak local models, plugin-rule system-prompt injection, profile viability pre-flighting, mission-control sidebar, OpenAI-compatible endpoint for Roo/Cline/Continue/aider/etc. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
 
 > 🇰🇷 **한글 안내**
 > - 빠른 시작: 아래 [한국어 안내](#한국어-안내) 섹션
@@ -89,6 +89,10 @@ node packages/cli/dist/index.js plugin remove superpowers-free
 #   POST   /v1/config/profile         { id, profile, scope? }   ← add a model profile from the GUI
 #   DELETE /v1/config/profile/:id     ← remove a profile
 #   PATCH  /v1/config/routing         { autoEscalationCeiling?, budgetAwareDowngrade?, responseQualityCheck? }
+#
+# v0.3.5 — LLM-generated plugins
+#   POST   /v1/plugins/generate       { description }   ← Tierkit auto-routes the description through an LLM, validates the response, stashes a draft in .tierkit/runtime/plugin-drafts/<uuid>/
+#   POST   /v1/plugins/generate/install { draftId, enable? }   ← promote a draft to an installed plugin; optionally enable
 
 # Browser GUI — once `tierkit runtime start` is up:
 #   open http://127.0.0.1:4101/       # run tasks, drive sessions, watch usage, no terminal
@@ -145,6 +149,7 @@ See [docs/SPEC.md](docs/SPEC.md) for the full design specification — positioni
 - **활성 Tierkit 플러그인의 룰** 자동으로 system prompt에 주입
 - **OpenAI 구조화 tool calling을 약한 로컬 모델에서도 작동**시키는 자동 shim (XML 태그/JSON 변환)
 - **GUI에서 API 키 직접 입력** (Claude / ChatGPT / Gemini 모두 OK, 키는 `.tierkit/secrets.json`에 0600으로 저장)
+- **자연어로 플러그인 생성** — "TDD 우선 Python 플러그인" 같은 설명을 사이드바에 적으면 LLM이 매니페스트+룰 파일 생성, 미리보기 후 원-클릭 설치
 
 한 번 작성한 Tierkit 플러그인을 활성화하면 모든 연결된 도구에 자동 동기화돼서 일관된 행동.
 
@@ -264,6 +269,34 @@ code-review, korean, summarize
 ```
 같은 tier에서 task type이 일치하는 profile이 우선 선택됩니다.
 
+## 자연어로 플러그인 만들기 (v0.3.5)
+
+사이드바 → **Active plugins** 카드 → `+ Describe & generate` 버튼:
+
+```
+원하는 플러그인을 설명하세요
+┌────────────────────────────────────┐
+│ Python 프로젝트용 TDD-first 플러그인.│
+│ 구현 전에 항상 실패하는 pytest 테스트│
+│ 를 먼저 작성하게 함. 작은 커밋 선호. │
+└────────────────────────────────────┘
+[취소]  [생성 →]
+```
+
+`생성 →` 클릭 시 Tierkit이 `auto` 라우팅으로 LLM 호출(현재 escalation chain의 첫 viable 모델 — 로컬 우선, 필요 시 자동 escalation). 응답이 도착하면 미리보기:
+
+- 매니페스트 메타데이터 (id, name, version, freedom level)
+- 각 룰 파일 (펼침/접힘 코드 블록)
+- 어떤 모델이 생성했는지 표시
+
+`[설치만]` / `[설치 + 활성화]` / `[취소]` 중 선택. 설치 후 plugins 리스트 자동 갱신.
+
+**동작 원리:**
+- 응답은 JSON으로 파싱 → `PluginManifestSchema` Zod 검증 → 검증 실패 시 LLM에 1회 재시도 (이전 응답과 에러 메시지 첨부)
+- 모든 draft는 `.tierkit/runtime/plugin-drafts/<uuid>/`에 저장 — 사용자가 install 클릭 전까지 어디에도 영향 없음
+- 룰 파일명은 `^[0-9a-z][0-9a-z._-]*\.md$` 패턴만 허용 (path traversal 방어)
+- 0개 룰 / 41자 이상 id 등 빈약한 결과 자동 거부
+
 ## 사이드바 미션 컨트롤 (사용 중 보이는 것)
 
 ```
@@ -275,7 +308,7 @@ code-review, korean, summarize
 │   cline     미설치              [연결]    │
 │   continue  Tierkit으로 라우팅됨           │
 ├─────────────────────────────────────────┤
-│ 활성 플러그인                       [+ 새 플러그인]│
+│ 활성 플러그인  [+ 새 플러그인] [+ 설명으로 만들기]│
 │   ▣ superpowers-balanced   guided  [비활성]│
 ├─────────────────────────────────────────┤
 │ 최근 활동                       (5초마다 갱신)│
