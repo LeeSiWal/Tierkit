@@ -1063,12 +1063,49 @@ git commit -m "feat(gui): API Keys subsection + paste-key dialog (writes to /v1/
 
 ---
 
-## Task 10: GUI — optional API-key input in add-profile form
+## Task 10: GUI — optional API-key input in add-profile form + Gemini preset
 
 **Files:**
 - Modify: `packages/core/src/runtime/ui/gui.ts`
 
-- [ ] **Step 1: Extend the add-profile form**
+- [ ] **Step 0: Add `gemini` preset to the PROVIDERS map**
+
+In `gui.ts`, in the `$('btn-profile-add').onclick` handler at ~line 1320, the `PROVIDERS` object currently has 3 entries (`anthropic`, `openai`, `ollama`). Add a 4th, `gemini`, that uses the OpenAI-compatible endpoint Google publishes. Replace:
+
+```javascript
+    const PROVIDERS = {
+      anthropic: { kind: 'private-remote', apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrl: '', model: 'claude-sonnet-4-6', idHint: 'claudeCustom' },
+      openai:    { kind: 'public-cloud',   apiKeyEnv: 'OPENAI_API_KEY',    baseUrl: '', model: 'gpt-4o', idHint: 'gptCustom' },
+      ollama:    { kind: 'local-device',   apiKeyEnv: '',                  baseUrl: 'http://127.0.0.1:11434', model: 'qwen2.5-coder:7b', idHint: 'localCustom' },
+    };
+```
+
+with:
+
+```javascript
+    const PROVIDERS = {
+      anthropic: { kind: 'private-remote', apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrl: '', model: 'claude-sonnet-4-6', idHint: 'claudeCustom', backendProvider: 'anthropic' },
+      openai:    { kind: 'public-cloud',   apiKeyEnv: 'OPENAI_API_KEY',    baseUrl: '', model: 'gpt-4o', idHint: 'gptCustom', backendProvider: 'openai' },
+      gemini:    { kind: 'public-cloud',   apiKeyEnv: 'GEMINI_API_KEY',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-2.0-flash', idHint: 'geminiCustom', backendProvider: 'openai' },
+      ollama:    { kind: 'local-device',   apiKeyEnv: '',                  baseUrl: 'http://127.0.0.1:11434', model: 'qwen2.5-coder:7b', idHint: 'localCustom', backendProvider: 'ollama' },
+    };
+```
+
+Then update the provider tab button list. Find:
+
+```javascript
+            ['anthropic', 'openai', 'ollama'].map((p) =>
+```
+
+Replace with:
+
+```javascript
+            ['anthropic', 'openai', 'gemini', 'ollama'].map((p) =>
+```
+
+And update the cloud-providers' base URL handling — for `gemini` we DO want to show the baseUrl field (so users can override if they're on Vertex AI, etc.) AND the apiKeyEnv field AND the API key value field. The current ternary only shows baseUrl for local providers. Find `(isLocal` and replace the whole ternary block (Step 1 below shows the new shape including the value input).
+
+- [ ] **Step 1: Extend the add-profile form (apiKey value + always-show baseUrl)**
 
 In `gui.ts`, find `$('btn-profile-add').onclick` (around line 1317). In the `render(provider)` function inside it (around line 1326), the `host.innerHTML` template currently shows the apiKeyEnv field for non-local providers. Modify the `(isLocal ? ... : ...)` ternary to ALSO add the value input. Replace:
 
@@ -1089,7 +1126,11 @@ with:
               : '<label>' + escapeHtml(i18n.apiKeyLabel) + '</label>' +
                 '<input id="pa-apiKey" value="' + escapeHtml(tpl.apiKeyEnv) + '" />' +
                 '<label>' + escapeHtml(i18n.apiKeyValueLabel) + '</label>' +
-                '<input id="pa-apiKeyValue" type="password" placeholder="' + escapeHtml(i18n.apiKeyValuePlaceholder) + '" />') +
+                '<input id="pa-apiKeyValue" type="password" placeholder="' + escapeHtml(i18n.apiKeyValuePlaceholder) + '" />' +
+                (tpl.baseUrl
+                  ? '<label>' + escapeHtml(i18n.baseUrlLabel) + '</label>' +
+                    '<input id="pa-baseUrl" value="' + escapeHtml(tpl.baseUrl) + '" />'
+                  : '')) +
 ```
 
 - [ ] **Step 2: Save handler — POST /v1/secrets first if value is provided**
@@ -1110,7 +1151,7 @@ Still inside `render(provider)`, find `$('pa-save').onclick = async () => { ... 
           const secResp = await jpost('/v1/secrets', { key: apiKeyEnv, value: apiKeyValue });
           if (!secResp.ok) { toast((secResp.data && secResp.data.message) || i18n.failed, 'err'); return; }
         }
-        const profile = { kind: tpl.kind, provider, model, roles: [] };
+        const profile = { kind: tpl.kind, provider: tpl.backendProvider || provider, model, roles: [] };
         if (apiKeyEnv) profile.apiKeyEnv = apiKeyEnv;
         if (baseUrl) profile.baseUrl = baseUrl;
         if (tpl.kind === 'public-cloud') { profile.requiresApproval = true; profile.defaultMode = 'review-only'; }
@@ -1133,11 +1174,13 @@ Expected:
 
 Click `[test]` on the new profile — if the key is real, it should pass; if fake, the failure is from Anthropic, not from "missing-api-key".
 
+Then repeat for `gemini` preset: click `+ Add` → pick `gemini` → `id=geminiTest`, `model=gemini-2.0-flash`, `API key env=GEMINI_API_KEY`, paste a Google AI Studio key. The `Base URL` field should be pre-filled with `https://generativelanguage.googleapis.com/v1beta/openai/`. Save → row should appear with `(public-cloud)` and `openai · gemini-2.0-flash` (provider is `openai` since we use the OpenAI-compat endpoint; the `gemini` choice is just a GUI preset).
+
 - [ ] **Step 4: Commit**
 
 ```bash
 git add packages/core/src/runtime/ui/gui.ts
-git commit -m "feat(gui): add-profile form accepts an optional API key value (stores via /v1/secrets)"
+git commit -m "feat(gui): add-profile form accepts API key value + Gemini preset (OpenAI-compat endpoint)"
 ```
 
 ---
