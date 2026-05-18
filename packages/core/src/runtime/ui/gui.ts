@@ -1451,9 +1451,10 @@ export const GUI_HTML = `<!doctype html>
     const host = $('profile-add-form');
     host.style.display = 'block';
     const PROVIDERS = {
-      anthropic: { kind: 'private-remote', apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrl: '', model: 'claude-sonnet-4-6', idHint: 'claudeCustom' },
-      openai:    { kind: 'public-cloud',   apiKeyEnv: 'OPENAI_API_KEY',    baseUrl: '', model: 'gpt-4o', idHint: 'gptCustom' },
-      ollama:    { kind: 'local-device',   apiKeyEnv: '',                  baseUrl: 'http://127.0.0.1:11434', model: 'qwen2.5-coder:7b', idHint: 'localCustom' },
+      anthropic: { kind: 'private-remote', apiKeyEnv: 'ANTHROPIC_API_KEY', baseUrl: '', model: 'claude-sonnet-4-6', idHint: 'claudeCustom', backendProvider: 'anthropic' },
+      openai:    { kind: 'public-cloud',   apiKeyEnv: 'OPENAI_API_KEY',    baseUrl: '', model: 'gpt-4o', idHint: 'gptCustom', backendProvider: 'openai' },
+      gemini:    { kind: 'public-cloud',   apiKeyEnv: 'GEMINI_API_KEY',    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/', model: 'gemini-2.0-flash', idHint: 'geminiCustom', backendProvider: 'openai' },
+      ollama:    { kind: 'local-device',   apiKeyEnv: '',                  baseUrl: 'http://127.0.0.1:11434', model: 'qwen2.5-coder:7b', idHint: 'localCustom', backendProvider: 'ollama' },
     };
 
     function render(provider) {
@@ -1462,7 +1463,7 @@ export const GUI_HTML = `<!doctype html>
       host.innerHTML =
         '<div class="inline-form">' +
           '<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">' +
-            ['anthropic', 'openai', 'ollama'].map((p) =>
+            ['anthropic', 'openai', 'gemini', 'ollama'].map((p) =>
               '<button data-prov="' + p + '" style="' + (p === provider ? 'background:var(--accent);color:#0f1115;border-color:var(--accent)' : '') + '">' + p + '</button>'
             ).join('') +
           '</div>' +
@@ -1475,7 +1476,13 @@ export const GUI_HTML = `<!doctype html>
               ? '<label>' + escapeHtml(i18n.baseUrlLabel) + '</label>' +
                 '<input id="pa-baseUrl" value="' + escapeHtml(tpl.baseUrl) + '" />'
               : '<label>' + escapeHtml(i18n.apiKeyLabel) + '</label>' +
-                '<input id="pa-apiKey" value="' + escapeHtml(tpl.apiKeyEnv) + '" />') +
+                '<input id="pa-apiKey" value="' + escapeHtml(tpl.apiKeyEnv) + '" />' +
+                '<label>' + escapeHtml(i18n.apiKeyValueLabel) + '</label>' +
+                '<input id="pa-apiKeyValue" type="password" placeholder="' + escapeHtml(i18n.apiKeyValuePlaceholder) + '" />' +
+                (tpl.baseUrl
+                  ? '<label>' + escapeHtml(i18n.baseUrlLabel) + '</label>' +
+                    '<input id="pa-baseUrl" value="' + escapeHtml(tpl.baseUrl) + '" />'
+                  : '')) +
             '<label>' + escapeHtml(i18n.scopeLabel) + '</label>' +
             '<select id="pa-scope">' +
               '<option value="workspace">' + escapeHtml(i18n.scopeWorkspace) + '</option>' +
@@ -1495,15 +1502,21 @@ export const GUI_HTML = `<!doctype html>
         const id = ($('pa-id').value || '').trim();
         const model = ($('pa-model').value || '').trim();
         const scope = $('pa-scope').value;
-        const apiKey = $('pa-apiKey') ? $('pa-apiKey').value.trim() : '';
+        const apiKeyEnv = $('pa-apiKey') ? $('pa-apiKey').value.trim() : '';
+        const apiKeyValue = $('pa-apiKeyValue') ? $('pa-apiKeyValue').value.trim() : '';
         const baseUrl = $('pa-baseUrl') ? $('pa-baseUrl').value.trim() : '';
         if (!id || !model) { toast('id + model required', 'err'); return; }
-        const profile = { kind: tpl.kind, provider, model, roles: [] };
-        if (apiKey) profile.apiKeyEnv = apiKey;
+        if (apiKeyValue) {
+          if (!apiKeyEnv) { toast('API key env name required when value is set', 'err'); return; }
+          const secResp = await jpost('/v1/secrets', { key: apiKeyEnv, value: apiKeyValue });
+          if (!secResp.ok) { toast((secResp.data && secResp.data.message) || i18n.failed, 'err'); return; }
+        }
+        const profile = { kind: tpl.kind, provider: tpl.backendProvider || provider, model, roles: [] };
+        if (apiKeyEnv) profile.apiKeyEnv = apiKeyEnv;
         if (baseUrl) profile.baseUrl = baseUrl;
         if (tpl.kind === 'public-cloud') { profile.requiresApproval = true; profile.defaultMode = 'review-only'; }
         const resp = await jpost('/v1/config/profile', { id, profile, scope });
-        if (!resp.ok) { toast(resp.data?.message || i18n.failed, 'err'); return; }
+        if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
         toast(id + ' ✓ ' + i18n.added, 'ok');
         host.style.display = 'none'; host.innerHTML = '';
         await refreshModels();
