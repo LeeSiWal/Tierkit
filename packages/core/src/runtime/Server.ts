@@ -142,7 +142,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       // treats as cross-origin relative to `http://localhost:4101`) get blocked by CORS
       // before the request even leaves the page.
       res.setHeader("access-control-allow-origin", "*");
-      res.setHeader("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("access-control-allow-methods", "GET, POST, DELETE, PATCH, OPTIONS");
       res.setHeader("access-control-allow-headers", "content-type, authorization");
       res.setHeader("access-control-max-age", "600");
       if (method === "OPTIONS") {
@@ -387,6 +387,37 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         } catch (err) {
           return sendJson(res, 500, { code: "config-load-failed", message: (err as Error).message });
         }
+      }
+
+      if (method === "PATCH" && url.pathname === "/v1/config/routing") {
+        const body = await readJsonBody<{
+          autoEscalationCeiling?: unknown;
+          budgetAwareDowngrade?: unknown;
+          responseQualityCheck?: unknown;
+        }>(req);
+        if (!body || typeof body !== "object") {
+          return sendJson(res, 400, { error: "request must be JSON object" });
+        }
+        const allowed = ["autoEscalationCeiling", "budgetAwareDowngrade", "responseQualityCheck"] as const;
+        const patch: Record<string, unknown> = {};
+        for (const k of allowed) {
+          if (k in body) patch[k] = (body as Record<string, unknown>)[k];
+        }
+        if (patch.autoEscalationCeiling !== undefined &&
+            !["local-device", "private-remote", "public-cloud"].includes(patch.autoEscalationCeiling as string)) {
+          return sendJson(res, 400, { error: "autoEscalationCeiling must be one of local-device|private-remote|public-cloud" });
+        }
+        for (const k of ["budgetAwareDowngrade", "responseQualityCheck"] as const) {
+          if (patch[k] !== undefined && typeof patch[k] !== "boolean") {
+            return sendJson(res, 400, { error: `${k} must be boolean` });
+          }
+        }
+        const configPath = path.join(opts.cwd, "tierkit.config.json");
+        const existing = JSON.parse(await fs.readFile(configPath, "utf8")) as Record<string, unknown>;
+        const rp = (existing.routingPolicy as Record<string, unknown>) ?? {};
+        existing.routingPolicy = { ...rp, ...patch };
+        await fs.writeFile(configPath, JSON.stringify(existing, null, 2));
+        return sendJson(res, 200, { ok: true, routingPolicy: existing.routingPolicy });
       }
 
       // ── Secrets management: GET/POST/DELETE /v1/secrets ──
