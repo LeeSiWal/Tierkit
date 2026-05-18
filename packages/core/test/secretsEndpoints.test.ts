@@ -108,3 +108,32 @@ describe("POST /v1/secrets", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("DELETE /v1/secrets/:key", () => {
+  it("removes a key set via POST", async () => {
+    const { baseUrl } = await bootServer();
+    await fetch(`${baseUrl}/v1/secrets`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ key: "OPENAI_API_KEY", value: "sk-ohai-1234567890xyz" }),
+    });
+    const del = await fetch(`${baseUrl}/v1/secrets/OPENAI_API_KEY`, { method: "DELETE" });
+    expect(del.status).toBe(200);
+    const body = (await del.json()) as { ok: boolean };
+    expect(body.ok).toBe(true);
+
+    const get = await fetch(`${baseUrl}/v1/secrets`);
+    const listed = (await get.json()) as { entries: Array<{ key: string; set: boolean }> };
+    const e = listed.entries.find((x) => x.key === "OPENAI_API_KEY");
+    expect(e?.set ?? false).toBe(false);
+  });
+
+  it("returns 400 with code=external when key came from shell env (not our store)", async () => {
+    const { baseUrl } = await bootServer({ ANTHROPIC_API_KEY: "sk-ant-fromshell12345" });
+    const r = await fetch(`${baseUrl}/v1/secrets/ANTHROPIC_API_KEY`, { method: "DELETE" });
+    expect(r.status).toBe(400);
+    const body = (await r.json()) as { ok: boolean; code?: string };
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe("external");
+  });
+});
