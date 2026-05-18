@@ -184,6 +184,13 @@ export {
   type InstallPluginInput,
   type InstallPluginResult,
 } from "./usecases/installPlugin.js";
+export {
+  generatePlugin,
+  PluginGenerateError,
+  type GeneratePluginInput,
+  type GeneratePluginResult,
+  type GeneratedRule,
+} from "./usecases/generatePlugin.js";
 export { listPlugins, type ListPluginsInput, type ListPluginsResult } from "./usecases/listPlugins.js";
 export {
   exportTarget,
