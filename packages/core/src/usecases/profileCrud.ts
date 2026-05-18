@@ -72,7 +72,11 @@ async function writeConfig(targetPath: string, config: TierkitConfig): Promise<v
 
 const PROFILE_ID_RE = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-/** Add or overwrite a profile in the target config file. Validates the profile schema. */
+/**
+ * Add or overwrite a profile in the target config file. Validates the new profile schema
+ * (but not the whole file — null entries from prior deletes must survive as suppression
+ * markers, and `TierkitConfigSchema` rejects nulls in `modelProfiles`).
+ */
 export async function addProfile(input: AddProfileInput): Promise<ProfileCrudResult> {
   const cwd = input.cwd ?? process.cwd();
   const scope = input.scope ?? "workspace";
@@ -81,9 +85,27 @@ export async function addProfile(input: AddProfileInput): Promise<ProfileCrudRes
   }
   const validated = ModelProfileSchema.parse(input.profile);
   const targetPath = resolveConfigPath(cwd, scope);
-  const config = await readConfigOrInit(targetPath);
-  config.modelProfiles[input.id] = validated;
-  await writeConfig(targetPath, config);
+
+  // Read raw so prior null suppressions are preserved. We deliberately do NOT pass through
+  // TierkitConfigSchema here because it would reject any null entry left by removeProfile.
+  let raw: Record<string, unknown> = {};
+  try {
+    const text = await fs.readFile(targetPath, "utf8");
+    raw = JSON.parse(text) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    raw = { version: "0.1" };
+  }
+  if (typeof raw.modelProfiles !== "object" || raw.modelProfiles === null) {
+    raw.modelProfiles = {};
+  }
+  (raw.modelProfiles as Record<string, unknown>)[input.id] = validated;
+
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const text = JSON.stringify(raw, null, 2) + "\n";
+  const tempPath = targetPath + ".tmp";
+  await fs.writeFile(tempPath, text, "utf8");
+  await fs.rename(tempPath, targetPath);
   return { path: targetPath, scope, id: input.id };
 }
 

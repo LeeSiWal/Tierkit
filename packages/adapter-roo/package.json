@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/adapter-roo",
-  "version": "0.10.2",
+  "version": "0.10.3",
   "description": "Tierkit adapter that exports plugins for Roo Code / Zoo Code (.roomodes + .roo/).",
   "license": "MIT",
   "type": "module",
