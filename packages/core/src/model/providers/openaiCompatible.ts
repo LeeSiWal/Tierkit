@@ -7,6 +7,41 @@ interface ModelsResponse {
   data?: { id: string }[];
 }
 
+/**
+ * Read the body of a non-2xx response and try to extract a human-readable reason. OpenAI
+ * and OpenAI-compatible APIs (Gemini's openai-compat endpoint, vLLM, etc.) typically return
+ * `{"error":{"message":"…"}}` or `{"error":"…"}`. We read the body once, try JSON, fall
+ * back to raw text. Returned string is short — caller decides how to format it.
+ *
+ * Why this matters: a bare "400 Bad Request" gives the user nothing to act on. Gemini's
+ * actual response for an unknown model is "Model gemini-3.1-flash-lite not found" — much
+ * more useful when surfaced.
+ */
+async function readErrorBody(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return "";
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: string } | string };
+      const e = parsed.error;
+      if (typeof e === "string") return e;
+      if (e && typeof e === "object" && typeof e.message === "string") return e.message;
+    } catch {
+      // not JSON — fall through to raw text
+    }
+    // Truncate raw HTML/text bodies (common when a misconfigured baseUrl hits a non-API
+    // endpoint). Keep enough to be useful but not flood the log/toast.
+    return text.length > 240 ? text.slice(0, 240) + "…" : text;
+  } catch {
+    return "";
+  }
+}
+
+function bad(status: number, statusText: string, body: string, provider: string): string {
+  const head = `${provider} responded with ${status} ${statusText}`;
+  return body ? `${head} — ${body}` : head;
+}
+
 type OpenAIWireContentPart =
   | { type: "text"; text: string }
   | { type: "image_url"; image_url: { url: string } };
@@ -108,7 +143,7 @@ export class OpenAICompatibleClient implements ProviderClient {
         return {
           ok: false,
           code: "bad-status",
-          message: `${profile.provider} responded with ${res.status} ${res.statusText}`,
+          message: bad(res.status, res.statusText, await readErrorBody(res), profile.provider),
           latencyMs,
           status: res.status,
         };
@@ -188,7 +223,7 @@ export class OpenAICompatibleClient implements ProviderClient {
         return {
           ok: false,
           code: "bad-status",
-          message: `${profile.provider} responded with ${res.status} ${res.statusText}`,
+          message: bad(res.status, res.statusText, await readErrorBody(res), profile.provider),
           latencyMs,
           status: res.status,
         };
@@ -292,7 +327,7 @@ export class OpenAICompatibleClient implements ProviderClient {
       yield {
         type: "error",
         code: "bad-status",
-        message: `${profile.provider} responded with ${res.status} ${res.statusText}`,
+        message: bad(res.status, res.statusText, await readErrorBody(res), profile.provider),
         latencyMs: Math.round(performance.now() - start),
         status: res.status,
       };

@@ -3,6 +3,34 @@ import type { ProbeResult, ProviderClient } from "./types.js";
 import type { ChatRequest, ChatResult, ChatMessage, StreamEvent, ToolDefinition, ToolCall } from "./chatTypes.js";
 import { iterSSE } from "./streamUtils.js";
 
+/**
+ * Read the body of a non-2xx response and try to extract a human-readable reason. Anthropic
+ * returns `{"type":"error","error":{"type":"...","message":"..."}}`. Fall back to raw text.
+ * Same shape as the helper in openaiCompatible.ts — kept local to avoid coupling.
+ */
+async function readErrorBody(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return "";
+    try {
+      const parsed = JSON.parse(text) as { error?: { message?: string } | string };
+      const e = parsed.error;
+      if (typeof e === "string") return e;
+      if (e && typeof e === "object" && typeof e.message === "string") return e.message;
+    } catch {
+      // not JSON
+    }
+    return text.length > 240 ? text.slice(0, 240) + "…" : text;
+  } catch {
+    return "";
+  }
+}
+
+function bad(status: number, statusText: string, body: string): string {
+  const head = `anthropic responded with ${status} ${statusText}`;
+  return body ? `${head} — ${body}` : head;
+}
+
 interface AnthropicSSEEvent {
   type?: string;
   index?: number;
@@ -156,7 +184,7 @@ export class AnthropicClient implements ProviderClient {
         return {
           ok: false,
           code: "bad-status",
-          message: `anthropic responded with ${res.status} ${res.statusText}`,
+          message: bad(res.status, res.statusText, await readErrorBody(res)),
           latencyMs,
           status: res.status,
         };
@@ -255,7 +283,7 @@ export class AnthropicClient implements ProviderClient {
         return {
           ok: false,
           code: "bad-status",
-          message: `anthropic responded with ${res.status} ${res.statusText}`,
+          message: bad(res.status, res.statusText, await readErrorBody(res)),
           latencyMs,
           status: res.status,
         };
@@ -381,7 +409,7 @@ export class AnthropicClient implements ProviderClient {
       yield {
         type: "error",
         code: "bad-status",
-        message: `anthropic responded with ${res.status} ${res.statusText}`,
+        message: bad(res.status, res.statusText, await readErrorBody(res)),
         latencyMs: Math.round(performance.now() - start),
         status: res.status,
       };
