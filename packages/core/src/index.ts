@@ -57,6 +57,10 @@ export {
   type ModelProfileMap,
   type ModelPolicy,
   type ModelCost,
+  // v0.12 additions:
+  PAYMENT_MODELS,
+  type PaymentModel,
+  effectivePaymentModel,
 } from "./model/ModelProfile.js";
 export {
   scoreRisk,

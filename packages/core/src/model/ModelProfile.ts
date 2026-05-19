@@ -25,9 +25,25 @@ export const ModelCostSchema = z.discriminatedUnion("type", [
 ]);
 export type ModelCost = z.infer<typeof ModelCostSchema>;
 
+export const PAYMENT_MODELS = ["free", "flat-rate", "per-token"] as const;
+export type PaymentModel = (typeof PAYMENT_MODELS)[number];
+
 export const ModelProfileSchema = z
   .object({
     kind: z.enum(MODEL_TIERS),
+    /**
+     * How this profile bills the user. Optional — if absent, derived from `kind`
+     * by effectivePaymentModel():
+     *   local-device   → "free"
+     *   private-remote → "free" (most are self-hosted)
+     *   public-cloud   → "per-token"
+     *
+     * Explicit override examples:
+     *   - Rented per-token private endpoint: kind: private-remote, paymentModel: "per-token"
+     *   - Claude Code CLI profile (v0.13):   kind: public-cloud, paymentModel: "flat-rate"
+     *   - Rented monthly GPU: kind: local-device or private-remote, paymentModel: "flat-rate"
+     */
+    paymentModel: z.enum(PAYMENT_MODELS).optional(),
     provider: z.string().min(1),
     baseUrl: z.string().url().optional(),
     model: z.string().min(1),
@@ -75,3 +91,24 @@ export const ModelPolicySchema = z
   .strict();
 
 export type ModelPolicy = z.infer<typeof ModelPolicySchema>;
+
+/**
+ * Derive the effective payment model from a profile.
+ * Explicit `profile.paymentModel` wins; otherwise infer from `kind`.
+ *
+ * "free" means zero marginal token cost from Tierkit's perspective — it may
+ * still involve hardware, electricity, or rental cost. See ModelProfile.ts
+ * JSDoc for the full semantic of each PaymentModel value.
+ */
+export function effectivePaymentModel(p: ModelProfile): PaymentModel {
+  if (p.paymentModel) return p.paymentModel;
+  switch (p.kind) {
+    case "local-device":   return "free";
+    case "private-remote": return "free";
+    case "public-cloud":   return "per-token";
+    default: {
+      const _exhaustive: never = p.kind;
+      return _exhaustive;
+    }
+  }
+}
