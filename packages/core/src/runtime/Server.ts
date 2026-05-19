@@ -7,6 +7,7 @@ import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
 import { loadConfig } from "../config/loadConfig.js";
+import { TIERKIT_VERSION } from "../version.js";
 import { readUsage, summarizeUsage } from "./usageLog.js";
 import { checkBudget } from "./budget.js";
 import { executeLlmCall, type LlmCallRequest } from "./proxy/llmCall.js";
@@ -106,7 +107,7 @@ export interface RunningServer {
   close(): Promise<void>;
 }
 
-const VERSION = "0.11.0";
+const VERSION = TIERKIT_VERSION;
 
 /**
  * Start the Tierkit runtime HTTP daemon. Returns once the server is listening.

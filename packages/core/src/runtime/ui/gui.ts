@@ -23,8 +23,9 @@ import { TRANSPORT_INLINE_JS } from "./transport.js";
 // can compare it against the daemon's reported version and show a banner when they diverge
 // (typically: user installed a new vsix but didn't reload the VS Code window, so the
 // previous daemon is still serving the OLD GUI which had EXPECTED_GUI_VERSION = old value).
-// Bumped by the release commit alongside Server.ts VERSION and package.json files.
-const GUI_BUILD_VERSION = "0.11.0";
+// Sourced from package.json via tsup's `define` at build time — see src/version.ts.
+import { TIERKIT_VERSION } from "../../version.js";
+const GUI_BUILD_VERSION = TIERKIT_VERSION;
 
 export const GUI_HTML = `<!doctype html>
 <html lang="en">
