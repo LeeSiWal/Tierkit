@@ -58,6 +58,7 @@ export function extractSkeleton(source: string, language: SourceLanguage): Symbo
   const out: SymbolEntry[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
+    if (line === undefined) continue;
     for (const p of patterns) {
       if (p.re.test(line)) {
         out.push({ kind: p.kind, line: i + 1, text: line.trimEnd() });

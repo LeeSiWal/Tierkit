@@ -34,7 +34,8 @@ export function extractHotspots(
   for (const kw of keywords) {
     const re = new RegExp(escapeRegExp(kw), "i");
     for (let i = 0; i < total; i += 1) {
-      if (re.test(lines[i])) matches.push({ line: i + 1, term: kw });
+      const line = lines[i];
+      if (line !== undefined && re.test(line)) matches.push({ line: i + 1, term: kw });
     }
   }
 

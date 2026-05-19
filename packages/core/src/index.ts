@@ -419,3 +419,9 @@ export {
   type SendCompressedContextResult,
   type RouteRunner,
 } from "./usecases/sendCompressedContext.js";
+
+export {
+  compareCompressedContext,
+  type CompareCompressedContextInput,
+  type CompareCompressedContextResult,
+} from "./usecases/compareCompressedContext.js";
