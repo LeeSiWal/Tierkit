@@ -45,112 +45,47 @@ model is only used when it actually has to be.
 | [`@tierkit/adapter-continue`](packages/adapter-continue)           | Exports Tierkit plugins for Continue (`.continue/{config.yaml, rules, prompts, mcp}`). |
 | [`@tierkit/plugin-superpowers`](packages/plugin-superpowers)       | Bundled sample plugins: `superpowers-free` (v0.1) plus `guided` / `balanced` / `strict` (later). |
 
-## Quick start (v0.1)
+## Quick start: measure your token savings
+
+Requires [ripgrep](https://github.com/BurntSushi/ripgrep) on `PATH` and at
+least one model profile with API key (default: `claudeSonnet`).
+
+```sh
+# 1. Build a deterministic compressed context for a task — no model call, no cost.
+tierkit context build "fix payment success not unlocking premium report"
+
+# 2. (Optional) Inspect what was selected and how it was compressed.
+tierkit context show <ctx_id>
+
+# 3. A/B baseline vs compressed on the same task — measures real provider usage.
+#    Two paid model calls; TTY confirm or pass --yes for non-interactive.
+tierkit context compare <ctx_id> --profile claudeSonnet --yes
+```
+
+After `compare` you'll see:
+
+- baseline input tokens (estimated + actual)
+- compressed input tokens (estimated + actual)
+- savings in tokens, cost, and latency
+- both response files saved side-by-side for human quality judgment
+
+That output is the entire product loop. Everything else in Tierkit (cost
+routing, plugin policy, workflow sessions, adapter exports) is *how* the
+savings get larger and more automatic — see "Cost routing" and "Advanced"
+sections of this README.
+
+## Development setup
+
+For working on Tierkit itself:
 
 ```sh
 pnpm install
 pnpm -r build
-
-# Validate the bundled sample plugin
-node packages/cli/dist/index.js plugin validate packages/plugin-superpowers/plugins/superpowers-free
-
-# Export it as plain markdown
-node packages/cli/dist/index.js export generic --out ./dist/exports
-
-# Or export for Roo / Zoo Code (.roomodes + .roo/ at the project root)
-node packages/cli/dist/index.js export roo
-
-# Or export for Cline (.clinerules/ + .cline/mcp/ at the project root)
-node packages/cli/dist/index.js export cline
-
-# Or export for Continue (.continue/{config.yaml, rules, prompts, mcp} at the project root)
-node packages/cli/dist/index.js export continue
-
-# v0.5 — inspect model routing
-node packages/cli/dist/index.js models list
-node packages/cli/dist/index.js models test localFast
-node packages/cli/dist/index.js route explain "refactor the auth service" --files 8
-node packages/cli/dist/index.js config show
-
-# v0.6 — security checks
-node packages/cli/dist/index.js check redact ./scratch.txt
-node packages/cli/dist/index.js check command "rm -rf /"
-node packages/cli/dist/index.js check path .env
-
-# v1.0 — runtime alpha (loopback HTTP daemon)
-node packages/cli/dist/index.js runtime start             # foreground; ^C to stop
-node packages/cli/dist/index.js runtime status            # query daemon state
-node packages/cli/dist/index.js usage                     # per-profile call/token/cost summary
-node packages/cli/dist/index.js plugin enable superpowers-free
-node packages/cli/dist/index.js plugin disable superpowers-free
-node packages/cli/dist/index.js plugin remove superpowers-free
-
-# Daemon endpoints (default http://127.0.0.1:4101)
-#   GET  /                            ← browser GUI (alias for /v1/ui)
-#   GET  /v1/health
-#   POST /v1/route                    { task, filesTouchedEstimate?, involvesSecrets?, involvesProductionInfra? }
-#   POST /v1/check/command            { command }
-#   POST /v1/check/path               { path }
-#   POST /v1/redact                   { text }
-#   POST /v1/llm-call                 { profileId, messages, toolCommands? }
-#   GET  /v1/usage
-#   GET  /v1/budget
-#   GET  /v1/session                  ← current session + effective freedom
-#   POST /v1/session/start            { task }
-#   POST /v1/session/approve-plan
-#   POST /v1/session/advance          { toState: planning|implementing|reviewing|done|abandoned, reason? }
-#   POST /v1/session/abandon          { reason? }
-#   GET  /v1/models                   ← list configured profiles
-#   POST /v1/models/test              { profileId }      ← probe reachability + model availability
-#   GET  /v1/plugins                  ← list installed plugins
-#
-# v0.3.4 — model management + auto-fallback endpoints
-#   GET    /v1/secrets                ← list env-var keys + masked previews (never plaintext)
-#   POST   /v1/secrets                { key, value }   ← paste an API key from the GUI; persisted under .tierkit/secrets.json (mode 0600, .gitignore'd) and injected into process.env
-#   DELETE /v1/secrets/:key           ← remove a key the GUI stored (shell-env values are never touched)
-#   POST   /v1/config/profile         { id, profile, scope? }   ← add a model profile from the GUI
-#   DELETE /v1/config/profile/:id     ← remove a profile
-#   PATCH  /v1/config/routing         { autoEscalationCeiling?, budgetAwareDowngrade?, responseQualityCheck? }
-#
-# v0.3.5 — LLM-generated plugins
-#   POST   /v1/plugins/generate       { description }   ← Tierkit auto-routes the description through an LLM, validates the response, stashes a draft in .tierkit/runtime/plugin-drafts/<uuid>/
-#   POST   /v1/plugins/generate/install { draftId, enable? }   ← promote a draft to an installed plugin; optionally enable
-
-# Browser GUI — once `tierkit runtime start` is up:
-#   open http://127.0.0.1:4101/       # run tasks, drive sessions, watch usage, no terminal
-#
-# Or install the VS Code companion (`packages/vscode-tierkit/tierkit-vscode-*.vsix`)
-# and pin the Tierkit sidebar — the same GUI lives in the activity bar.
-
-# v1.1 — actually run the model (streaming)
-node packages/cli/dist/index.js route run "summarize this project"
-node packages/cli/dist/index.js route run "outline a plan" --mode plan --files 8
-node packages/cli/dist/index.js route run "review the auth diff" --mode review --profile privateRemoteStrong
-node packages/cli/dist/index.js route run "say OK" --no-stream
-node packages/cli/dist/index.js route run "audit prod secrets" --secrets --prod --local-only
-
-# v1.2 — workflow sessions (guided/balanced/strict)
-node packages/cli/dist/index.js plugin install packages/plugin-superpowers/plugins/superpowers-strict
-node packages/cli/dist/index.js plugin enable superpowers-strict
-node packages/cli/dist/index.js session start "refactor auth middleware"
-node packages/cli/dist/index.js route run "outline plan" --mode plan
-node packages/cli/dist/index.js session approve-plan
-node packages/cli/dist/index.js session advance implementing
-node packages/cli/dist/index.js route run "carry out the plan"
-node packages/cli/dist/index.js session advance reviewing
-node packages/cli/dist/index.js route run "review the diff" --mode review
-node packages/cli/dist/index.js session advance done
-
-# v1.3 — talk to the runtime from any tool (TypeScript SDK)
-#   import { TierkitClient } from "@tierkit/client";
-#   const client = new TierkitClient();        // defaults to http://127.0.0.1:4101
-#   await client.health();
-#   for await (const evt of client.llmCallStream({ profileId: "localFast", messages: [...] })) { ... }
-#
-#   See packages/vscode-tierkit/ for a VS Code companion that uses the same SDK.
-#
-# v1.4 — see docs/INTEGRATIONS.md for per-tool binding paths (Roo / Cline / Continue / your own)
+pnpm -r test --run
 ```
+
+See [`docs/SPEC.md`](docs/SPEC.md) for the design specification and
+[`CHANGELOG.md`](CHANGELOG.md) for release history.
 
 ## Design
 
