@@ -59,7 +59,20 @@ export class RouteRunCommand extends Command<CliContext> {
     });
 
     if (!result.ok) {
-      this.context.stderr.write(`${result.code}: ${result.message}\n`);
+      if (result.code === "budget-exceeded" && result.details && result.details.length > 0) {
+        // Case A — per-profile fallback exhausted
+        this.context.stderr.write(`${result.code}: ${result.message}\n`);
+        for (const d of result.details) {
+          this.context.stderr.write(`  - ${d.profileId}: ${d.reason}\n`);
+        }
+        this.context.stderr.write(
+          `\nTip: run \`tierkit doctor\` to see all near-threshold profiles.\n` +
+          `Tip: run \`tierkit usage --by-profile\` for breakdown.\n`,
+        );
+      } else {
+        // Case B (global budget) and all other failure codes
+        this.context.stderr.write(`${result.code}: ${result.message}\n`);
+      }
       return 1;
     }
 
