@@ -2,7 +2,7 @@
   "name": "tierkit",
   "private": true,
   "version": "0.11.0",
-  "description": "Local-first hybrid plugin runtime for AI coding agents",
+  "description": "Local-first cost optimizer and token firewall for AI coding CLIs.",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",
   "engines": {

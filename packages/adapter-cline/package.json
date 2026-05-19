@@ -1,7 +1,7 @@
 {
   "name": "@tierkit/adapter-cline",
   "version": "0.11.0",
-  "description": "Tierkit adapter that exports plugins for Cline (.clinerules/ + .cline/).",
+  "description": "Tierkit integration for Cline. Routes Cline's model calls through Tierkit's cost layer or exports policy as `.clinerules/`.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

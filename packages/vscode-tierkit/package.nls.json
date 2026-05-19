@@ -1,5 +1,5 @@
 {
-  "description": "Local-first hybrid model routing toolkit. The Tierkit runtime starts automatically; the sidebar lets you run tasks, drive workflow sessions, classify commands, and watch usage.",
+  "description": "Local-first cost optimizer for AI coding CLIs — runs the Tierkit daemon and shows real-time token savings, compressed-vs-baseline quality, and cost routing in a VS Code sidebar.",
   "viewContainer.title": "Tierkit",
   "view.dashboard.name": "Dashboard",
   "configuration.title": "Tierkit",

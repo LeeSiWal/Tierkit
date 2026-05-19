@@ -1,7 +1,7 @@
 {
   "name": "@tierkit/core",
   "version": "0.11.0",
-  "description": "Tierkit core: plugin format, validator, loader, model profiles, adapter interface, usecases. Tool- and CLI-framework-agnostic.",
+  "description": "Tierkit core — context compression, secret redaction, cost-aware model routing, quality comparison, plugin runtime. Tool- and CLI-framework-agnostic.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

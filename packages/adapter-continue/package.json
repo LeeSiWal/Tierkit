@@ -1,7 +1,7 @@
 {
   "name": "@tierkit/adapter-continue",
   "version": "0.11.0",
-  "description": "Tierkit adapter that exports plugins for Continue (.continue/{config.yaml, rules, prompts}).",
+  "description": "Tierkit integration for Continue. Routes Continue's model calls through Tierkit's cost layer or exports policy as `.continue/{config.yaml, rules, prompts}`.",
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

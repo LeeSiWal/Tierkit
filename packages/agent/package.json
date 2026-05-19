@@ -2,7 +2,7 @@
   "name": "@tierkit/agent",
   "version": "0.11.0",
   "private": true,
-  "description": "Tierkit's built-in coding agent. Cline-style XML tool calling with Tierkit policy gates (routing, security, plugin rules) natively integrated.",
+  "description": "Tierkit's built-in coding agent — optional local-first executor that benefits from Tierkit's cost layer (compression / routing / quality / budget) without needing an external CLI.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
