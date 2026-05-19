@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ContextCompressionConfigSchema } from "../context-compression/schema.js";
 import { ModelPolicySchema, ModelProfileMapSchema } from "../model/ModelProfile.js";
 import { TARGETS } from "../plugin/PluginManifest.js";
 
@@ -128,6 +129,7 @@ export const TierkitConfigSchema = z
     }),
     budget: BudgetPolicySchema.optional(),
     modelPolicy: ModelPolicySchema.optional(),
+    contextCompression: ContextCompressionConfigSchema.optional(),
     runtime: RuntimeConfigSchema.default({
       port: 4101,
       dataDir: ".tierkit/runtime",

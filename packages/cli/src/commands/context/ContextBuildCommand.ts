@@ -3,6 +3,7 @@ import { Command, Option } from "clipanion";
 import {
   buildCompressedContext,
   writeArtifact,
+  loadConfig,
   type ContextBudget,
 } from "@tierkit/core";
 import type { CliContext } from "../../context/CliContext.js";
@@ -34,17 +35,26 @@ export class ContextBuildCommand extends Command<CliContext> {
 
   override async execute(): Promise<number> {
     const cwd = this.cwdFlag ? path.resolve(this.cwdFlag) : this.context.cwd;
+    const cfg = await loadConfig(cwd);
+    const cc = cfg.config.contextCompression;
+
     const budget: Partial<ContextBudget> = {};
     if (this.maxFiles !== undefined) budget.maxFiles = Number.parseInt(this.maxFiles, 10);
+    else if (cc?.defaultMaxFiles !== undefined) budget.maxFiles = cc.defaultMaxFiles;
+
     if (this.maxHotspots !== undefined) budget.maxHotspotsPerFile = Number.parseInt(this.maxHotspots, 10);
     if (this.hotspotLines !== undefined) budget.hotspotContextLines = Number.parseInt(this.hotspotLines, 10);
+
     if (this.cloudBudget !== undefined) budget.cloudTokenBudget = Number.parseInt(this.cloudBudget, 10);
+    else if (cc?.defaultCloudTokenBudget !== undefined) budget.cloudTokenBudget = cc.defaultCloudTokenBudget;
+
+    const extraIgnoreGlobs = [...(this.ignore ?? []), ...(cc?.ignoreGlobs ?? [])];
 
     const result = await buildCompressedContext({
       task: this.task,
       workspaceRoot: cwd,
       budget,
-      extraIgnoreGlobs: this.ignore ?? [],
+      extraIgnoreGlobs,
     });
     if (!result.ok) {
       this.context.stderr.write(`${result.code}: ${result.message}\n`);
