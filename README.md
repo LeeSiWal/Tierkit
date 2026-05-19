@@ -281,6 +281,36 @@ artifacts to issue trackers, gists, or shared docs.
 
 CLI flags override config; config overrides built-in defaults.
 
+### Per-profile budgets (v0.12)
+
+You can cap each per-token profile's monthly spend in USD or input tokens, or both (whichever-first). v0.12 also classifies profiles by **payment model** — `free`, `flat-rate`, or `per-token` — so caps only apply where they actually mean something.
+
+```jsonc
+{
+  "budget": {
+    "monthlyUsdLimit": 100,
+    "perProfile": {
+      "claudeSonnet": {
+        "monthlyUsdLimit": 20,
+        "monthlyInputTokenLimit": 200000
+      },
+      "gpt4o": {
+        "monthlyUsdLimit": 10
+      }
+    }
+  }
+}
+```
+
+When the cap is reached the router skips that profile and either falls back to the next candidate or returns `budget-exceeded`. Inspect with:
+
+```sh
+tierkit usage --by-profile         # per-profile usage / caps / status
+tierkit doctor                     # 80%+ warnings + blocked profiles
+```
+
+Payment model semantics: `per-token` caps both USD and input tokens; `flat-rate` and `free` only cap input tokens (USD is metadata or ignored — see the spec for the full rationale). v0.12 does not yet route to flat-rate subscription CLIs as model providers — that lands in v0.13.
+
 ## 자연어로 플러그인 만들기 (v0.3.5)
 
 사이드바 → **Active plugins** 카드 → `+ Describe & generate` 버튼:

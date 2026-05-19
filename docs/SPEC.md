@@ -75,6 +75,32 @@ held up.
 
 ---
 
+### 2.5 Payment models (v0.12)
+
+Every `ModelProfile` has an optional `paymentModel: free | flat-rate | per-token`. When omitted, it's derived from `kind` (`local-device` → `free`, `private-remote` → `free`, `public-cloud` → `per-token`). Explicit override wins.
+
+- `free` — zero marginal token cost from Tierkit's perspective. Hardware / electricity / rental may still cost real money; "free" only means Tierkit will not bill or budget-gate per-call.
+- `flat-rate` — subscription or fixed-cost access (Claude Code Max, ChatGPT Pro on Codex CLI, monthly rented GPU). NOT necessarily unlimited; subscription products typically have usage limits that Tierkit can protect via input-token caps.
+- `per-token` — metered API billing by input/output tokens (direct Anthropic / OpenAI / Google API keys).
+
+This dimension lets future versions route preferentially: free → flat-rate → per-token (v0.13). v0.12 only adds the data and the budget enforcement; the routing reorder lands with subscription-CLI execution in v0.13.
+
+### 2.6 Per-profile budgets (v0.12)
+
+`BudgetPolicy.perProfile` lets each profile carry its own daily/monthly caps in USD and/or input tokens. Boundary: `>` comparison — at-limit allowed, over-limit blocked.
+
+Enforcement varies by `paymentModel`:
+
+| paymentModel | USD enforced? | Input tokens enforced? |
+|---|---|---|
+| `per-token` | yes | yes |
+| `flat-rate` | no (display-only metadata) | yes (subscription quota protection) |
+| `free` | no (ignored — `tierkit doctor` warns if set) | yes (local resource protection) |
+
+The gate runs **after `redactSecrets`** and **before `provider.stream`**, against the final post-redact `ChatRequest`. Per-profile block → skip candidate + return `budget-exceeded` with `details[]`. Global budget block → hard stop (single-line message, no details). Both have error code `budget-exceeded`; clients differentiate via `message` and `details` presence.
+
+---
+
 ## 3. High-level architecture
 
 ```
