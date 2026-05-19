@@ -1,6 +1,37 @@
-# Tierkit — Tool integrations (v1.3 / v1.4)
+# Tierkit — Integrations as savings channels
 
-How third-party AI coding agents (Roo, Cline, Continue, your-own) connect to a running Tierkit runtime so that **every model call inherits Tierkit's policy** (routing, redaction, command-gating, budget, usage log, session enforcement).
+Every supported AI coding CLI is a place Tierkit can save tokens. Each
+integration below is rated by its *savings posture* (how aggressively
+Tierkit can compress + route on that tool's behalf) and its *interception
+style* (gateway / helper / MCP / export-first). Integrations are not
+themselves a milestone — they are how the cost layer reaches the user.
+
+## Interception styles
+
+- **Gateway** — Tierkit's OpenAI-compatible endpoint is the tool's model
+  provider. Compression and routing happen server-side before the request
+  leaves the machine. Used by: Codex CLI, Roo Code, Cline, Continue, aider.
+- **Helper** — Tierkit exposes commands (`tierkit context build/send`)
+  that the user invokes alongside the tool. The tool's own agent loop is
+  not intercepted. Used by: Claude Code today (until MCP path is validated).
+- **MCP** — Tierkit exposes itself as an MCP server the tool can call
+  when it *wants* compressed context. Planned: Claude Code, Gemini CLI
+  (v0.13+).
+- **Export-first** — Tierkit writes policy files (`.roomodes`,
+  `.clinerules/`, `.continue/config.yaml`) that the tool reads at startup.
+  Lighter-touch integration, no live cost layer. Useful as a fallback.
+
+## Savings posture per integration
+
+| Tool | Style today | Style target | Savings effective |
+|---|---|---|---|
+| Roo Code             | gateway (`tierkit connect roo`)    | gateway + compression policy (v0.13) | partial |
+| Cline                | gateway (`tierkit connect cline`)  | gateway + compression policy (v0.13) | partial |
+| Continue             | gateway (`tierkit connect continue`)| gateway + compression policy (v0.13) | partial |
+| Codex CLI            | gateway (manual `base_url`)        | first-class `connect` + compression policy (v0.13) | partial, manual |
+| aider                | gateway (manual `--openai-api-base`)| first-class `connect` + compression policy (v0.13) | partial, manual |
+| Claude Code          | helper (`tierkit context build/send`) | helper + MCP server (v0.13)        | manual today |
+| Gemini CLI           | (none)                             | MCP / compressed-context provider (v0.13) | not yet |
 
 ## Two integration paths
 
