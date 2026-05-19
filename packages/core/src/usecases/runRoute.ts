@@ -8,8 +8,9 @@ import type { ProviderClient } from "../model/providers/types.js";
 import type { ChatMessage, StreamEvent } from "../model/providers/chatTypes.js";
 import type { ModelProfile, ModelTier } from "../model/ModelProfile.js";
 import type { RouteDecision } from "../model/ModelRouter.js";
-import { appendUsage, estimateCost, type UsageRecord } from "../runtime/usageLog.js";
+import { aggregateByProfile, appendUsage, estimateCost, readUsage, type UsageRecord } from "../runtime/usageLog.js";
 import { checkBudget } from "../runtime/budget.js";
+import { checkPerProfileBudget } from "../runtime/checkPerProfileBudget.js";
 import { readRegistry } from "../plugin/PluginRegistry.js";
 import { resolveEffectiveFreedom, checkSessionGate } from "../runtime/session/sessionPolicy.js";
 import { readCurrentSession } from "../runtime/session/sessionStore.js";
@@ -52,6 +53,13 @@ export interface RunRouteFail {
   message: string;
   /** Partial context that was prepared before the failure (helpful for diagnostics). */
   context?: Partial<RunRouteContext>;
+  /**
+   * Per-candidate skip reasons when code === "budget-exceeded" and the
+   * fallback chain was exhausted by per-profile caps (Case A). Absent when
+   * the global budget cap fired (Case B), in which case `message` describes
+   * the single global reason.
+   */
+  details?: Array<{ profileId: string; reason: string }>;
 }
 
 export interface RunRouteOk {
@@ -205,9 +213,53 @@ export async function runRoute(input: RunRouteInput): Promise<RunRouteResult> {
 
   // Budget gate.
   const usageLogPath = path.join(projectRoot, cfg.config.runtime.dataDir, "usage.jsonl");
+
+  // v0.12: per-profile budget gate (Case A).
+  //
+  // Runs AFTER redactSecrets (so we score the final post-redact ChatRequest)
+  // and BEFORE the existing global checkBudget (which is the hard backstop).
+  // Per-profile block returns budget-exceeded with details[]; the caller (or a
+  // future v0.13 iterating fallback) decides whether to retry with a different
+  // profile.
+  //
+  // NOTE: v0.12 invokes the gate once per runRoute() call against the resolved
+  // profileId. A future v0.13 iterating fallback loop will accumulate multiple
+  // entries in `details[]`. For v0.12, `details[]` has exactly one entry on
+  // per-profile block.
+  const perProfileBudget = cfg.config.budget?.perProfile?.[profileId];
+  if (perProfileBudget) {
+    const records = await readUsage(usageLogPath);
+    const byProfile = aggregateByProfile(records, new Date());
+    const profileUsage = byProfile[profileId] ?? {
+      today: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      month: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    };
+    const estimatedInputTokens = estimateMessagesInputTokens(messages);
+    const gate = checkPerProfileBudget({
+      profile,
+      estimatedInputTokens,
+      usage: profileUsage,
+      budget: perProfileBudget,
+    });
+    if (gate !== "ok") {
+      return {
+        ok: false,
+        code: "budget-exceeded",
+        message: "All candidate profiles were skipped by per-profile budget policy.",
+        details: [{ profileId, reason: gate.reason }],
+      };
+    }
+  }
+
+  // v0.11.x global budget gate (Case B in §3) — global hard backstop.
   const budget = await checkBudget(usageLogPath, cfg.config.budget);
   if (budget.status === "block") {
-    return { ok: false, code: "budget-exceeded", message: budget.reason ?? "budget exceeded" };
+    return {
+      ok: false,
+      code: "budget-exceeded",
+      message: budget.reason ?? "Global monthly USD budget exceeded.",
+      // No `details` — global cap is single-reason, distinguishes from Case A.
+    };
   }
 
   // Resolve provider client (real or injected).
@@ -314,4 +366,14 @@ function pickFirstProfileOfTier(
     if (profile.kind === tier) return { id, profile };
   }
   return undefined;
+}
+
+/**
+ * Conservative input-token estimate for the v0.12 per-profile budget gate:
+ * sum char lengths across all message content, then ceil(chars / 4). Matches
+ * the heuristic used elsewhere in v0.11 (estimateTokens, contextArtifactStore).
+ */
+function estimateMessagesInputTokens(messages: ReadonlyArray<{ content: string }>): number {
+  const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+  return Math.ceil(totalChars / 4);
 }
