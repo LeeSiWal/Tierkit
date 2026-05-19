@@ -269,6 +269,61 @@ code-review, korean, summarize
 ```
 같은 tier에서 task type이 일치하는 profile이 우선 선택됩니다.
 
+## Token-saving context compression (v1.7-spike)
+
+Tierkit can reduce expensive cloud-model usage by building a deterministic
+compressed prompt from your workspace, then sending only the compressed
+prompt to the model. No LLM is used for the compression step — it's
+ripgrep + regex-based skeleton/hotspot extraction.
+
+### Requirements
+
+- [ripgrep](https://github.com/BurntSushi/ripgrep) installed and on `PATH`
+  - `brew install ripgrep` / `apt install ripgrep` / `choco install ripgrep`
+
+### Commands
+
+```sh
+# 1. Build a context artifact (no model call, no cost)
+tierkit context build "fix Toss payment success not unlocking premium report"
+
+# 2. Inspect what was selected
+tierkit context show ctx_a3b2c1d4e5
+
+# 3. Send the compressed prompt to a model
+tierkit context send ctx_a3b2c1d4e5 --profile claudeSonnet
+
+# 4. Compare: run the same task twice (baseline = selected files raw,
+#    compressed = prompt.md), then show savings side-by-side.
+tierkit context compare ctx_a3b2c1d4e5 --profile claudeSonnet
+```
+
+`compare` makes 2 paid calls — it asks for confirmation in a TTY and
+requires `--yes` in non-interactive mode.
+
+### Warning — do not share or commit artifacts
+
+`.tierkit/runtime/context-artifacts/` contains absolute workspace paths
+and raw source excerpts from your codebase. Tierkit auto-creates
+`.tierkit/.gitignore` with `*` on first write, but **do not** copy these
+artifacts to issue trackers, gists, or shared docs.
+
+### Configuration (optional)
+
+```jsonc
+// tierkit.config.json
+{
+  "version": "0.1",
+  "contextCompression": {
+    "defaultMaxFiles": 8,
+    "defaultCloudTokenBudget": 12000,
+    "ignoreGlobs": ["vendor/**", "generated/**"]
+  }
+}
+```
+
+CLI flags override config; config overrides built-in defaults.
+
 ## 자연어로 플러그인 만들기 (v0.3.5)
 
 사이드바 → **Active plugins** 카드 → `+ Describe & generate` 버튼:

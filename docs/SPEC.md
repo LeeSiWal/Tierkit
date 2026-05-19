@@ -513,3 +513,23 @@ packages/cli/src/
    ├─ printPluginList.ts
    └─ printExportResult.ts
 ```
+
+## Context compression (v1.7-spike)
+
+Deterministic, LLM-free pipeline that compresses workspace context for
+one-shot CLI calls. Goal is to measure whether compressed prompts
+preserve response quality vs. raw selected files.
+
+**Module:** `packages/core/src/context-compression/`
+**Usecases:** `buildCompressedContext`, `sendCompressedContext`, `compareCompressedContext`
+**CLI:** `tierkit context build|show|send|compare`
+**Store:** `.tierkit/runtime/context-artifacts/<id>/{artifact.json, prompt.md, baseline.md?, response-{baseline,compressed}.md?}`
+
+Full design: [`docs/superpowers/specs/2026-05-19-v1.7-spike-context-compression-design.md`](superpowers/specs/2026-05-19-v1.7-spike-context-compression-design.md)
+
+**Explicit non-goals in v1.7** (see spec for full list): local LLM
+file-ranker / compressor, ModelRole system, CompressionMode enum,
+OpenAI-compatible endpoint auto-compression, agent-loop integration
+(Claude Code / Roo / Cline / Continue), GUI Token Savings card,
+HTTP endpoints, tree-sitter, response-quality auto-judge, parallel
+compare, multi-compare per artifact.

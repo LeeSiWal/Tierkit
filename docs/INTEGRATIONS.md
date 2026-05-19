@@ -104,3 +104,19 @@ supported, because they cannot spawn the Node-based daemon process.
 - No "auto-detect installed tools" feature. Each tool wires itself in by depending on `@tierkit/client` or by being pointed at the daemon's URL.
 
 The point of v1.4 is that **the path is documented and the SDK exists.** Adding new tools is now a per-tool integration, not a Tierkit-core feature.
+
+## Context compression (v1.7-spike) and agent integrations
+
+Tierkit v1.7 introduces a one-shot CLI context compression pipeline
+(`tierkit context build/show/send/compare`). It does **not** wrap or
+modify any of the existing agent integrations:
+
+- Roo / Cline / Continue exports — unchanged; still receive raw input
+- OpenAI-compatible endpoint — unchanged; still passes prompts through verbatim
+- VS Code sidebar / `tierkit-vscode` — unchanged
+
+If you want compression for an agent loop, manually run
+`tierkit context build` then `tierkit context send` for the round-trip
+you want compressed. Automatic agent-loop integration is explicitly
+non-goal until v1.9+ (see the v1.7-spike spec for the deferred-items
+list).
