@@ -369,3 +369,28 @@ export {
   type DoctorCheck,
   type CheckStatus,
 } from "./usecases/doctor.js";
+
+// Context compression (v1.7-spike)
+export {
+  type ContextBudget,
+  type ContextArtifact,
+  type RelevantFile,
+  type FileExcerpt,
+  type SymbolEntry,
+  type Hotspot,
+  type CompareResult,
+  type CompareSide,
+  type SourceLanguage,
+  DEFAULT_CONTEXT_BUDGET,
+  DEFAULT_IGNORE_GLOBS,
+} from "./context-compression/types.js";
+
+export {
+  ContextArtifactSchema,
+  ContextCompressionConfigSchema,
+  ContextBudgetSchema,
+  RelevantFileSchema,
+  FileExcerptSchema,
+  CompareResultSchema,
+  CompareSideSchema,
+} from "./context-compression/schema.js";
