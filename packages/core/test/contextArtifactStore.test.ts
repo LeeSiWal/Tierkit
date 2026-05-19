@@ -54,9 +54,12 @@ describe("contextArtifactStore", () => {
   });
 
   it("retries on id collision and eventually succeeds", async () => {
-    // Pre-create 2 colliding ids using mock generator.
+    // The caller's id is tried first as a hint; pre-create its dir too so we
+    // fall through to the generator, then pre-create the generator's first
+    // two ids and let the third succeed.
+    const callerId = "ctx_a1b2c3d4e5"; // matches makeArtifact() default
     const ids = ["ctx_aaaaaaaaaa", "ctx_bbbbbbbbbb", "ctx_cccccccccc"];
-    for (const id of ids.slice(0, 2)) {
+    for (const id of [callerId, ...ids.slice(0, 2)]) {
       const dir = path.join(tmpWorkspace, ".tierkit/runtime/context-artifacts", id);
       await fs.mkdir(dir, { recursive: true });
     }
@@ -67,11 +70,30 @@ describe("contextArtifactStore", () => {
     expect(generator).toHaveBeenCalledTimes(3);
   });
 
-  it("throws after 5 collisions", async () => {
-    const generator = vi.fn(() => "ctx_zzzzzzzzzz");
-    await fs.mkdir(path.join(tmpWorkspace, ".tierkit/runtime/context-artifacts/ctx_zzzzzzzzzz"), {
-      recursive: true,
+  it("uses the caller's id when valid and free (no generator call)", async () => {
+    // New invariant: writeArtifact treats artifact.id as a hint. If it's well-formed
+    // and the dir doesn't exist, no generator call is made.
+    const generator = vi.fn(() => "ctx_unused000");
+    const { id } = await writeArtifact(tmpWorkspace, makeArtifact(), "x", {
+      idGenerator: generator,
     });
+    expect(id).toBe("ctx_a1b2c3d4e5"); // the caller's id, untouched
+    expect(generator).not.toHaveBeenCalled();
+  });
+
+  it("throws after 5 collisions", async () => {
+    // Force fallthrough: pre-create both the caller-id dir AND the generator's
+    // single colliding return value, so all 5 generator attempts collide.
+    const callerId = "ctx_a1b2c3d4e5"; // matches makeArtifact() default
+    await fs.mkdir(
+      path.join(tmpWorkspace, ".tierkit/runtime/context-artifacts", callerId),
+      { recursive: true },
+    );
+    await fs.mkdir(
+      path.join(tmpWorkspace, ".tierkit/runtime/context-artifacts/ctx_zzzzzzzzzz"),
+      { recursive: true },
+    );
+    const generator = vi.fn(() => "ctx_zzzzzzzzzz");
     await expect(
       writeArtifact(tmpWorkspace, makeArtifact(), "x", { idGenerator: generator }),
     ).rejects.toMatchObject({ code: "id-collision" });

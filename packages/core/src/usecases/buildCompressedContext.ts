@@ -1,6 +1,6 @@
 import path from "node:path";
 import fs from "node:fs/promises";
-import crypto from "node:crypto";
+import { defaultIdGenerator } from "../runtime/contextArtifactStore.js";
 import {
   DEFAULT_CONTEXT_BUDGET,
   DEFAULT_IGNORE_GLOBS,
@@ -36,10 +36,6 @@ export type BuildCompressedContextResult =
       code: "rg-missing" | "no-keywords" | "no-candidates" | "workspace-not-found";
       message: string;
     };
-
-function generateArtifactId(): string {
-  return "ctx_" + crypto.randomUUID().replace(/-/g, "").slice(0, 10);
-}
 
 function resolveBudget(override?: Partial<ContextBudget>): ContextBudget {
   return {
@@ -175,7 +171,7 @@ export async function buildCompressedContext(
       : 1;
 
   const artifact: ContextArtifact = {
-    id: generateArtifactId(),
+    id: defaultIdGenerator(),
     schemaVersion: 1,
     createdAt: new Date().toISOString(),
     workspaceRoot: input.workspaceRoot,

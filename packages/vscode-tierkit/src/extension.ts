@@ -187,9 +187,9 @@ function expectedDaemonVersion(): string {
  * marked autoEnable. The rest sit installed-but-disabled so the user can flip them
  * on later from the sidebar. */
 function buildBootstrapPlugins(): Array<{ path: string; autoEnable: boolean }> {
-  if (bundledSamples.length === 0) return [];
-  const guidedId = bundledSamples.find((s) => s.id === "superpowers-guided")?.id
-    ?? bundledSamples[0].id;
+  const first = bundledSamples[0];
+  if (!first) return [];
+  const guidedId = bundledSamples.find((s) => s.id === "superpowers-guided")?.id ?? first.id;
   return bundledSamples.map((s) => ({
     path: s.path,
     autoEnable: s.id === guidedId,

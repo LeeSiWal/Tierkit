@@ -32,9 +32,13 @@ export interface WriteArtifactResult {
   dir: string;
 }
 
-function defaultIdGenerator(): string {
+/** Mints a fresh `ctx_<10 hex>` id. Exported so callers (e.g. `buildCompressedContext`)
+ * can share the same format without duplicating the implementation. */
+export function defaultIdGenerator(): string {
   return "ctx_" + crypto.randomUUID().replace(/-/g, "").slice(0, 10);
 }
+
+const ID_FORMAT = /^ctx_[a-f0-9]{10}$/;
 
 function artifactDir(workspaceRoot: string, id: string): string {
   return path.join(workspaceRoot, ARTIFACTS_SUBDIR, id);
@@ -70,13 +74,29 @@ export async function writeArtifact(
   const gen = opts.idGenerator ?? defaultIdGenerator;
   let chosenId = "";
   let chosenDir = "";
-  for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
-    const id = gen();
-    const dir = artifactDir(workspaceRoot, id);
+
+  // First, try the caller's id as a hint: if it's well-formed and the directory
+  // doesn't already exist, use it. This avoids wasted regeneration in the common
+  // case where the caller minted an id alongside the artifact.
+  const callerId = artifact.id;
+  if (ID_FORMAT.test(callerId)) {
+    const dir = artifactDir(workspaceRoot, callerId);
     if (!(await dirExists(dir))) {
-      chosenId = id;
+      chosenId = callerId;
       chosenDir = dir;
-      break;
+    }
+  }
+
+  // Fall back to the generator on collision or when the caller's id is missing/invalid.
+  if (!chosenId) {
+    for (let attempt = 0; attempt < MAX_ID_RETRIES; attempt += 1) {
+      const id = gen();
+      const dir = artifactDir(workspaceRoot, id);
+      if (!(await dirExists(dir))) {
+        chosenId = id;
+        chosenDir = dir;
+        break;
+      }
     }
   }
   if (!chosenId) {

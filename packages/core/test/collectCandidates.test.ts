@@ -100,4 +100,39 @@ describe("collectCandidates", () => {
       expect(args).toContain("!dist/**");
     }
   });
+
+  it("normalizes leading './' so content + filename passes dedupe to one entry", async () => {
+    // Real rg emits `./src/x.ts` for `rg --files-with-matches ... -- kw .` and
+    // `src/x.ts` for `rg --files`. Without normalization the same file would
+    // land twice in the candidate map. Asserted directly here so the fix from
+    // the v1.7-spike Task 9 commit can't silently regress.
+    const rg: RgRunner = async (args) => {
+      // content pass: rg emits ./-prefixed paths
+      if (args.includes("--files-with-matches")) {
+        return { code: 0, stdout: "./src/x.ts\n./src/y.ts\n", stderr: "" };
+      }
+      // filename listing pass: rg emits unprefixed paths
+      if (args.includes("--files")) {
+        return { code: 0, stdout: "src/x.ts\nsrc/y.ts\nsrc/z-foo.ts\n", stderr: "" };
+      }
+      return { code: 0, stdout: "", stderr: "" };
+    };
+    const result = await collectCandidates({
+      workspaceRoot: "/tmp/repo",
+      keywords: ["foo"],
+      ignoreGlobs: [],
+      rg,
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      const paths = result.candidates.map((c) => c.path).sort();
+      // x.ts and y.ts each appear in both passes; must collapse to ONE entry each.
+      expect(paths.filter((p) => p === "src/x.ts")).toHaveLength(1);
+      expect(paths.filter((p) => p === "src/y.ts")).toHaveLength(1);
+      // No "./"-prefixed path leaks through.
+      expect(paths.some((p) => p.startsWith("./"))).toBe(false);
+      // z-foo.ts only hits via filename match.
+      expect(paths).toContain("src/z-foo.ts");
+    }
+  });
 });
