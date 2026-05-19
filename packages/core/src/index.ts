@@ -257,6 +257,12 @@ export {
 } from "./runtime/usageLog.js";
 export { checkBudget, type BudgetCheckResult, type BudgetStatus, type BudgetPolicy } from "./runtime/budget.js";
 export {
+  checkPerProfileBudget,
+  type CheckPerProfileBudgetInput,
+  type CheckPerProfileBudgetResult,
+  type ProfileUsageSnapshot,
+} from "./runtime/checkPerProfileBudget.js";
+export {
   executeLlmCall,
   type LlmCallRequest,
   type LlmCallResult,
