@@ -6,40 +6,72 @@
 
 ## 0. Identity
 
-**Tierkit — Local-first Hybrid Coding Agent Runtime**
-for Cline, Zoo/Roo Code, Continue, and future AI coding agents.
+**Tierkit — Local-first Cost Optimizer for AI Coding CLIs.**
 
-Tierkit is **not** a Roo Code fork. It is a tool-agnostic plugin format + model routing runtime + workflow policy layer that lets the same plugins, workflows, and model policy be reused across multiple AI coding agents.
+Tierkit sits between an AI coding CLI (Claude Code, Codex CLI, Gemini CLI,
+Roo Code, Cline, Continue, aider) and the model providers it would call.
+Its job is to spend fewer cloud-model tokens at equal task quality by:
+
+1. compressing repository context with local-first techniques before
+   anything leaves the machine;
+2. handing as many sub-tasks as possible to local or private-remote models
+   (file ranking, summarization, low-risk drafts and reviews);
+3. routing the genuinely hard or risky decisions — and only those — to the
+   premium cloud model the user actually pays for; and
+4. measuring the trade-off every time, so the user can see exactly how
+   many tokens they stopped paying for and whether the quality held.
 
 ### One-line definition
 
-> Tierkit is a local-first hybrid agent runtime that brings Claude Code-style plugins, Superpowers-like workflows, and cost-aware model routing to multiple AI coding agents.
+> Tierkit is a local-first cost optimizer and token firewall for AI coding
+> CLIs.
 
 한국어:
 
-> Tierkit는 Claude Code식 플러그인 구조, Superpowers식 개발 워크플로우, 로컬/개인서버/클라우드 모델 라우팅을 여러 AI 코딩 에이전트에서 공통으로 사용할 수 있게 하는 런타임이다.
+> Tierkit은 AI 코딩 CLI가 로컬 모델과 프라이빗 모델을 활용해 클라우드
+> 토큰 사용량을 줄이고, 필요한 순간에만 고성능 클라우드 모델로 상승시키는
+> 비용 최적화 레이어다.
 
 ---
 
 ## 1. Positioning
 
-| Old positioning | New positioning |
+| Aspect | Position |
 |---|---|
-| Roo Code fork + plugin manager | Common plugin/runtime format for AI coding agents + Local-first hybrid model router + Workflow policy engine + Tool adapter layer |
+| What it is | A local-first **cost optimizer and token firewall** for AI coding CLIs. |
+| What it is not | A replacement for Claude / GPT / Gemini. Not a coding agent in its own right. Not a plugin marketplace. |
+| Primary user outcome | Same coding result, fewer premium-cloud tokens. Credible path from Max 20× → Max 5× → Pro on Claude pricing tiers. |
+| Distribution surface | CLI (`tierkit ...`) + VS Code extension + HTTP loopback daemon + OpenAI-compatible gateway + MCP server (from v0.13). |
+| Strategic filter | *Does this reduce cloud cost, or stretch the same budget further at equal quality?* If no, it's an advanced/secondary feature. |
 
-Tierkit aims to become the **"plugin OS" for AI coding agents** — but not by trying to support every tool from day one. The realistic rollout is **Zoo/Roo → Cline → Continue**.
+The plugin runtime, adapter exports, workflow sessions, and policy rules
+remain in the codebase as **implementation mechanisms** of cost
+optimization — not as the headline product.
 
 ---
 
 ## 2. Problems Tierkit solves
 
-1. Same workflow gets re-implemented per tool.
-2. Superpowers-style discipline cannot be shared across tools.
-3. Model selection policy is fragmented per tool.
-4. Cost optimization across local / private remote / public cloud is hard.
-5. Plugin install/permission/security policy is not standardized.
+1. **Premium-cloud bills compound fast.** Most AI coding sessions burn
+   tokens on context that the model didn't actually need to make the right
+   decision.
+2. **Local compute often sits idle.** Modern dev machines can usefully
+   pre-rank files, summarize logs, and compress prompts before any cloud
+   call — but no one has tied that to the cloud-CLI flow.
+3. **Quality of compression isn't measured.** Most "context shrinkers"
+   ship a saved-tokens number with no evidence the model still produces
+   the right answer.
+4. **Each AI coding CLI re-invents the same policy.** Risk gates, secret
+   redaction, budget caps, fallback rules — every tool builds its own
+   version, or none.
+5. **Private/self-hosted models are second-class.** Existing CLI tools
+   treat private endpoints as one of N providers, not as a deliberate
+   middle tier between local and public.
 
-Tierkit's answer: one plugin format, written once; per-agent adapters translate/execute it.
+Tierkit's answer: one cost layer that sits in front of every coding CLI,
+applies the same compression + routing + quality + budget policy, and
+shows the user — every day — how much they saved and whether the work
+held up.
 
 ---
 
