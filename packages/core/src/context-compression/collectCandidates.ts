@@ -54,6 +54,15 @@ function buildGlobArgs(ignoreGlobs: string[]): string[] {
   return args;
 }
 
+/**
+ * Normalize rg path output so that paths from the content-search pass
+ * (which uses `rg ... -- kw .` and emits "./src/x.ts") and the filename pass
+ * (which uses `rg --files` and emits "src/x.ts") collapse to the same key.
+ */
+function normalizePath(p: string): string {
+  return p.startsWith("./") ? p.slice(2) : p;
+}
+
 export async function collectCandidates(
   input: CollectCandidatesInput,
 ): Promise<CollectCandidatesResult> {
@@ -81,7 +90,7 @@ export async function collectCandidates(
       // rg exits 1 when no matches — that's fine; other codes are errors.
       continue;
     }
-    const paths = result.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+    const paths = result.stdout.split("\n").map((l) => l.trim()).filter(Boolean).map(normalizePath);
     for (const p of paths) {
       const existing = byPath.get(p);
       if (existing) {
@@ -107,7 +116,7 @@ export async function collectCandidates(
     throw err;
   }
   if (listingResult.code === 0 || listingResult.code === 1) {
-    const allPaths = listingResult.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+    const allPaths = listingResult.stdout.split("\n").map((l) => l.trim()).filter(Boolean).map(normalizePath);
     for (const p of allPaths) {
       const lower = p.toLowerCase();
       const filenameMatches = keywords.filter((kw) => lower.includes(kw.toLowerCase()));

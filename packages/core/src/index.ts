@@ -394,3 +394,9 @@ export {
   CompareResultSchema,
   CompareSideSchema,
 } from "./context-compression/schema.js";
+
+export {
+  buildCompressedContext,
+  type BuildCompressedContextInput,
+  type BuildCompressedContextResult,
+} from "./usecases/buildCompressedContext.js";
