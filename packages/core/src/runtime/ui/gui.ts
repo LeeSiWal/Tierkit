@@ -109,6 +109,42 @@ export const GUI_HTML = `<!doctype html>
     border-bottom: 1px solid rgba(247, 118, 142, 0.3);
   }
   .err-banner button { margin-top: 6px; }
+  /* ── v0.12 cost-aware routing: per-profile budget bars ───────────────────── */
+  .c12-budget-bar { font-size: 11px; margin-top: 4px; }
+  .c12-bar-track {
+    background: rgba(255, 255, 255, 0.08);
+    height: 6px;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .c12-bar-fill { height: 6px; transition: width 200ms ease-out; }
+  .c12-bar-fill.budget-bar-green { background: #28a745; }
+  .c12-bar-fill.budget-bar-amber { background: #f0a020; }
+  .c12-bar-fill.budget-bar-red   { background: #d73a49; }
+  .c12-bar-text { color: var(--fg-dim); margin-top: 2px; font-size: 10.5px; }
+  .c12-bar-status { font-weight: 600; padding: 0 4px; }
+  .c12-flat-rate-metadata {
+    font-size: 11px;
+    color: var(--fg-dim);
+    margin-top: 2px;
+  }
+  .c12-aggregate {
+    font-size: 12px;
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--border);
+    margin-bottom: 6px;
+  }
+  .c12-aggregate .c12-bar-track { margin-top: 3px; }
+  .banner-blocked {
+    background: rgba(215, 58, 73, 0.12);
+    border: 1px solid rgba(215, 58, 73, 0.55);
+    color: var(--fg);
+    padding: 8px;
+    border-radius: 4px;
+    margin: 6px 0;
+    font-size: 11.5px;
+    line-height: 1.4;
+  }
   /* ── Layout / cards ──────────────────────────────────────────────────────── */
   main {
     max-width: 880px;
@@ -653,9 +689,13 @@ export const GUI_HTML = `<!doctype html>
       </span>
     </h2>
     <div class="card-divider"><div class="card-divider-label" data-i18n="labelLocalCompressor">Local Compressor</div></div>
+    <!-- v0.12: banner rendered when every per-token profile with a cap is at ≥100%. -->
+    <div id="all-capped-blocked-banner" style="display:none"></div>
     <!-- v0.11.2: consolidated banner for missing API keys. Populated by refreshModels()
          from the secrets map; hidden when nothing is missing. -->
     <div id="missing-keys-banner" style="display:none;font-size:11px;background:rgba(245,176,65,0.08);border:1px solid rgba(245,176,65,0.35);color:var(--fg);border-radius:6px;padding:6px 8px;margin-bottom:8px;align-items:center;gap:6px;flex-wrap:wrap"></div>
+    <!-- v0.12: aggregate "this month per-token spend" bar, populated by refreshModels(). -->
+    <div id="cost-aggregate-row"></div>
     <!-- v0.11.2: Each label sits directly above its control so the label↔value
          pairing is always visible, even when the sidebar is narrow. Previously
          these two rows looked like an empty "Auto-escalation up to: Preset:" pair. -->
@@ -810,6 +850,24 @@ export const GUI_HTML = `<!doctype html>
       metricTokensSaved: '클라우드 입력 토큰 절감',
       metricCostSaved: '예상 비용 절감',
       metricCallsAvoided: '회피된 클라우드 호출',
+      // v0.12 cost-aware routing: per-profile budget bars
+      groupPerTokenSpend:       '이번 달 per-token 지출',
+      labelMonthlyCap:          '월 한도',
+      labelInputTokensUsed:     '입력 토큰 사용',
+      labelUsdUsed:             'USD 사용',
+      labelNoCap:               '한도 없음',
+      labelBlockedThisMonth:    '한도 도달 — 다음 달까지 차단됨',
+      labelStatusOk:            '정상',
+      labelStatusWarning:       '주의',
+      labelStatusNearLimit:     '임박',
+      labelStatusBlocked:       '차단됨',
+      labelMetadataOnly:        '표시 전용 — 적용 안 됨',
+      labelFixedMonthlyCost:    '월 고정 비용',
+      warnBudgetThreshold:      '한도의 {pct}% 도달',
+      warnAllCappedPerTokenBlocked:
+        '한도가 설정된 모든 per-token 프로파일이 소진되었습니다. 한도 초기화, 상향, ' +
+        '또는 다른 프로파일 추가 전까지 per-token 퍼블릭 클라우드 fallback이 제한될 수 ' +
+        '있습니다. 로컬/한도 없는 프로파일로 라우팅 가능한 작업은 정상 동작합니다.',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -925,6 +983,19 @@ export const GUI_HTML = `<!doctype html>
       enableToggle: 'enable',
       discoverBtn: '🔍 Discover Ollama models',
       discoverDone: 'discovered',
+      // v0.12 cost-aware routing: per-profile budget bars (used by JS, not data-i18n)
+      labelStatusOk:         'OK',
+      labelStatusWarning:    'Warning',
+      labelStatusNearLimit:  'Near limit',
+      labelStatusBlocked:    'Blocked',
+      labelMetadataOnly:     'metadata only',
+      labelFixedMonthlyCost: 'Fixed monthly cost',
+      groupPerTokenSpend:    'This month — per-token spend',
+      warnBudgetThreshold:   '{pct}% of cap reached',
+      warnAllCappedPerTokenBlocked:
+        'All capped per-token profiles are exhausted. Until you reset caps, raise limits, or ' +
+        'add another profile, per-token public-cloud fallback may be restricted. Tasks that can ' +
+        'route to local or uncapped profiles still work normally.',
     },
     ko: {
       offline: '오프라인',
@@ -1070,6 +1141,25 @@ export const GUI_HTML = `<!doctype html>
   const $ = (id) => document.getElementById(id);
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }
+  // v0.12: short-form token count formatter — "1.2k", "850", "3.4M".
+  function formatK(n) {
+    const v = Number(n) || 0;
+    if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M';
+    if (v >= 1_000)     return (v / 1_000).toFixed(1).replace(/\.0$/, '') + 'k';
+    return String(Math.round(v));
+  }
+  // v0.12: mirror of effectivePaymentModel(profile) in packages/core/src/model/ModelProfile.ts.
+  // Kept inline because the GUI script can't import TS.
+  function computeEffectivePaymentModel(profile) {
+    if (!profile) return 'per-token';
+    if (profile.paymentModel) return profile.paymentModel;
+    switch (profile.kind) {
+      case 'local-device':   return 'free';
+      case 'private-remote': return 'free';
+      case 'public-cloud':   return 'per-token';
+    }
+    return 'per-token';
+  }
   function fmtTime(iso) {
     try {
       const d = new Date(iso);
@@ -1670,6 +1760,66 @@ export const GUI_HTML = `<!doctype html>
     }
   }
 
+  // v0.12: aggregate "this month per-token spend" row above the profile list.
+  // Sums monthlyUsdLimit + costUsd across per-token profiles WITH a USD cap.
+  // Only renders when ≥1 such profile exists. No bar color thresholds here —
+  // aggregate is informational, individual rows carry the warning signal.
+  function renderCostAggregateRow(entries, perProfileBudgets, profileUsage) {
+    const host = $('cost-aggregate-row');
+    if (!host) return;
+    let aggUsed = 0;
+    let aggCap = 0;
+    for (const e of (entries || [])) {
+      const p = (e && e.profile) || {};
+      const pm = computeEffectivePaymentModel(p);
+      if (pm !== 'per-token') continue;
+      const cap = perProfileBudgets[e.id] && perProfileBudgets[e.id].monthlyUsdLimit;
+      if (cap === undefined) continue;
+      const used = (profileUsage[e.id] && profileUsage[e.id].month && profileUsage[e.id].month.costUsd) || 0;
+      aggUsed += used;
+      aggCap  += cap;
+    }
+    if (aggCap <= 0) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    const pct = Math.floor((aggUsed / aggCap) * 100);
+    const colorClass = budgetBarColorClass(aggUsed / aggCap);
+    host.style.display = 'block';
+    host.innerHTML =
+      '<div class="c12-aggregate">' +
+        '<div class="dim" data-i18n="groupPerTokenSpend">' + escapeHtml(i18n.groupPerTokenSpend) + '</div>' +
+        '<div class="c12-bar-track"><div class="c12-bar-fill ' + colorClass + '" style="width:' + Math.min(100, pct) + '%"></div></div>' +
+        '<div class="c12-bar-text">$' + aggUsed.toFixed(2) + ' / $' + aggCap.toFixed(2) + ' (' + pct + '%)</div>' +
+      '</div>';
+  }
+
+  // v0.12: render banner when ≥1 capped per-token profile exists AND every
+  // capped per-token profile is at ≥100% (USD OR input-token ratio).
+  function renderAllCappedPerTokenBlockedBanner(entries, perProfileBudgets, profileUsage) {
+    const host = $('all-capped-blocked-banner');
+    if (!host) return;
+    let anyCapped = false;
+    let allBlocked = true;
+    for (const e of (entries || [])) {
+      const p = (e && e.profile) || {};
+      const pm = computeEffectivePaymentModel(p);
+      if (pm !== 'per-token') continue;
+      const cap = perProfileBudgets[e.id];
+      if (!cap || (cap.monthlyUsdLimit === undefined && cap.monthlyInputTokenLimit === undefined)) continue;
+      anyCapped = true;
+      const u = (profileUsage[e.id] && profileUsage[e.id].month) || { inputTokens: 0, costUsd: 0 };
+      const tokenRatio = cap.monthlyInputTokenLimit
+        ? (u.inputTokens || 0) / cap.monthlyInputTokenLimit : 0;
+      const usdRatio = cap.monthlyUsdLimit
+        ? (u.costUsd || 0) / cap.monthlyUsdLimit : 0;
+      if (Math.max(tokenRatio, usdRatio) < 1.0) { allBlocked = false; break; }
+    }
+    if (!anyCapped || !allBlocked) { host.style.display = 'none'; host.innerHTML = ''; return; }
+    host.style.display = 'block';
+    host.innerHTML =
+      '<div class="banner-blocked">🛑 ' +
+        '<span data-i18n="warnAllCappedPerTokenBlocked">' + escapeHtml(i18n.warnAllCappedPerTokenBlocked) + '</span>' +
+      '</div>';
+  }
+
   function renderApiKeysSection(secretMap) {
     const keys = Object.keys(secretMap).sort();
     let section = document.getElementById('api-keys-section');
@@ -1788,17 +1938,91 @@ export const GUI_HTML = `<!doctype html>
   // v0.11.2: render order for tier subheaders.
   const TIER_ORDER = ['local-device', 'private-remote', 'public-cloud'];
 
+  // v0.12: bar-color thresholds — additive to text status. <80% green, 80–94% amber, ≥95% red.
+  function budgetBarColorClass(ratio) {
+    if (ratio >= 0.95) return 'budget-bar-red';
+    if (ratio >= 0.80) return 'budget-bar-amber';
+    return 'budget-bar-green';
+  }
+  function budgetStatusKey(ratio) {
+    if (ratio >= 1.0)  return 'labelStatusBlocked';
+    if (ratio >= 0.95) return 'labelStatusNearLimit';
+    if (ratio >= 0.80) return 'labelStatusWarning';
+    return 'labelStatusOk';
+  }
+  // v0.12: render the per-profile budget bar HTML for a single profile, or '' when
+  // none applies. paymentModel === 'per-token' WITH cap → bar+text+status; flat-rate
+  // with monthlyUsdLimit → "Fixed monthly cost: $X — metadata only"; otherwise ''.
+  function renderProfileBudgetBlock(profileId, profile, budget, usageEntry) {
+    const pm = computeEffectivePaymentModel(profile);
+    const u = usageEntry || { inputTokens: 0, costUsd: 0 };
+    if (pm === 'per-token' && budget && (budget.monthlyUsdLimit !== undefined || budget.monthlyInputTokenLimit !== undefined)) {
+      const tokenRatio = budget.monthlyInputTokenLimit
+        ? (u.inputTokens || 0) / budget.monthlyInputTokenLimit : 0;
+      const usdRatio = budget.monthlyUsdLimit
+        ? (u.costUsd || 0) / budget.monthlyUsdLimit : 0;
+      const ratio = Math.max(tokenRatio, usdRatio);
+      const reasonKey = usdRatio >= tokenRatio ? 'USD' : 'input';
+      const pct = Math.floor(ratio * 100);
+      const statusKey = budgetStatusKey(ratio);
+      const colorClass = budgetBarColorClass(ratio);
+      const usdText = budget.monthlyUsdLimit !== undefined
+        ? '$' + (u.costUsd || 0).toFixed(2) + '/$' + Number(budget.monthlyUsdLimit).toFixed(2)
+        : '';
+      const tokenText = budget.monthlyInputTokenLimit !== undefined
+        ? formatK(u.inputTokens || 0) + '/' + formatK(budget.monthlyInputTokenLimit) + ' input'
+        : '';
+      const sep = (usdText && tokenText) ? ' · ' : '';
+      return (
+        '<div class="c12-budget-bar">' +
+          '<div class="c12-bar-track"><div class="c12-bar-fill ' + colorClass + '" style="width:' + Math.min(100, pct) + '%"></div></div>' +
+          '<div class="c12-bar-text">' +
+            escapeHtml(usdText) + sep + escapeHtml(tokenText) +
+            ' <span class="c12-bar-status" data-i18n="' + statusKey + '">' + escapeHtml(i18n[statusKey]) + '</span>' +
+            ' (' + pct + '% ' + reasonKey + ')' +
+          '</div>' +
+        '</div>'
+      );
+    }
+    if (pm === 'flat-rate' && budget && budget.monthlyUsdLimit !== undefined) {
+      return (
+        '<div class="c12-flat-rate-metadata">' +
+          '<span data-i18n="labelFixedMonthlyCost">' + escapeHtml(i18n.labelFixedMonthlyCost) + '</span>: ' +
+          '$' + Number(budget.monthlyUsdLimit).toFixed(2) +
+          ' <span class="dim" data-i18n="labelMetadataOnly">— ' + escapeHtml(i18n.labelMetadataOnly) + '</span>' +
+        '</div>'
+      );
+    }
+    return '';
+  }
+
   async function refreshModels() {
     try {
-      const [r, secretsR] = await Promise.all([
+      const [r, secretsR, configR, usageR] = await Promise.all([
         jget('/v1/models'),
         jget('/v1/secrets').catch(() => ({ entries: [] })),
+        // v0.12: needed for budget.perProfile (existing endpoint; no new fetch).
+        jget('/v1/config').catch(() => ({ config: {} })),
+        // v0.12: profiles aggregate (Task 4) — present on v0.12+ daemons; older
+        // daemons return { profiles: undefined } and bars simply render at 0%.
+        jget('/v1/usage').catch(() => ({ profiles: {} })),
       ]);
       const entries = r.entries || [];
       const secretMap = {};
       for (const s of (secretsR.entries || [])) secretMap[s.key] = s;
+      // v0.12: client-side join — no new endpoint, no FS read.
+      const perProfileBudgets = (configR && configR.config && configR.config.budget && configR.config.budget.perProfile) || {};
+      const profileUsage = (usageR && usageR.profiles) || {};
+      const usageMonthFor = (id) =>
+        (profileUsage[id] && profileUsage[id].month) || { inputTokens: 0, costUsd: 0 };
+
       const root = $('models-list');
       root.innerHTML = '';
+      // v0.12: aggregate row + all-capped-blocked banner. Both render BEFORE
+      // the tier subheaders so they're visible without scrolling. Helpers
+      // hide their host divs when no relevant data is available.
+      renderCostAggregateRow(entries, perProfileBudgets, profileUsage);
+      renderAllCappedPerTokenBlockedBanner(entries, perProfileBudgets, profileUsage);
       if (entries.length === 0) {
         root.innerHTML = '<div class="empty">no profiles</div>';
         renderMissingKeysBanner(entries, secretMap);
@@ -1855,6 +2079,11 @@ export const GUI_HTML = `<!doctype html>
           if (isDimmedDup) {
             row.style.cssText = 'opacity:0.55;font-size:10.5px;padding:2px 0';
           }
+          // v0.12: per-profile budget bar (per-token w/ cap) or flat-rate metadata
+          // line. Suppressed for dimmed duplicates to avoid visual double-counting.
+          const budgetHtml = isDimmedDup
+            ? ''
+            : renderProfileBudgetBlock(e.id, p, perProfileBudgets[e.id], usageMonthFor(e.id));
           row.innerHTML =
             '<div class="col-grow">' +
               '<div><span class="mono" style="color:var(--accent)">' + escapeHtml(e.id) + '</span>' +
@@ -1867,6 +2096,7 @@ export const GUI_HTML = `<!doctype html>
                 (srcTag ? ' · <span style="color:var(--fg-dim);font-size:10px">' + escapeHtml(srcTag) + '</span>' : '') +
                 (p.requiresApproval ? ' · <span style="color:var(--warn)" title="requires approval">⚠</span>' : '') +
               '</div>' +
+              budgetHtml +
             '</div>' +
             '<button class="tiny" data-action="toggle-enabled" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '" data-enabled="' + (p.enabled === false ? '0' : '1') + '">' +
               (p.enabled === false ? escapeHtml(i18n.enabledOff) : escapeHtml(i18n.enabledOn)) +
