@@ -1950,9 +1950,31 @@ export const GUI_HTML = `<!doctype html>
     if (ratio >= 0.80) return 'labelStatusWarning';
     return 'labelStatusOk';
   }
-  // v0.12: render the per-profile budget bar HTML for a single profile, or '' when
-  // none applies. paymentModel === 'per-token' WITH cap → bar+text+status; flat-rate
-  // with monthlyUsdLimit → "Fixed monthly cost: $X — metadata only"; otherwise ''.
+  // v0.12.1: render the per-profile budget block. Supports four render paths
+  // matching the v0.12 spec §4 table:
+  //   • per-token + (USD and/or token cap) → combined USD+token bar with status
+  //   • flat-rate + USD cap → "Fixed monthly cost: $X — metadata only" line
+  //   • flat-rate + token cap → ALSO a token-only bar (alongside metadata line)
+  //   • free + token cap → token-only bar (USD on a free profile has no meaning;
+  //     doctor warns about it separately, no bar rendered here)
+  // Status text / color for the token-only path is derived from the token ratio.
+  function renderTokenOnlyBar(used, limit) {
+    const ratio = limit ? used / limit : 0;
+    const pct = Math.floor(ratio * 100);
+    const statusKey = budgetStatusKey(ratio);
+    const colorClass = budgetBarColorClass(ratio);
+    const tokenText = formatK(used) + '/' + formatK(limit) + ' input';
+    return (
+      '<div class="c12-budget-bar">' +
+        '<div class="c12-bar-track"><div class="c12-bar-fill ' + colorClass + '" style="width:' + Math.min(100, pct) + '%"></div></div>' +
+        '<div class="c12-bar-text">' +
+          escapeHtml(tokenText) +
+          ' <span class="c12-bar-status" data-i18n="' + statusKey + '">' + escapeHtml(i18n[statusKey]) + '</span>' +
+          ' (' + pct + '% input)' +
+        '</div>' +
+      '</div>'
+    );
+  }
   function renderProfileBudgetBlock(profileId, profile, budget, usageEntry) {
     const pm = computeEffectivePaymentModel(profile);
     const u = usageEntry || { inputTokens: 0, costUsd: 0 };
@@ -1984,14 +2006,23 @@ export const GUI_HTML = `<!doctype html>
         '</div>'
       );
     }
-    if (pm === 'flat-rate' && budget && budget.monthlyUsdLimit !== undefined) {
-      return (
-        '<div class="c12-flat-rate-metadata">' +
-          '<span data-i18n="labelFixedMonthlyCost">' + escapeHtml(i18n.labelFixedMonthlyCost) + '</span>: ' +
-          '$' + Number(budget.monthlyUsdLimit).toFixed(2) +
-          ' <span class="dim" data-i18n="labelMetadataOnly">— ' + escapeHtml(i18n.labelMetadataOnly) + '</span>' +
-        '</div>'
-      );
+    if (pm === 'flat-rate') {
+      let out = '';
+      if (budget && budget.monthlyUsdLimit !== undefined) {
+        out +=
+          '<div class="c12-flat-rate-metadata">' +
+            '<span data-i18n="labelFixedMonthlyCost">' + escapeHtml(i18n.labelFixedMonthlyCost) + '</span>: ' +
+            '$' + Number(budget.monthlyUsdLimit).toFixed(2) +
+            ' <span class="dim" data-i18n="labelMetadataOnly">— ' + escapeHtml(i18n.labelMetadataOnly) + '</span>' +
+          '</div>';
+      }
+      if (budget && budget.monthlyInputTokenLimit !== undefined) {
+        out += renderTokenOnlyBar(u.inputTokens || 0, budget.monthlyInputTokenLimit);
+      }
+      return out;
+    }
+    if (pm === 'free' && budget && budget.monthlyInputTokenLimit !== undefined) {
+      return renderTokenOnlyBar(u.inputTokens || 0, budget.monthlyInputTokenLimit);
     }
     return '';
   }
