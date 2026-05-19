@@ -400,3 +400,15 @@ export {
   type BuildCompressedContextInput,
   type BuildCompressedContextResult,
 } from "./usecases/buildCompressedContext.js";
+
+export {
+  writeArtifact,
+  readArtifact,
+  mutateArtifact,
+  artifactRelativePath,
+  ContextArtifactStoreError,
+  type ContextArtifactStoreErrorCode,
+  type WriteArtifactOptions,
+  type WriteArtifactResult,
+  type ReadArtifactResult,
+} from "./runtime/contextArtifactStore.js";
