@@ -461,9 +461,14 @@ tierkit doctor
 ```
 # Tierkit
 
-Tierkit is a local-first hybrid plugin runtime for AI coding agents.
-It lets you write one plugin format and adapt it to tools like Cline, Zoo/Roo Code, and Continue — while routing work across local models, private remote models, and public cloud models based on risk, cost, and workflow policy.
+Tierkit is a local-first cost optimizer and token firewall for AI coding CLIs.
+It helps tools like Claude Code, Codex CLI, Gemini CLI, Roo Code, Cline, Continue, and aider spend fewer cloud tokens — without losing task quality. Before any premium cloud model sees your project, Tierkit can search files locally, compress them into a minimal high-signal prompt, redact secrets, compare compressed vs. baseline output side-by-side with real provider usage, and route easy work to your local or private models so the expensive model is only used when it actually has to be.
 ```
+
+> Note: §17 is preserved as the historical "target copy" anchor. The
+> canonical lead identity is §0 (Identity) + §1 (Positioning). When the
+> README copy and §17 disagree, §0/§1 win. §17 updated in v0.11.1 to keep
+> the two in sync.
 
 ---
 
