@@ -117,8 +117,9 @@ Different AI coding CLIs have different control models. Trying to wrap them all 
 
 | Tool | Primary integration | Why | Status |
 |---|---|---|---|
-| **Codex CLI** | OpenAI-compatible gateway (`base_url` → Tierkit) | Codex speaks OpenAI natively and treats it as a model provider, not as a context source. Compression policy applied server-side. | Endpoint exists. Compression-on-OpenAI-endpoint deferred to **v0.13**. |
-| **Roo Code / Cline / Continue / aider** | OpenAI-compatible gateway via `tierkit connect <tool>` | These tools also speak OpenAI-compatible and already have `connect` wiring. Same compression server-side. | `connect` shipped. Compression policy deferred to **v0.13**. |
+| **Roo Code / Cline / Continue** | OpenAI-compatible gateway via `tierkit connect <tool>` | These tools also speak OpenAI-compatible and `tierkit connect` writes their config files directly. Same compression server-side once v0.13 adds it. | `connect` shipped for these three (`packages/core/src/usecases/connectTool.ts`). Compression-on-endpoint deferred to **v0.13**. |
+| **Codex CLI** | OpenAI-compatible gateway, **manual** `base_url` config | Codex speaks OpenAI natively. No `tierkit connect codex` yet — user sets the gateway URL in Codex's own env/config. First-class `connect` deferred to **v0.13**. | Endpoint reachable today via manual config. Compression policy deferred to **v0.13**. |
+| **aider** | OpenAI-compatible gateway, **manual** `--openai-api-base` config | aider accepts an OpenAI-compatible base URL via flag / env. No `tierkit connect aider` yet. First-class `connect` deferred to **v0.13**. | Endpoint reachable today via manual config. Compression policy deferred to **v0.13**. |
 | **Claude Code CLI** | Context helper + MCP, **not** agent-loop interception | Claude Code has its own strong agentic context management (Read/Grep/Glob/Bash). Wrapping it with a proxy that pre-compresses risks confusing the loop. Safer initial path: surface `tierkit context build/send` as a manual helper, then expose an MCP server that Claude Code can call when it *wants* compressed context. | Manual helper shipped (v0.11.0). MCP wrapper deferred to **v0.13**. |
 | **Gemini CLI** | MCP / compressed-context provider | Gemini CLI accepts MCP servers; cleaner than retrofitting an OpenAI-compatible shim. | Deferred to **v0.13**. |
 
@@ -296,7 +297,14 @@ The current GUI titles itself "Mission Control" and groups cards as `Integration
 | Action: Compare | Compare baseline vs compressed | 베이스라인 vs 압축 비교 |
 | Action: Send | Send compressed prompt | 압축 프롬프트 전송 |
 
-**Implementation note:** in v0.11.1 we **only** rewrite the labels and reorder/regroup the existing cards. The `Savings` and `Current project` cards are stubs that render existing usage / artifact data with new framing. Real local-preprocessing-success-rate and compressed-vs-baseline-pass-rate metrics depend on validation data (v0.11 manual validation) and v0.12 local-compression rollout — these fields are wired but display `—` until data exists.
+**Implementation note (strict in v0.11.1):**
+
+- The mockup numbers above (`842,000`, `$2.53`, `87.7%`, `4 / 5`, etc.) are **illustrative**. The actual UI stubs ship with **`—` placeholders** until real data exists. No fabricated values.
+- The `Savings` card draws *only* from data that already flows through the daemon today (usage log entries written by `runRoute` / `llmCall`). New "tokens saved" math is fine as a derived calculation from existing usage records; if a metric needs anything not already in the usage log, it shows `—`.
+- The `Current project` card shows **only** what is statically available — there is **no new filesystem scan**. Either: (a) the daemon already knows the last artifact id from in-memory state during the session and shows it, or (b) the card shows `—` with the static text "Run `tierkit context build` to create one." **v0.11.1 does NOT introduce a directory walk of `.tierkit/runtime/context-artifacts/`** — that's a runtime behavior change and out of scope. First-class "last artifact" tracking lands in v0.12.
+- Real local-preprocessing-success-rate, compressed-vs-baseline pass rate, escalation count, and the "downgrade plan?" hint depend on (a) manual validation data (v0.11.x) and (b) v0.12+ local-compression instrumentation. Fields are wired so they render as soon as data exists, but until then they display `—`.
+
+Acceptance: a fresh install of v0.11.1 with no artifacts and no usage history should render every Savings/Current-project field as `—` with no error and no fake number.
 
 ---
 
@@ -346,7 +354,7 @@ The repositioning PR is complete when **all** of the following hold:
 **Copy / docs:**
 - [ ] `README.md` §1 paragraph matches **Appendix A** (English) verbatim.
 - [ ] `README.md` Korean section §1 matches **Appendix B** verbatim.
-- [ ] `README.md` "Quick start" begins with `tierkit context build` (not `pnpm install`).
+- [ ] `README.md` "Quick start" section is replaced verbatim with **Appendix H** — leads with `tierkit context build / show / compare`, not `pnpm install`. The original `pnpm install` / `pnpm -r build` commands move to a new "## Development setup" section that follows.
 - [ ] `docs/SPEC.md` §0–§2 matches **Appendix C** verbatim.
 - [ ] `docs/INTEGRATIONS.md` lead paragraph reframes integrations as "savings channels" (matches **Appendix G** verbatim).
 - [ ] `package.json` (root) `description` matches new wording.
@@ -363,12 +371,13 @@ The repositioning PR is complete when **all** of the following hold:
 - [ ] `tierkit context build/show/send/compare` help descriptions reflect cost-saving framing (currently say "deterministic, compressed context artifact" — adjust to lead with savings).
 
 **Behavior (must NOT change in this PR):**
-- [ ] All existing tests pass (currently 635/635 across packages).
+- [ ] All existing tests pass (currently 635/635 across packages). If a CLI help-text **snapshot** test exists and asserts the `category:` string or top-level help layout, update that snapshot only — do not add new behavioral tests in this PR. Search before assuming: `rg -l "toMatchSnapshot|category:" packages/*/test` and `rg -l "tierkit --help|--help" packages/*/test`.
 - [ ] `pnpm -r typecheck` clean.
-- [ ] No change to any source file under `packages/*/src/` except `packages/core/src/runtime/ui/gui.ts` (UI strings + grouping) and CLI command `usage` blocks (help text only).
+- [ ] No change to any source file under `packages/*/src/` except `packages/core/src/runtime/ui/gui.ts` (UI strings + grouping) and CLI command `usage` blocks (help text + `category:` only).
 - [ ] No HTTP endpoint added / removed / renamed.
 - [ ] No CLI command added / removed / renamed.
 - [ ] No `ModelProfile` / config schema field added / removed / renamed.
+- [ ] No new filesystem reads / writes (specifically: no directory walk under `.tierkit/runtime/context-artifacts/` — see §10).
 
 **Memory / CHANGELOG:**
 - [ ] `CHANGELOG.md` gains a `0.11.1` entry describing this as docs/IA realignment with zero behavior change.
@@ -609,7 +618,12 @@ groupAdvanced  (collapsed by default)
   └─ cardUsage (Today's usage — raw counts; the savings card aggregates)
 ```
 
-**In v0.11.1 PR:** rename labels, regroup. Card *content* stays the same where the underlying data is the same (e.g., `cardTools`, `cardPlugins`, `cardModels`, `cardDaemon`, `cardUsage` are existing cards — only their headings, grouping, and order change). The new `cardSavingsToday` and `cardCurrentArtifact` cards are **stubs** that read from the existing `/v1/usage` and `/v1/context/:id` (the latter does not exist yet — until then, the stub shows the most recent artifact directory under `.tierkit/runtime/context-artifacts/` by filesystem mtime). `cardLocalModels` is a *visual* regrouping of existing `cardModels`'s data behind clearer per-role labels.
+**In v0.11.1 PR:** rename labels, regroup. Card *content* stays the same where the underlying data is the same (e.g., `cardTools`, `cardPlugins`, `cardModels`, `cardDaemon`, `cardUsage` are existing cards — only their headings, grouping, and order change). The new `cardSavingsToday` and `cardCurrentArtifact` cards are **inert stubs**:
+
+- `cardSavingsToday` reads only from `/v1/usage` (which already exists). If a particular metric (e.g., local-preprocessing-success-rate) cannot be derived from current usage records, it displays `—`. No new endpoint is added.
+- `cardCurrentArtifact` displays a fixed message — `"Last compressed context: — · Run \`tierkit context build\` to create one."` — and does NOT read the filesystem. No `fs.readdir` of `.tierkit/runtime/context-artifacts/`, no mtime scan. First-class "last artifact" tracking is a v0.12 deliverable.
+
+`cardLocalModels` is a *visual* regrouping of existing `cardModels`'s data behind clearer per-role labels. The per-role dropdowns shown in the §10 mockup are **read-only placeholders in v0.11.1** — the actual role-assignment field on `ModelProfile` lands in v0.12 (see §15). v0.11.1 displays whichever default profile is currently picked for the relevant tier.
 
 ## Appendix E — CLI top-level help rewrite
 
@@ -717,13 +731,63 @@ themselves a milestone — they are how the cost layer reaches the user.
 
 | Tool | Style today | Style target | Savings effective |
 |---|---|---|---|
-| Codex CLI            | gateway      | gateway + compression policy (v0.13) | partial |
-| Roo Code             | gateway      | gateway + compression policy (v0.13) | partial |
-| Cline                | gateway      | gateway + compression policy (v0.13) | partial |
-| Continue             | gateway      | gateway + compression policy (v0.13) | partial |
-| aider                | gateway      | gateway + compression policy (v0.13) | partial |
-| Claude Code          | helper       | helper + MCP (v0.13)                | manual today |
-| Gemini CLI           | (none)       | MCP (v0.13)                          | not yet |
+| Roo Code             | gateway (`tierkit connect roo`)    | gateway + compression policy (v0.13) | partial |
+| Cline                | gateway (`tierkit connect cline`)  | gateway + compression policy (v0.13) | partial |
+| Continue             | gateway (`tierkit connect continue`)| gateway + compression policy (v0.13) | partial |
+| Codex CLI            | gateway (manual `base_url`)        | first-class `connect` + compression policy (v0.13) | partial, manual |
+| aider                | gateway (manual `--openai-api-base`)| first-class `connect` + compression policy (v0.13) | partial, manual |
+| Claude Code          | helper (`tierkit context build/send`) | helper + MCP server (v0.13)        | manual today |
+| Gemini CLI           | (none)                             | MCP / compressed-context provider (v0.13) | not yet |
 ```
 
 The rest of `docs/INTEGRATIONS.md` (existing per-tool wiring instructions, OpenAI-compatible endpoint URL, etc.) stays as-is. v0.11.1 PR replaces only the lead title + intro + posture table; per-tool sections are not rewritten until each integration is actually upgraded in v0.13.
+
+## Appendix H — `README.md` "Quick start" section (verbatim replacement)
+
+Replace the existing "## Quick start (v0.1)" block (the long block currently leading with `pnpm install`) with the layout below. The cost-saving path leads. The dev-build commands move to a new "Development setup" section underneath.
+
+````markdown
+## Quick start: measure your token savings
+
+Requires [ripgrep](https://github.com/BurntSushi/ripgrep) on `PATH` and at
+least one model profile with API key (default: `claudeSonnet`).
+
+```sh
+# 1. Build a deterministic compressed context for a task — no model call, no cost.
+tierkit context build "fix payment success not unlocking premium report"
+
+# 2. (Optional) Inspect what was selected and how it was compressed.
+tierkit context show <ctx_id>
+
+# 3. A/B baseline vs compressed on the same task — measures real provider usage.
+#    Two paid model calls; TTY confirm or pass --yes for non-interactive.
+tierkit context compare <ctx_id> --profile claudeSonnet --yes
+```
+
+After `compare` you'll see:
+
+- baseline input tokens (estimated + actual)
+- compressed input tokens (estimated + actual)
+- savings in tokens, cost, and latency
+- both response files saved side-by-side for human quality judgment
+
+That output is the entire product loop. Everything else in Tierkit (cost
+routing, plugin policy, workflow sessions, adapter exports) is *how* the
+savings get larger and more automatic — see "Cost routing" and "Advanced"
+sections of this README.
+
+## Development setup
+
+For working on Tierkit itself:
+
+```sh
+pnpm install
+pnpm -r build
+pnpm -r test --run
+```
+
+See [`docs/SPEC.md`](docs/SPEC.md) for the design specification and
+[`CHANGELOG.md`](CHANGELOG.md) for release history.
+````
+
+§13 acceptance criterion references this as **Appendix H** for the README Quick-start replacement.
