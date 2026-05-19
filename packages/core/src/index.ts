@@ -252,8 +252,10 @@ export {
   readUsage,
   summarizeUsage,
   estimateCost,
+  aggregateByProfile,
   type UsageRecord,
   type UsageSummary,
+  type ProfileUsageEntry,
 } from "./runtime/usageLog.js";
 export { checkBudget, type BudgetCheckResult, type BudgetStatus, type BudgetPolicy } from "./runtime/budget.js";
 export {

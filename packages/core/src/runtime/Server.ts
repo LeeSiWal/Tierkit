@@ -8,7 +8,7 @@ import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
 import { loadConfig } from "../config/loadConfig.js";
 import { TIERKIT_VERSION } from "../version.js";
-import { readUsage, summarizeUsage } from "./usageLog.js";
+import { aggregateByProfile, readUsage, summarizeUsage } from "./usageLog.js";
 import { checkBudget } from "./budget.js";
 import { executeLlmCall, type LlmCallRequest } from "./proxy/llmCall.js";
 import {
@@ -238,6 +238,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, {
           records: records.slice(-200),
           summary: serializeSummary(summary),
+          profiles: aggregateByProfile(records, new Date()),
         });
       }
 

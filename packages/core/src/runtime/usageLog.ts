@@ -101,3 +101,52 @@ export function estimateCost(
     (outputTokens / 1_000_000) * c.outputUsdPerMillion
   );
 }
+
+/** Per-profile usage breakdown shape used by /v1/usage.profiles and budget gate. */
+export interface ProfileUsageEntry {
+  today: { calls: number; inputTokens: number; outputTokens: number; costUsd: number };
+  month: { calls: number; inputTokens: number; outputTokens: number; costUsd: number };
+}
+
+/**
+ * Group successful usage records by profileId, splitting into today and
+ * this-month bins relative to `now`. Failed records (`ok: false`) are
+ * excluded from the totals because the budget gate should not count failed
+ * calls against the user's quota.
+ *
+ * Day boundary: UTC date of `now`. Month boundary: year-month of `now`.
+ * Records on the day == `now.getUTCDate()` AND month == `now.getUTCMonth()`
+ * count toward `today`; all records in the same year-month count toward `month`.
+ */
+export function aggregateByProfile(
+  records: UsageRecord[],
+  now: Date,
+): Record<string, ProfileUsageEntry> {
+  const todayYmd = now.toISOString().slice(0, 10);    // "YYYY-MM-DD"
+  const monthYm  = now.toISOString().slice(0, 7);     // "YYYY-MM"
+
+  const out: Record<string, ProfileUsageEntry> = {};
+  for (const r of records) {
+    if (!r.ok) continue;
+    const ts = r.timestamp;
+    const inThisMonth = ts.startsWith(monthYm);
+    if (!inThisMonth) continue;
+    const inToday = ts.startsWith(todayYmd);
+
+    const e = (out[r.profileId] ??= {
+      today: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+      month: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+    });
+    e.month.calls += 1;
+    e.month.inputTokens += r.inputTokens;
+    e.month.outputTokens += r.outputTokens;
+    e.month.costUsd += r.costUsd;
+    if (inToday) {
+      e.today.calls += 1;
+      e.today.inputTokens += r.inputTokens;
+      e.today.outputTokens += r.outputTokens;
+      e.today.costUsd += r.costUsd;
+    }
+  }
+  return out;
+}
