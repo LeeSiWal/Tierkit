@@ -32,7 +32,7 @@ describe("RouteRunCommand budget-exceeded rendering", () => {
     (runRoute as any).mockResolvedValue({
       ok: false,
       code: "budget-exceeded",
-      message: "All candidate profiles were skipped by per-profile budget policy.",
+      message: "No eligible profile remained after per-profile budget policy checks.",
       details: [
         { profileId: "claudeSonnet", reason: "monthly USD cap reached ($20.00)" },
         { profileId: "claudeHaiku",  reason: "monthly input token cap reached (200,000)" },
@@ -41,7 +41,7 @@ describe("RouteRunCommand budget-exceeded rendering", () => {
     const { code, err } = await runCli(["route", "run", "some task"]);
     expect(code).toBe(1);
     expect(err).toContain("budget-exceeded:");
-    expect(err).toContain("All candidate profiles");
+    expect(err).toContain("No eligible profile remained");
     expect(err).toContain("- claudeSonnet:");
     expect(err).toContain("- claudeHaiku:");
     expect(err).toMatch(/tierkit doctor/);

@@ -245,7 +245,10 @@ export async function runRoute(input: RunRouteInput): Promise<RunRouteResult> {
       return {
         ok: false,
         code: "budget-exceeded",
-        message: "All candidate profiles were skipped by per-profile budget policy.",
+        // v0.12.1: neutral wording — v0.12 gates the single resolved profile
+        // once per call. v0.13's iterating fallback chain may revisit the
+        // "all candidates" phrasing once it actually iterates.
+        message: "No eligible profile remained after per-profile budget policy checks.",
         details: [{ profileId, reason: gate.reason }],
       };
     }
