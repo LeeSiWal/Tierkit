@@ -1,16 +1,38 @@
 # Tierkit
 
-Tierkit is a local-first hybrid plugin runtime for AI coding agents.
+Tierkit is a **local-first cost optimizer and token firewall for AI coding CLIs**.
 
-It lets you write one plugin format and adapt it to tools like Cline, Zoo/Roo Code, and Continue — while routing work across local models, private remote models, and public cloud models based on risk, cost, and workflow policy.
+It helps tools like Claude Code, Codex CLI, Gemini CLI, Roo Code, Cline,
+Continue, and aider spend fewer cloud tokens — without losing task quality.
+Before any premium cloud model sees your project, Tierkit can search files
+locally, compress them into a minimal high-signal prompt, redact secrets,
+compare compressed vs. baseline output side-by-side with real provider
+usage, and route easy work to your local or private models so the expensive
+model is only used when it actually has to be.
 
-> Status: **v0.11.0 (v1.7-spike).** **Local-first token firewall** — new `tierkit context build/show/send/compare` CLI flow compresses a workspace into a deterministic `prompt.md` (ripgrep + regex skeleton + keyword hotspots, **no LLM**) and lets you A/B it against the raw baseline through `claudeSonnet` (or any profile) to measure actual token savings + quality. Artifacts land under `.tierkit/runtime/context-artifacts/<id>/` with auto-generated `.tierkit/.gitignore`. Optional `tierkit.config.json#contextCompression`. All prior CLI / HTTP / OpenAI-compatible / plugin / `ModelProfile` surface is unchanged. Requires `ripgrep` for `context build`. v0.10.12: Strict capability filter — new optional `notGoodAt[]` on each ModelProfile is a HARD filter: profiles whose notGoodAt contains the current taskType are removed from the chain entirely (not just demoted). Auto-discovery now tags small models (<7B, "tiny", "small", "nano") with `notGoodAt: [code-generation, refactor, code-review, plan]` and mid-size general 7-13B with `notGoodAt: [code-review]` — so weak models never attempt code work. Mid-size coders (6.7B DeepSeek-Coder etc.) get goodAt for generation/refactor but notGoodAt for review. Effect: with `🚀 Local-coder-first` preset, code-review on a workspace that has only llama3.2:3b + Claude routes straight to Claude — never to the 3B. v0.10.11: Routing presets + threshold editor + goodAt auto-tagging for strong local coders. New Models-card row exposes 3 one-click presets — 🚀 Local-coder-first (raises localStrongMax to 65 so Qwen3-Coder / DeepSeek-Coder / Codestral handle most coding tasks instead of escalating to Claude), 🔒 Private only (no public-cloud auto), ↺ Defaults. A disclosure below opens 4 number inputs for direct riskThresholds editing. Auto-discovery now tags coder-family models (qwen-coder / deepseek-coder / codestral / starcoder / granite-code) with goodAt=[code-generation, refactor, code-review], Qwen/Yi/EXAONE with korean, small models with summarize/translate, and 70B+ with plan — so the router picks the right local first. v0.10.10: Critical fix to v0.10.9 force-edit: when the caller sets `toolChoice: "required"` (or a specific function), `llmCall.ts` now bypasses the XML tool-shim so the structured `tools` array + `toolChoice` flow through to the provider. Without this, the shim would silently strip them and the model only saw a polite XML system-prompt nudge — which weak local models ignored. With the bypass: cloud honors `tool_choice` natively; local Ollama receives `format` JSON-schema enforcement. v0.10.9: Force-edit mode — when the user asks for a code change ("fix X" / "수정해줘") and the model responds with just prose, AgentLoop retries the turn with `tool_choice: "required"` restricted to `write_file` / `apply_diff` / `search_and_replace`. Works on cloud (OpenAI/Anthropic/Gemini-OpenAI-compat honor `tool_choice` natively) AND local Ollama (translated to Ollama's `format` JSON schema, then the constrained JSON envelope is adopted as a toolCall). Composer has a `🪄 force edit` toggle for manual override. v0.10.8: streaming chat. v0.10.7: stale-daemon adoption fix. Adds LLM-generated plugins (describe a plugin in natural language → Tierkit auto-routes the description through an LLM → previews a manifest + rule files → one-click install), model management UI (add/delete profiles, paste API keys from the GUI), Gemini preset, cross-tier auto-fallback (local → private-remote → public-cloud), response quality evaluator (retries on refusal/empty/truncated/repetition), task-type classifier + per-profile `goodAt[]`, and budget-aware downgrade. Prior: tool-shim for weak local models, plugin-rule system-prompt injection, profile viability pre-flighting, mission-control sidebar, OpenAI-compatible endpoint for Roo/Cline/Continue/aider/etc. See the [roadmap in SPEC.md §15](docs/SPEC.md#15-roadmap).
+> Status: **v0.11.0**. Foundation shipped — `tierkit context build / show /
+> send / compare` lets you measure token savings + response quality on real
+> tasks today. v0.11.1 is a docs/UI realignment around this product
+> direction. v0.12 adds local-model preprocessing on top of the
+> deterministic compressor. v0.13 wires the gateway into Codex / Roo /
+> Cline / Continue / aider, and an MCP server for Claude Code and Gemini
+> CLI. Past releases (v0.10.x) added the routing engine, response-quality
+> evaluator, OpenAI-compatible endpoint, and `tierkit connect`. See
+> [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 > 🇰🇷 **한글 안내**
-> - 빠른 시작: 아래 [한국어 안내](#한국어-안내) 섹션
+>
+> Tierkit은 AI 코딩 CLI를 위한 **로컬 우선 비용 최적화 레이어 / 토큰
+> 방화벽**입니다. Claude Code, Codex CLI, Gemini CLI, Roo Code, Cline,
+> Continue, aider 같은 도구가 비싼 클라우드 모델을 덜 쓰면서도 같은 작업
+> 품질을 유지하도록, 클라우드 호출 직전에 로컬에서 파일을 찾고, 압축하고,
+> 시크릿을 마스킹하고, baseline vs compressed를 실측 usage로 비교하고,
+> 쉬운 작업은 로컬/프라이빗 모델로 처리합니다.
+>
+> - 빠른 시작: 아래 [Quick start](#quick-start-measure-your-token-savings) 섹션
 > - 설치부터 첫 모델 호출: [docs/GUIDE.ko.md](docs/GUIDE.ko.md)
 > - VS Code 확장 마켓플레이스 publish: [docs/PUBLISH.ko.md](docs/PUBLISH.ko.md)
-> - VS Code 확장 직접 설치: [마켓플레이스 페이지](https://marketplace.visualstudio.com/items?itemName=leesiwal.tierkit-vscode)에서 **Install** 또는 `code --install-extension leesiwal.tierkit-vscode`
+> - VS Code 확장 직접 설치: 마켓플레이스 페이지에서 **Install**
 
 ## What's in this monorepo
 
