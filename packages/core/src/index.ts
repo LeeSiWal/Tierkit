@@ -412,3 +412,10 @@ export {
   type WriteArtifactResult,
   type ReadArtifactResult,
 } from "./runtime/contextArtifactStore.js";
+
+export {
+  sendCompressedContext,
+  type SendCompressedContextInput,
+  type SendCompressedContextResult,
+  type RouteRunner,
+} from "./usecases/sendCompressedContext.js";
