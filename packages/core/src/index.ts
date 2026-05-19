@@ -439,3 +439,8 @@ export {
   type CompareCompressedContextInput,
   type CompareCompressedContextResult,
 } from "./usecases/compareCompressedContext.js";
+
+// v0.12.1: re-export the single-source-of-truth version constant so the CLI
+// banner (Cli#binaryVersion) stays in sync with packages/core/package.json
+// without a separate hardcoded literal in packages/cli/src/cli.ts.
+export { TIERKIT_VERSION } from "./version.js";

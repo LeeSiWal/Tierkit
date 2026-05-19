@@ -1,4 +1,5 @@
 import { Builtins, Cli } from "clipanion";
+import { TIERKIT_VERSION } from "@tierkit/core";
 import type { CliContext } from "./context/CliContext.js";
 import { InitCommand } from "./commands/InitCommand.js";
 import { DoctorCommand } from "./commands/DoctorCommand.js";
@@ -43,7 +44,10 @@ export function buildCli(): Cli<CliContext> {
   const cli = new Cli<CliContext>({
     binaryLabel: "Tierkit",
     binaryName: "tierkit",
-    binaryVersion: "0.12.0",
+    // v0.12.1: sourced from @tierkit/core (tsup `__TIERKIT_VERSION__` define
+    // → packages/core/package.json#version). Previously a hardcoded literal
+    // that silently drifted from package.json — see v0.11.1 spec for context.
+    binaryVersion: TIERKIT_VERSION,
   });
 
   cli.register(Builtins.HelpCommand);
