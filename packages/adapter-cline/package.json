@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/adapter-cline",
-  "version": "0.10.12",
+  "version": "0.11.0",
   "description": "Tierkit adapter that exports plugins for Cline (.clinerules/ + .cline/).",
   "license": "MIT",
   "type": "module",
