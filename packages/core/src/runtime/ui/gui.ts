@@ -1,5 +1,5 @@
 /**
- * Single-file browser UI for the Tierkit runtime daemon — Mission Control.
+ * Single-file browser UI for the Tierkit runtime daemon — Cost Control.
  *
  * Tierkit's role is a routing/policy layer behind agents (Roo Code, Cline, Continue, etc.),
  * not a chat agent itself. This UI reflects that: it's a control panel that shows which
@@ -618,43 +618,40 @@ export const GUI_HTML = `<!doctype html>
     <div id="usage-by-profile" style="font-size:10.5px;color:var(--fg-dim)"></div>
   </div>
 
-  <!-- ── INTEGRATIONS ───────────────────────────────────────────────── -->
-  <h3 class="settings-group" data-i18n="groupIntegrations">Integrations</h3>
+  <!-- ── SAVINGS ─────────────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupSavings">Savings</h3>
 
   <section class="card">
-    <h2>
-      <span data-i18n="cardTools">Connected tools</span>
-      <span class="h2-actions">
-        <button id="btn-sync" class="tiny" data-i18n="sync">Sync plugins</button>
-      </span>
-    </h2>
-    <div id="tools-list"><div class="empty" data-i18n="loading">loading…</div></div>
+    <h2><span data-i18n="cardSavingsToday">Today</span></h2>
+    <!-- Existing usage-summary refresh logic renders here. Cells render as '—' when /v1/usage has no data. -->
+    <div id="card-savings-today-body">
+      <div class="metric"><span data-i18n="metricTokensSaved">Cloud input tokens saved</span>: <span id="m-tokens-saved">—</span></div>
+      <div class="metric"><span data-i18n="metricCostSaved">Estimated cost saved</span>: <span id="m-cost-saved">—</span></div>
+      <div class="metric"><span data-i18n="metricCallsAvoided">Cloud calls avoided</span>: <span id="m-calls-avoided">—</span></div>
+      <div class="dim" data-i18n="hintNoMeasurements">Run \`tierkit context compare\` to start measuring savings.</div>
+    </div>
   </section>
 
+  <!-- ── CURRENT PROJECT ────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupCurrentProject">Current project</h3>
+
   <section class="card">
-    <h2>
-      <span data-i18n="cardPlugins">Active plugins</span>
-      <span class="h2-actions">
-        <button id="btn-plugin-install" class="tiny" data-i18n="pluginInstall">+ Install</button>
-        <button id="btn-plugin-new" class="tiny" data-i18n="pluginNew">+ New</button>
-        <button id="btn-plugin-gen" class="tiny" data-i18n="genPluginBtn">+ Describe &amp; generate</button>
-      </span>
-    </h2>
-    <div id="plugins-list"><div class="empty" data-i18n="loading">loading…</div></div>
-    <div id="plugin-install-form" style="display:none"></div>
-    <div id="plugin-new-form" style="display:none"></div>
+    <h2><span data-i18n="cardCurrentArtifact">Last compressed context</span></h2>
+    <!-- v0.11.1: static stub. NO filesystem scan. v0.12 will populate from real state. -->
+    <div class="metric">— · <span data-i18n="hintBuildContext">Run \`tierkit context build\` to create one.</span></div>
   </section>
 
-  <!-- ── CONFIGURATION ──────────────────────────────────────────────── -->
-  <h3 class="settings-group" data-i18n="groupConfiguration">Configuration</h3>
+  <!-- ── COST ROUTING ───────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupCostRouting">Cost routing</h3>
 
   <section class="card">
     <h2>
-      <span data-i18n="cardModels">Model profiles</span>
+      <span data-i18n="cardLocalModels">Local + private + cloud models</span>
       <span class="h2-actions">
         <button id="btn-profile-add" class="tiny" data-i18n="profileAdd">+ Add</button>
       </span>
     </h2>
+    <div class="card-divider"><div class="card-divider-label" data-i18n="labelLocalCompressor">Local Compressor</div></div>
     <div id="auto-ceiling-row" class="row dense" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">
       <span class="col-grow"><span data-i18n="autoCeilingLabel">Auto-escalation up to</span>:
         <select id="auto-ceiling-select" class="tiny">
@@ -694,32 +691,65 @@ export const GUI_HTML = `<!doctype html>
     </details>
     <div id="models-list"><div class="empty" data-i18n="loading">loading…</div></div>
     <div id="profile-add-form" style="display:none"></div>
+    <div class="card-divider"><div class="card-divider-label" data-i18n="labelTierOrder">Tier order</div></div>
+    <div class="dim" data-i18n="labelTierOrderValue">local → private → public</div>
   </section>
+
+  <!-- ── INTEGRATIONS ───────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupIntegrations">Integrations</h3>
 
   <section class="card">
     <h2>
-      <span data-i18n="cardConfigDaemon">Config / Daemon</span>
+      <span data-i18n="cardTools">Connected tools</span>
       <span class="h2-actions">
-        <button id="btn-settings-reload" class="tiny" data-i18n="reloadBtn">Reload</button>
+        <button id="btn-sync" class="tiny" data-i18n="sync">Sync plugins</button>
       </span>
     </h2>
-    <div id="settings-view" class="row mono dim" data-i18n="loading">loading…</div>
-    <div class="card-divider">
-      <div class="card-divider-label" data-i18n="cardDaemon">Daemon</div>
-      <div id="daemon-info" class="row mono dim" data-i18n="loading">loading…</div>
-    </div>
+    <div id="tools-list"><div class="empty" data-i18n="loading">loading…</div></div>
   </section>
 
-  <!-- ── ACTIVITY ───────────────────────────────────────────────────── -->
-  <h3 class="settings-group" data-i18n="groupActivity">Activity</h3>
+  <!-- ── ADVANCED ───────────────────────────────────────────────────── -->
+  <h3 class="settings-group" data-i18n="groupAdvanced">Advanced</h3>
 
-  <section class="card full">
-    <h2>
-      <span data-i18n="cardActivity">Recent activity</span>
-      <span id="activity-dot" class="pill pill-dim" style="font-size:10px">●</span>
-    </h2>
-    <div id="activity-list"><div class="empty" data-i18n="loading">loading…</div></div>
-  </section>
+  <details class="advanced-collapse">
+    <summary>Show advanced cards</summary>
+
+    <section class="card">
+      <h2>
+        <span data-i18n="cardPlugins">Active policy rules</span>
+        <span class="h2-actions">
+          <button id="btn-plugin-install" class="tiny" data-i18n="pluginInstall">+ Install</button>
+          <button id="btn-plugin-new" class="tiny" data-i18n="pluginNew">+ New</button>
+          <button id="btn-plugin-gen" class="tiny" data-i18n="genPluginBtn">+ Describe &amp; generate</button>
+        </span>
+      </h2>
+      <div id="plugins-list"><div class="empty" data-i18n="loading">loading…</div></div>
+      <div id="plugin-install-form" style="display:none"></div>
+      <div id="plugin-new-form" style="display:none"></div>
+    </section>
+
+    <section class="card">
+      <h2>
+        <span data-i18n="cardDaemon">Daemon controls</span>
+        <span class="h2-actions">
+          <button id="btn-settings-reload" class="tiny" data-i18n="reloadBtn">Reload</button>
+        </span>
+      </h2>
+      <div id="settings-view" class="row mono dim" data-i18n="loading">loading…</div>
+      <div class="card-divider">
+        <div class="card-divider-label" data-i18n="cardConfigDaemon">Config / Daemon</div>
+        <div id="daemon-info" class="row mono dim" data-i18n="loading">loading…</div>
+      </div>
+    </section>
+
+    <section class="card full">
+      <h2>
+        <span data-i18n="cardUsage">Raw usage log</span>
+        <span id="activity-dot" class="pill pill-dim" style="font-size:10px">●</span>
+      </h2>
+      <div id="activity-list"><div class="empty" data-i18n="loading">loading…</div></div>
+    </section>
+  </details>
 
 </main>
 
@@ -728,8 +758,8 @@ export const GUI_HTML = `<!doctype html>
   // ── Localization tables ────────────────────────────────────────────────────
   const LOCALES = {
     ko: {
-      cardTools: '연결된 도구', cardPlugins: '활성 플러그인', cardActivity: '최근 활동',
-      cardUsage: '오늘 사용량', cardModels: '모델 프로파일', cardDaemon: '데몬',
+      cardTools: '연결된 도구', cardPlugins: '활성 정책 규칙', cardActivity: '최근 활동',
+      cardUsage: '원본 사용량 로그', cardModels: '모델 프로파일 편집', cardDaemon: '데몬 제어',
       cardAgent: '에이전트',
       sync: '플러그인 동기화', pluginNew: '+ 새 플러그인', profileAdd: '+ 추가',
       calls: '호출', tokens: '토큰', cost: '비용',
@@ -753,9 +783,27 @@ export const GUI_HTML = `<!doctype html>
       sessionApproveAll: '이번 세션 동안 모두 승인',
       tabChat: '채팅',
       tabSettings: '설정',
-      groupIntegrations: '통합',
-      groupConfiguration: '설정',
-      groupActivity: '활동',
+      groupSavings: '절감',
+      groupCurrentProject: '현재 프로젝트',
+      groupCostRouting: '비용 라우팅',
+      groupIntegrations: '연결된 도구',
+      groupAdvanced: '고급',
+      cardSavingsToday: '오늘',
+      cardCurrentArtifact: '마지막 압축 컨텍스트',
+      cardLocalModels: '로컬 + 프라이빗 + 클라우드 모델',
+      labelLocalCompressor: '로컬 압축기',
+      labelLocalReviewer: '로컬 리뷰어',
+      labelCloudFinal: '클라우드 최종',
+      labelTierOrder: '계층 순서',
+      labelTierOrderValue: '로컬 → 프라이빗 → 퍼블릭',
+      actionBuild: '압축 컨텍스트 생성',
+      actionCompare: '베이스라인 vs 압축 비교',
+      actionSend: '압축 프롬프트 전송',
+      hintBuildContext: '\`tierkit context build\` 를 실행해 생성하세요.',
+      hintNoMeasurements: '\`tierkit context compare\` 를 실행하면 절감 측정이 시작됩니다.',
+      metricTokensSaved: '클라우드 입력 토큰 절감',
+      metricCostSaved: '예상 비용 절감',
+      metricCallsAvoided: '회피된 클라우드 호출',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
