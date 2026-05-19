@@ -1,8 +1,14 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { CONFIG_FILENAME } from "../config/TierkitConfig.js";
+import { CONFIG_FILENAME, type PerProfileBudget } from "../config/TierkitConfig.js";
 import { TIERKIT_DIR, readRegistry, REGISTRY_FILENAME } from "../plugin/PluginRegistry.js";
 import { loadConfig } from "../config/loadConfig.js";
+import { effectivePaymentModel, type ModelProfile } from "../model/ModelProfile.js";
+import {
+  aggregateByProfile,
+  readUsage,
+  type ProfileUsageEntry,
+} from "../runtime/usageLog.js";
 
 export interface DoctorInput {
   cwd?: string;
@@ -15,6 +21,11 @@ export interface DoctorCheck {
   label: string;
   status: CheckStatus;
   detail?: string;
+  /**
+   * v0.12 additive: profile id this check targets, when applicable. Lets
+   * callers filter/group budget checks by profile without parsing `detail`.
+   */
+  targetProfileId?: string;
 }
 
 export interface DoctorResult {
@@ -34,6 +45,7 @@ export async function doctor(input: DoctorInput = {}): Promise<DoctorResult> {
   checks.push(await checkSecurityPolicy(projectRoot));
   checks.push(await checkPluginRiskCombos(projectRoot));
   checks.push(await checkApiKeyEnvVars(projectRoot));
+  for (const c of await checkPerProfileBudgets(projectRoot)) checks.push(c);
 
   const status: CheckStatus = checks.some((c) => c.status === "fail")
     ? "fail"
@@ -180,6 +192,188 @@ async function checkApiKeyEnvVars(projectRoot: string): Promise<DoctorCheck> {
   } catch (err) {
     return { id: "api-key-env", label: "model API key env vars", status: "warn", detail: (err as Error).message };
   }
+}
+
+// ---------------------------------------------------------------------------
+// v0.12 — per-profile budget checks
+// ---------------------------------------------------------------------------
+
+const EMPTY_USAGE: ProfileUsageEntry = {
+  today: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+  month: { calls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0 },
+};
+
+/**
+ * v0.12 Task 7 — emit doctor checks for every entry in `config.budget.perProfile`:
+ *
+ *  1. `flat-rate-or-free-with-usd-limit` (warning) — USD limit set on a profile
+ *     whose effectivePaymentModel is not "per-token". Message differs per pm:
+ *     - free       → "USD limits are IGNORED"
+ *     - flat-rate  → "USD limits are DISPLAY-ONLY METADATA"
+ *  2. `per-profile-budget-near-threshold` (warning) — per-token profile usage
+ *     is in [80%, 100%) of monthly cap. Optionally appends an estimated
+ *     "cap reached in ~N days" tail (6 gating conditions, see helper).
+ *  3. `per-profile-budget-blocked` (fail/blocker) — per-token profile usage is
+ *     ≥ 100% of monthly cap. Note: the CLI special-cases this id to NOT cause
+ *     exit code 1 — budget block is policy state, not a system failure.
+ *
+ * Orphan budgets (entries whose `profileId` no longer exists in
+ * `modelProfiles`) are silently skipped — out of scope here.
+ */
+async function checkPerProfileBudgets(projectRoot: string): Promise<DoctorCheck[]> {
+  const out: DoctorCheck[] = [];
+  let cfg;
+  try {
+    cfg = await loadConfig(projectRoot);
+  } catch {
+    return out;
+  }
+  if (!cfg.found) return out;
+  const perProfile = cfg.config.budget?.perProfile;
+  if (!perProfile) return out;
+
+  // Aggregate usage once for the whole loop. Failed to read → empty aggregate.
+  let aggregate: Record<string, ProfileUsageEntry> = {};
+  try {
+    const usagePath = path.join(projectRoot, cfg.config.runtime.dataDir, "usage.jsonl");
+    const records = await readUsage(usagePath);
+    aggregate = aggregateByProfile(records, new Date());
+  } catch {
+    aggregate = {};
+  }
+
+  for (const [profileId, budget] of Object.entries(perProfile)) {
+    const profile = cfg.config.modelProfiles[profileId];
+    if (!profile) continue; // orphan budget entry
+    const usage = aggregate[profileId] ?? EMPTY_USAGE;
+
+    const c1 = checkFlatRateOrFreeWithUsdLimit(profileId, profile, budget);
+    if (c1) out.push(c1);
+    const c2 = checkPerProfileBudgetNearThreshold(profileId, profile, budget, usage);
+    if (c2) out.push(c2);
+    const c3 = checkPerProfileBudgetBlocked(profileId, profile, budget, usage);
+    if (c3) out.push(c3);
+  }
+  return out;
+}
+
+function checkFlatRateOrFreeWithUsdLimit(
+  profileId: string,
+  profile: ModelProfile,
+  budget: PerProfileBudget,
+): DoctorCheck | null {
+  const pm = effectivePaymentModel(profile);
+  if (pm === "per-token") return null;
+  const hasUsd =
+    budget.dailyUsdLimit !== undefined || budget.monthlyUsdLimit !== undefined;
+  if (!hasUsd) return null;
+  const detail =
+    pm === "free"
+      ? `profile '${profileId}' has a USD limit set, but paymentModel='free'. ` +
+        `For 'free' profiles, USD limits are IGNORED (Tierkit has no per-call cost ` +
+        `to bill against). Use 'monthlyInputTokenLimit' for local resource protection.`
+      : `profile '${profileId}' has a USD limit set, but paymentModel='flat-rate'. ` +
+        `For 'flat-rate' profiles, USD limits are DISPLAY-ONLY METADATA — the ` +
+        `subscription is already paid, so Tierkit will not block calls on USD. ` +
+        `Use 'monthlyInputTokenLimit' to protect subscription quota.`;
+  return {
+    id: "flat-rate-or-free-with-usd-limit",
+    label: `per-profile budget: ${profileId}`,
+    status: "warn",
+    targetProfileId: profileId,
+    detail,
+  };
+}
+
+function checkPerProfileBudgetNearThreshold(
+  profileId: string,
+  profile: ModelProfile,
+  budget: PerProfileBudget,
+  usage: ProfileUsageEntry,
+): DoctorCheck | null {
+  const pm = effectivePaymentModel(profile);
+  if (pm !== "per-token") return null;
+  const tokenRatio =
+    budget.monthlyInputTokenLimit && budget.monthlyInputTokenLimit > 0
+      ? usage.month.inputTokens / budget.monthlyInputTokenLimit
+      : 0;
+  const usdRatio =
+    budget.monthlyUsdLimit && budget.monthlyUsdLimit > 0
+      ? usage.month.costUsd / budget.monthlyUsdLimit
+      : 0;
+  const ratio = Math.max(tokenRatio, usdRatio);
+  if (ratio < 0.8 || ratio >= 1.0) return null;
+
+  const usdDominant = usdRatio >= tokenRatio;
+  const reasonLabel = usdDominant ? "USD" : "input token";
+  const pct = Math.floor(ratio * 100);
+  const usedAmount = usdDominant
+    ? `$${usage.month.costUsd.toFixed(2)} / $${(budget.monthlyUsdLimit ?? 0).toFixed(2)}`
+    : `${usage.month.inputTokens.toLocaleString()} / ${(budget.monthlyInputTokenLimit ?? 0).toLocaleString()}`;
+  let detail = `profile '${profileId}' is at ${pct}% of monthly ${reasonLabel} cap (${usedAmount}).`;
+
+  // Conditional "cap reached in ~N days" — all 6 conditions must hold:
+  //   (1) pm === "per-token"   [already verified above]
+  //   (2) some monthly cap set [already verified by ratio > 0]
+  //   (3) ratio >= 50%         [implied by ratio >= 80% here]
+  //   (4) day-of-month >= 3    [need >=3 days of history for a useful avg]
+  //   (5) not yet blocked      [ratio < 1.0 already enforced]
+  //   (6) daily-avg > 0
+  const now = new Date();
+  const day = now.getUTCDate();
+  if (day >= 3 && ratio >= 0.5) {
+    const usedNow = usdDominant ? usage.month.costUsd : usage.month.inputTokens;
+    const limit = usdDominant
+      ? (budget.monthlyUsdLimit ?? 0)
+      : (budget.monthlyInputTokenLimit ?? 0);
+    const dailyAvg = usedNow / day;
+    if (dailyAvg > 0) {
+      const remaining = Math.max(0, limit - usedNow);
+      const daysUntilCap = Math.round(remaining / dailyAvg);
+      detail +=
+        ` Estimated based on this month's daily average so far: cap reached in ~${daysUntilCap} days.`;
+    }
+  }
+
+  return {
+    id: "per-profile-budget-near-threshold",
+    label: `per-profile budget: ${profileId}`,
+    status: "warn",
+    targetProfileId: profileId,
+    detail,
+  };
+}
+
+function checkPerProfileBudgetBlocked(
+  profileId: string,
+  profile: ModelProfile,
+  budget: PerProfileBudget,
+  usage: ProfileUsageEntry,
+): DoctorCheck | null {
+  const pm = effectivePaymentModel(profile);
+  if (pm !== "per-token") return null;
+  const tokenRatio =
+    budget.monthlyInputTokenLimit && budget.monthlyInputTokenLimit > 0
+      ? usage.month.inputTokens / budget.monthlyInputTokenLimit
+      : 0;
+  const usdRatio =
+    budget.monthlyUsdLimit && budget.monthlyUsdLimit > 0
+      ? usage.month.costUsd / budget.monthlyUsdLimit
+      : 0;
+  if (Math.max(tokenRatio, usdRatio) < 1.0) return null;
+  const usdDominant = usdRatio >= tokenRatio;
+  const reason = usdDominant
+    ? `monthly USD cap ($${(budget.monthlyUsdLimit ?? 0).toFixed(2)} reached)`
+    : `monthly input token cap (${(budget.monthlyInputTokenLimit ?? 0).toLocaleString()} reached)`;
+  return {
+    id: "per-profile-budget-blocked",
+    label: `per-profile budget: ${profileId}`,
+    status: "fail",
+    targetProfileId: profileId,
+    detail:
+      `profile '${profileId}' is blocked by ${reason}. ` +
+      `Routing to this profile will be skipped until next reset (monthly) or until cap raised.`,
+  };
 }
 
 async function checkRegistryPluginPaths(projectRoot: string): Promise<DoctorCheck> {
