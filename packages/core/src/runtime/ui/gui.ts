@@ -653,18 +653,23 @@ export const GUI_HTML = `<!doctype html>
       </span>
     </h2>
     <div class="card-divider"><div class="card-divider-label" data-i18n="labelLocalCompressor">Local Compressor</div></div>
-    <div id="auto-ceiling-row" class="row dense" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">
-      <span class="col-grow"><span data-i18n="autoCeilingLabel">Auto-escalation up to</span>:
-        <select id="auto-ceiling-select" class="tiny">
-          <option value="local-device">local-device</option>
-          <option value="private-remote">private-remote</option>
-          <option value="public-cloud">public-cloud</option>
-        </select>
-      </span>
-      <button id="btn-discover-ollama" class="tiny" data-i18n="discoverBtn">🔍 Discover Ollama models</button>
+    <!-- v0.11.2: consolidated banner for missing API keys. Populated by refreshModels()
+         from the secrets map; hidden when nothing is missing. -->
+    <div id="missing-keys-banner" style="display:none;font-size:11px;background:rgba(245,176,65,0.08);border:1px solid rgba(245,176,65,0.35);color:var(--fg);border-radius:6px;padding:6px 8px;margin-bottom:8px;align-items:center;gap:6px;flex-wrap:wrap"></div>
+    <!-- v0.11.2: Each label sits directly above its control so the label↔value
+         pairing is always visible, even when the sidebar is narrow. Previously
+         these two rows looked like an empty "Auto-escalation up to: Preset:" pair. -->
+    <div id="auto-ceiling-row" style="font-size:11px;color:var(--fg-dim);margin-bottom:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <label for="auto-ceiling-select" style="font-weight:600"><span data-i18n="autoCeilingLabel">Auto-escalation up to</span>:</label>
+      <select id="auto-ceiling-select" class="tiny">
+        <option value="local-device">local-device</option>
+        <option value="private-remote">private-remote</option>
+        <option value="public-cloud">public-cloud</option>
+      </select>
+      <button id="btn-discover-ollama" class="tiny" style="margin-left:auto" data-i18n="discoverBtn">🔍 Discover Ollama models</button>
     </div>
-    <div id="presets-row" class="row dense" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px;align-items:center;flex-wrap:wrap;gap:4px">
-      <span data-i18n="presetsLabel">Preset:</span>
+    <div id="presets-row" style="font-size:11px;color:var(--fg-dim);margin-bottom:8px;display:flex;align-items:center;flex-wrap:wrap;gap:4px">
+      <span style="font-weight:600;margin-right:2px" data-i18n="presetsLabel">Preset:</span>
       <button class="tiny" data-preset="local-coder-first" title="Optimized for strong local coders (Qwen3-Coder, DeepSeek-Coder, ...)">🚀 <span data-i18n="presetLocalCoder">Local-coder-first</span></button>
       <button class="tiny" data-preset="private-only" title="Local + private-remote only — no public cloud">🔒 <span data-i18n="presetPrivateOnly">Private only</span></button>
       <button class="tiny" data-preset="tierkit-default" title="Reset to Tierkit defaults">↺ <span data-i18n="presetDefault">Defaults</span></button>
@@ -1621,6 +1626,50 @@ export const GUI_HTML = `<!doctype html>
     };
   }
 
+  // v0.11.2 (Polish 4): consolidate per-profile "API key missing" warnings into a
+  // single banner at the top of the Cost routing card. Walks the profile list,
+  // collects unique apiKeyEnv names that aren't satisfied, and surfaces an
+  // "Add keys" CTA that scrolls to (and opens) the existing API keys section.
+  function renderMissingKeysBanner(entries, secretMap) {
+    const banner = $('missing-keys-banner');
+    if (!banner) return;
+    const missing = [];
+    const seen = new Set();
+    for (const e of (entries || [])) {
+      const p = e.profile || {};
+      const env = p.apiKeyEnv;
+      if (!env) continue;
+      if (seen.has(env)) continue;
+      const set = !!(secretMap[env] && secretMap[env].set);
+      if (!set) { missing.push(env); seen.add(env); }
+    }
+    if (missing.length === 0) { banner.style.display = 'none'; banner.innerHTML = ''; return; }
+    const label = lang === 'ko' ? '누락된 API 키' : 'Missing API keys';
+    const addBtn = lang === 'ko' ? '키 추가' : 'Add keys';
+    banner.style.display = 'flex';
+    banner.innerHTML =
+      '<span style="color:var(--warn);font-weight:600">⚠ ' + escapeHtml(label) + ':</span> ' +
+      '<span class="mono" style="font-size:11px">' + missing.map(escapeHtml).join(' · ') + '</span>' +
+      '<button id="missing-keys-add" class="tiny" style="margin-left:auto">' + escapeHtml(addBtn) + '</button>';
+    const addEl = document.getElementById('missing-keys-add');
+    if (addEl) {
+      addEl.onclick = () => {
+        // Scroll the existing "API Keys" subsection into view if it exists.
+        const target = document.getElementById('api-keys-section');
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          target.style.outline = '1px solid var(--accent)';
+          setTimeout(() => { target.style.outline = ''; }, 1500);
+          // Auto-open the set-key dialog for the first missing one to make the
+          // CTA feel immediately useful.
+          if (missing[0]) openSetKeyDialog(missing[0]);
+        } else if (missing[0]) {
+          openSetKeyDialog(missing[0]);
+        }
+      };
+    }
+  }
+
   function renderApiKeysSection(secretMap) {
     const keys = Object.keys(secretMap).sort();
     let section = document.getElementById('api-keys-section');
@@ -1727,6 +1776,18 @@ export const GUI_HTML = `<!doctype html>
     };
   }
 
+  // v0.11.2: heuristic — is a profile id pattern auto-discovered?
+  // Discovered Ollama profiles have ids like "ollama-qwen2-5-coder-7b" (provider
+  // prefix + flattened model). We prefer the explicit source === "discovered"
+  // signal returned by /v1/models when present; this is only used as a fallback
+  // for older daemons.
+  function isAutoDiscoveredId(id) {
+    return /^ollama-[a-z0-9][a-z0-9-]*$/.test(String(id || ''));
+  }
+
+  // v0.11.2: render order for tier subheaders.
+  const TIER_ORDER = ['local-device', 'private-remote', 'public-cloud'];
+
   async function refreshModels() {
     try {
       const [r, secretsR] = await Promise.all([
@@ -1740,38 +1801,86 @@ export const GUI_HTML = `<!doctype html>
       root.innerHTML = '';
       if (entries.length === 0) {
         root.innerHTML = '<div class="empty">no profiles</div>';
+        renderMissingKeysBanner(entries, secretMap);
         renderApiKeysSection(secretMap);
         return;
       }
+      // v0.11.2: hide the default "workspace" source tag entirely (it's the most
+      // common origin and the repetition was visual noise). Only non-default
+      // sources get a small dim tag.
       const srcLabel = lang === 'ko'
-        ? { bundled: '기본', user: '사용자', workspace: '워크스페이스' }
-        : { bundled: 'bundled', user: 'user', workspace: 'workspace' };
+        ? { bundled: '기본', user: '사용자 설정', workspace: '', discovered: '자동 감지' }
+        : { bundled: 'bundled', user: 'user-config', workspace: '', discovered: 'discovered' };
+
+      // Group entries by tier (Polish 2).
+      const groups = { 'local-device': [], 'private-remote': [], 'public-cloud': [], 'other': [] };
+      for (const e of entries) {
+        const kind = (e.profile && e.profile.kind) || 'other';
+        (groups[kind] || groups.other).push(e);
+      }
+
+      // Build a quick lookup so we can demote auto-discovered duplicates of
+      // user-named profiles (Polish 3). Key = "<provider>::<model>".
+      const namedByProviderModel = new Map();
       for (const e of entries) {
         const p = e.profile || {};
-        const keyMissing = p.apiKeyEnv && !(secretMap[p.apiKeyEnv] && secretMap[p.apiKeyEnv].set);
-        const row = document.createElement('div');
-        row.className = 'row dense';
-        row.innerHTML =
-          '<div class="col-grow">' +
-            '<div><span class="mono" style="color:var(--accent)">' + escapeHtml(e.id) + '</span>' +
-              ' <span class="dim">(' + escapeHtml(p.kind || '?') + ')</span></div>' +
-            '<div class="dim mono" style="margin-top:2px;font-size:10.5px">' +
-              escapeHtml(p.provider || '') + ' · ' + escapeHtml(p.model || '') +
-              ' · <span style="color:var(--fg-dim)">' + escapeHtml(srcLabel[e.source] || e.source) + '</span>' +
-              (p.requiresApproval ? ' · <span style="color:var(--warn)">⚠</span>' : '') +
-              (keyMissing
-                ? ' · <span style="color:var(--warn)">⚠ ' + escapeHtml(i18n.keyMissing) + '</span>' +
-                  ' <button class="tiny" data-action="setkey" data-key="' + escapeHtml(p.apiKeyEnv) + '">' + escapeHtml(i18n.setKeyBtn) + '</button>'
-                : '') +
-            '</div>' +
-          '</div>' +
-          '<button class="tiny" data-action="toggle-enabled" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '" data-enabled="' + (p.enabled === false ? '0' : '1') + '">' +
-            (p.enabled === false ? escapeHtml(i18n.enabledOff) : escapeHtml(i18n.enabledOn)) +
-          '</button>' +
-          ' <button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
-          ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>';
-        root.appendChild(row);
+        const isDiscovered = e.source === 'discovered' || isAutoDiscoveredId(e.id);
+        if (isDiscovered) continue;
+        const k = (p.provider || '') + '::' + (p.model || '');
+        if (!namedByProviderModel.has(k)) namedByProviderModel.set(k, e.id);
       }
+
+      const tierHeadings = lang === 'ko'
+        ? { 'local-device': '로컬 (장비)', 'private-remote': '프라이빗 (원격)', 'public-cloud': '클라우드 (공개)', 'other': '기타' }
+        : { 'local-device': 'Local (device)', 'private-remote': 'Private (remote)', 'public-cloud': 'Cloud (public)', 'other': 'Other' };
+
+      const renderTier = (tierKey) => {
+        const list = groups[tierKey] || [];
+        if (list.length === 0) return;
+        const heading = document.createElement('div');
+        heading.style.cssText = 'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg-dim);margin:10px 0 4px;display:flex;align-items:center;gap:6px';
+        heading.innerHTML =
+          '<span>' + escapeHtml(tierHeadings[tierKey] || tierKey) + '</span>' +
+          '<span style="flex:1;border-top:1px solid var(--border);opacity:0.6"></span>';
+        root.appendChild(heading);
+        for (const e of list) {
+          const p = e.profile || {};
+          const isDiscovered = e.source === 'discovered' || isAutoDiscoveredId(e.id);
+          const dupKey = (p.provider || '') + '::' + (p.model || '');
+          const namedDup = isDiscovered ? namedByProviderModel.get(dupKey) : undefined;
+          const isDimmedDup = !!(namedDup && namedDup !== e.id);
+          const srcTag = srcLabel[e.source];
+          const row = document.createElement('div');
+          row.className = 'row dense';
+          if (isDimmedDup) {
+            row.style.cssText = 'opacity:0.55;font-size:10.5px;padding:2px 0';
+          }
+          row.innerHTML =
+            '<div class="col-grow">' +
+              '<div><span class="mono" style="color:var(--accent)">' + escapeHtml(e.id) + '</span>' +
+                (isDimmedDup
+                  ? ' <span class="dim" style="font-size:10px">↳ duplicate of ' + escapeHtml(namedDup) + '</span>'
+                  : '') +
+              '</div>' +
+              '<div class="dim mono" style="margin-top:2px;font-size:10.5px">' +
+                escapeHtml(p.provider || '') + ' · ' + escapeHtml(p.model || '') +
+                (srcTag ? ' · <span style="color:var(--fg-dim);font-size:10px">' + escapeHtml(srcTag) + '</span>' : '') +
+                (p.requiresApproval ? ' · <span style="color:var(--warn)" title="requires approval">⚠</span>' : '') +
+              '</div>' +
+            '</div>' +
+            '<button class="tiny" data-action="toggle-enabled" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '" data-enabled="' + (p.enabled === false ? '0' : '1') + '">' +
+              (p.enabled === false ? escapeHtml(i18n.enabledOff) : escapeHtml(i18n.enabledOn)) +
+            '</button>' +
+            ' <button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
+            ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>';
+          root.appendChild(row);
+        }
+      };
+      for (const tierKey of TIER_ORDER) renderTier(tierKey);
+      renderTier('other');
+
+      renderMissingKeysBanner(entries, secretMap);
+
       root.querySelectorAll('button[data-action="test"]').forEach((b) => {
         b.onclick = async () => {
           const id = b.getAttribute('data-id'); b.disabled = true; b.textContent = '...';
@@ -2756,30 +2865,16 @@ export const GUI_HTML = `<!doctype html>
     const host = $('settings-view');
     try {
       const r = await jget('/v1/config');
-      const profileEntries = Object.entries(r.config?.modelProfiles || {});
-      const sources = r.profileSources || {};
-      const rows = profileEntries.map(([id, p]) => {
-        const src = sources[id] || 'unknown';
-        const tier = p.tier ? '<span class="pill pill-accent" style="font-size:9px">' + escapeHtml(p.tier) + '</span>' : '';
-        return '<tr>' +
-          '<td><b>' + escapeHtml(id) + '</b> ' + tier + '</td>' +
-          '<td>' + escapeHtml(p.provider || '') + '</td>' +
-          '<td>' + escapeHtml(p.model || '') + '</td>' +
-          '<td><span class="pill pill-dim" style="font-size:9px">' + escapeHtml(src) + '</span></td>' +
-          '</tr>';
-      }).join('');
+      // v0.11.2: removed redundant profile table — Cost routing card already
+      // shows the same data. Keep only the config paths + found status here.
       const cfgPath = r.configPath || (lang === 'ko' ? '없음' : 'none');
       const userPath = r.userConfigPath || (lang === 'ko' ? '없음' : 'none');
       host.innerHTML =
-        '<div style="margin-bottom:8px;font-family:var(--mono);font-size:11px">' +
+        '<div style="font-family:var(--mono);font-size:11px">' +
           '<div>workspace: <span class="dim">' + escapeHtml(cfgPath) + '</span></div>' +
           '<div>user: <span class="dim">' + escapeHtml(userPath) + '</span></div>' +
           '<div>found: <span class="dim">' + (r.found ? 'yes' : 'no (using bundled defaults)') + '</span></div>' +
-        '</div>' +
-        '<table style="width:100%;border-collapse:collapse;font-size:11px;font-family:var(--mono)">' +
-        '<thead><tr style="text-align:left;border-bottom:1px solid var(--border)">' +
-          '<th>profile</th><th>provider</th><th>model</th><th>source</th></tr></thead>' +
-        '<tbody>' + (rows || '<tr><td colspan="4" class="dim">no profiles</td></tr>') + '</tbody></table>';
+        '</div>';
     } catch (e) {
       host.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
     }
