@@ -6,7 +6,7 @@ export class RuntimeStartCommand extends Command<CliContext> {
   static override paths = [["runtime", "start"]];
 
   static override usage = Command.Usage({
-    category: "Runtime",
+    category: "Diagnostics",
     description: "Start the Tierkit runtime daemon (foreground)",
     examples: [
       ["Start with config defaults", "tierkit runtime start"],

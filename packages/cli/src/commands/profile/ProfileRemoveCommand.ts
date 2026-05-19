@@ -6,7 +6,7 @@ export class ProfileRemoveCommand extends Command<CliContext> {
   static override paths = [["profile", "remove"]];
 
   static override usage = Command.Usage({
-    category: "Profile",
+    category: "Advanced",
     description: "Remove a model profile from tierkit.config.json (writes an explicit null entry to suppress bundled defaults)",
     examples: [
       ["Suppress a bundled default in the current workspace", "tierkit profile remove gpt4o"],

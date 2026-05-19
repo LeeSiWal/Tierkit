@@ -7,7 +7,7 @@ export class ExportGenericCommand extends Command<CliContext> {
   static override paths = [["export", "generic"]];
 
   static override usage = Command.Usage({
-    category: "Export",
+    category: "Integrations",
     description: "Export installed plugins as tool-neutral markdown",
     examples: [
       ["Export to default ./dist/tierkit", "tierkit export generic"],

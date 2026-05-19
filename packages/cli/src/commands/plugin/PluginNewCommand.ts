@@ -6,7 +6,7 @@ export class PluginNewCommand extends Command<CliContext> {
   static override paths = [["plugin", "new"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description:
       "Scaffold a new Tierkit plugin directory with manifest + one sample command + one sample mode + one sample rule. " +
       "After editing, run `tierkit plugin install <dir>` then `tierkit plugin enable <id>`.",

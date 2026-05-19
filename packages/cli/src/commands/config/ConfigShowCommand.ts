@@ -7,7 +7,7 @@ export class ConfigShowCommand extends Command<CliContext> {
   static override paths = [["config", "show"]];
 
   static override usage = Command.Usage({
-    category: "Config",
+    category: "Cost routing",
     description: "Print the loaded tierkit.config.json (env-var values masked by default)",
     examples: [
       ["Show config with API keys masked", "tierkit config show"],

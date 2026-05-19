@@ -6,7 +6,7 @@ export class RuntimeStatusCommand extends Command<CliContext> {
   static override paths = [["runtime", "status"]];
 
   static override usage = Command.Usage({
-    category: "Runtime",
+    category: "Diagnostics",
     description: "Show whether the runtime daemon is running and reachable",
     examples: [["Check status", "tierkit runtime status"]],
   });

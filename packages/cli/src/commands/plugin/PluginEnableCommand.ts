@@ -9,7 +9,7 @@ export class PluginEnableCommand extends Command<CliContext> {
   static override paths = [["plugin", "enable"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description: "Add a plugin id to tierkit.config.json::activePlugins",
     examples: [["Enable an installed plugin", "tierkit plugin enable superpowers-free"]],
   });

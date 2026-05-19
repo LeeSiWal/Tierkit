@@ -11,7 +11,7 @@ export class ExportRooCommand extends Command<CliContext> {
   ];
 
   static override usage = Command.Usage({
-    category: "Export",
+    category: "Integrations",
     description: "Export installed plugins for Roo Code / Zoo Code (.roomodes + .roo/)",
     examples: [
       ["Export at project root (default)", "tierkit export roo"],

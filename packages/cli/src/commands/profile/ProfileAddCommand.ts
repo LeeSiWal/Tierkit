@@ -9,7 +9,7 @@ export class ProfileAddCommand extends Command<CliContext> {
   static override paths = [["profile", "add"]];
 
   static override usage = Command.Usage({
-    category: "Profile",
+    category: "Advanced",
     description: "Add a model profile to tierkit.config.json (workspace) or ~/.tierkit/config.json (user)",
     examples: [
       ["Add a local Ollama coder profile", "tierkit profile add localCoder --provider ollama --model qwen2.5-coder:7b"],

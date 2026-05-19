@@ -16,8 +16,8 @@ export class ContextBuildCommand extends Command<CliContext> {
   static override paths = [["context", "build"]];
 
   static override usage = Command.Usage({
-    category: "Context",
-    description: "Build a deterministic, compressed context artifact for a task (no LLM)",
+    category: "Savings",
+    description: "Find candidate files locally and build a compressed prompt (no LLM, no cost). Run `context compare` to measure savings.",
     examples: [
       ["Build for a task", 'tierkit context build "fix Toss payment bug"'],
       ["Override file/hotspot limits", 'tierkit context build "..." --max-files 12 --max-hotspots 5'],

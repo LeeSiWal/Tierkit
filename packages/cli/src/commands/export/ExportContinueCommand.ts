@@ -8,7 +8,7 @@ export class ExportContinueCommand extends Command<CliContext> {
   static override paths = [["export", "continue"]];
 
   static override usage = Command.Usage({
-    category: "Export",
+    category: "Integrations",
     description: "Export installed plugins for Continue (.continue/{config.yaml, rules, prompts, mcp})",
     examples: [
       ["Export at project root (default)", "tierkit export continue"],

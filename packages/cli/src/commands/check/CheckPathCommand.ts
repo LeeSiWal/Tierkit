@@ -7,7 +7,7 @@ export class CheckPathCommand extends Command<CliContext> {
   static override paths = [["check", "path"]];
 
   static override usage = Command.Usage({
-    category: "Check",
+    category: "Diagnostics",
     description: "Check whether a file path matches the sensitive-file blocklist",
     examples: [
       ["Check a config path", "tierkit check path .env"],

@@ -9,7 +9,7 @@ export class PluginDisableCommand extends Command<CliContext> {
   static override paths = [["plugin", "disable"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description: "Remove a plugin id from tierkit.config.json::activePlugins (keeps it installed)",
     examples: [["Disable an active plugin", "tierkit plugin disable superpowers-free"]],
   });

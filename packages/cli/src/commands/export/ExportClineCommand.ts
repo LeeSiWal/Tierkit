@@ -8,7 +8,7 @@ export class ExportClineCommand extends Command<CliContext> {
   static override paths = [["export", "cline"]];
 
   static override usage = Command.Usage({
-    category: "Export",
+    category: "Integrations",
     description: "Export installed plugins for Cline (.clinerules/ + .cline/mcp/)",
     examples: [
       ["Export at project root (default)", "tierkit export cline"],

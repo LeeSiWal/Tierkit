@@ -6,7 +6,7 @@ export class SessionStatusCommand extends Command<CliContext> {
   static override paths = [["session", "status"]];
 
   static override usage = Command.Usage({
-    category: "Session",
+    category: "Advanced",
     description: "Show the current workflow session (if any) and effective freedom level",
     examples: [["Check session", "tierkit session status"]],
   });

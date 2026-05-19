@@ -8,7 +8,7 @@ export class RouteRunCommand extends Command<CliContext> {
   static override paths = [["route", "run"]];
 
   static override usage = Command.Usage({
-    category: "Routing",
+    category: "Cost routing",
     description: "Route a task through Tierkit and stream the model response",
     examples: [
       ['Auto-routed (default streaming)', 'tierkit route run "summarize this project"'],

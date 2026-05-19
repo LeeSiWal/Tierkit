@@ -6,7 +6,7 @@ export class SessionApprovePlanCommand extends Command<CliContext> {
   static override paths = [["session", "approve-plan"]];
 
   static override usage = Command.Usage({
-    category: "Session",
+    category: "Advanced",
     description: "Mark the plan approved on the current session (required by strict freedom for mode=execute)",
     examples: [["Approve current plan", "tierkit session approve-plan"]],
   });

@@ -6,7 +6,7 @@ export class SessionAdvanceCommand extends Command<CliContext> {
   static override paths = [["session", "advance"]];
 
   static override usage = Command.Usage({
-    category: "Session",
+    category: "Advanced",
     description: "Advance the current session to a new state",
     examples: [
       ["Move to implementing", "tierkit session advance implementing"],

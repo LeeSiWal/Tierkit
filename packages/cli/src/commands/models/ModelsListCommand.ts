@@ -7,7 +7,7 @@ export class ModelsListCommand extends Command<CliContext> {
   static override paths = [["models", "list"]];
 
   static override usage = Command.Usage({
-    category: "Models",
+    category: "Cost routing",
     description: "List model profiles declared in tierkit.config.json",
     examples: [["List configured model profiles", "tierkit models list"]],
   });

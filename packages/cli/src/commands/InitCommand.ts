@@ -6,7 +6,7 @@ export class InitCommand extends Command<CliContext> {
   static override paths = [["init"]];
 
   static override usage = Command.Usage({
-    category: "Project",
+    category: "Advanced",
     description: "Initialize a Tierkit project in the current directory",
     examples: [
       ["Initialize with default target", "tierkit init"],

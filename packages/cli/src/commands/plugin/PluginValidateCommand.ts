@@ -7,7 +7,7 @@ export class PluginValidateCommand extends Command<CliContext> {
   static override paths = [["plugin", "validate"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description: "Validate a Tierkit plugin directory",
     examples: [
       ["Validate a plugin", "tierkit plugin validate ./my-plugin"],

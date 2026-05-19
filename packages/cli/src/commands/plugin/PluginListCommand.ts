@@ -7,7 +7,7 @@ export class PluginListCommand extends Command<CliContext> {
   static override paths = [["plugin", "list"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description: "List plugins installed in the current Tierkit project",
     examples: [["List installed plugins", "tierkit plugin list"]],
   });

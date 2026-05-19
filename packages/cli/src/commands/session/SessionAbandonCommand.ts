@@ -6,7 +6,7 @@ export class SessionAbandonCommand extends Command<CliContext> {
   static override paths = [["session", "abandon"]];
 
   static override usage = Command.Usage({
-    category: "Session",
+    category: "Advanced",
     description: "Abandon the current session (no further runs against it).",
     examples: [["Abandon current", "tierkit session abandon"]],
   });

@@ -6,7 +6,7 @@ export class SessionStartCommand extends Command<CliContext> {
   static override paths = [["session", "start"]];
 
   static override usage = Command.Usage({
-    category: "Session",
+    category: "Advanced",
     description: "Start a workflow session for a task (state=planning)",
     examples: [['Start a session', 'tierkit session start "refactor auth middleware"']],
   });

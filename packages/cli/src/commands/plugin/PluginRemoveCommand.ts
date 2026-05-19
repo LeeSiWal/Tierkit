@@ -6,7 +6,7 @@ export class PluginRemoveCommand extends Command<CliContext> {
   static override paths = [["plugin", "remove"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description: "Uninstall a plugin: delete its files and remove from registry + activePlugins",
     examples: [["Remove an installed plugin", "tierkit plugin remove superpowers-free"]],
   });

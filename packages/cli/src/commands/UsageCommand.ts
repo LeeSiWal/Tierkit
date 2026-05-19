@@ -7,7 +7,7 @@ export class UsageCommand extends Command<CliContext> {
   static override paths = [["usage"]];
 
   static override usage = Command.Usage({
-    category: "Runtime",
+    category: "Savings",
     description: "Summarize runtime usage log (calls / tokens / cost per profile)",
     examples: [
       ["All-time totals", "tierkit usage"],

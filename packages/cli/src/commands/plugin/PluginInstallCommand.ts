@@ -8,7 +8,7 @@ export class PluginInstallCommand extends Command<CliContext> {
   static override paths = [["plugin", "install"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description: "Install a plugin from a local directory into the current Tierkit project",
     examples: [
       ["Install local plugin", "tierkit plugin install ./my-plugin"],

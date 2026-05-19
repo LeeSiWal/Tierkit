@@ -9,7 +9,7 @@ export class ConnectCommand extends Command<CliContext> {
   static override paths = [["connect"]];
 
   static override usage = Command.Usage({
-    category: "Connect",
+    category: "Integrations",
     description:
       "Wire an existing coding agent (Roo Code / Cline / Continue) to route through the Tierkit daemon. " +
       "Edits .vscode/settings.json (Roo, Cline) or .continue/config.yaml (Continue) so all that tool's model calls go through Tierkit's policy stack.",

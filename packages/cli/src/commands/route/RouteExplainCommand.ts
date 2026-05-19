@@ -7,7 +7,7 @@ export class RouteExplainCommand extends Command<CliContext> {
   static override paths = [["route", "explain"]];
 
   static override usage = Command.Usage({
-    category: "Routing",
+    category: "Cost routing",
     description: "Explain which model tier and profile Tierkit would choose for a task",
     examples: [
       ['Trivial task', 'tierkit route explain "rename a helper function"'],

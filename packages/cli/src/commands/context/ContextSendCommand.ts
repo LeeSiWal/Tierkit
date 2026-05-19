@@ -10,7 +10,7 @@ export class ContextSendCommand extends Command<CliContext> {
   static override paths = [["context", "send"]];
 
   static override usage = Command.Usage({
-    category: "Context",
+    category: "Savings",
     description: "Send a context artifact's prompt.md to a model via the existing runRoute pipeline",
     examples: [
       ["Send to Claude", "tierkit context send ctx_a3b2c1d4e5 --profile claudeSonnet"],

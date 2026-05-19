@@ -7,7 +7,7 @@ export class CheckRedactCommand extends Command<CliContext> {
   static override paths = [["check", "redact"]];
 
   static override usage = Command.Usage({
-    category: "Check",
+    category: "Diagnostics",
     description: "Run secret redaction over a file and report which rules triggered",
     examples: [
       ["Just show which rules triggered", "tierkit check redact ./scratch/notes.md"],

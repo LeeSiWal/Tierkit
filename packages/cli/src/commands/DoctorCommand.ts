@@ -6,7 +6,7 @@ export class DoctorCommand extends Command<CliContext> {
   static override paths = [["doctor"]];
 
   static override usage = Command.Usage({
-    category: "Project",
+    category: "Diagnostics",
     description: "Diagnose the current Tierkit project",
     examples: [["Run diagnostics", "tierkit doctor"]],
   });

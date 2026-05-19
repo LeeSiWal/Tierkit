@@ -7,7 +7,7 @@ export class CheckCommandCommand extends Command<CliContext> {
   static override paths = [["check", "command"]];
 
   static override usage = Command.Usage({
-    category: "Check",
+    category: "Diagnostics",
     description: "Classify a shell command as ok / warn / block using the dangerous-command rules",
     examples: [
       ['Harmless lookup', 'tierkit check command "ls -la"'],

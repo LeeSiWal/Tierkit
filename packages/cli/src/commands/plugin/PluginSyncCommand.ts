@@ -9,7 +9,7 @@ export class PluginSyncCommand extends Command<CliContext> {
   static override paths = [["plugin", "sync"]];
 
   static override usage = Command.Usage({
-    category: "Plugin",
+    category: "Advanced",
     description:
       "Re-export active Tierkit plugins to every connected coding agent " +
       "(Roo / Cline / Continue detected via filesystem signals). " +

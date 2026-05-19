@@ -6,7 +6,7 @@ export class RuntimeStopCommand extends Command<CliContext> {
   static override paths = [["runtime", "stop"]];
 
   static override usage = Command.Usage({
-    category: "Runtime",
+    category: "Diagnostics",
     description: "Stop a running Tierkit runtime daemon",
     examples: [["Stop the local daemon", "tierkit runtime stop"]],
   });

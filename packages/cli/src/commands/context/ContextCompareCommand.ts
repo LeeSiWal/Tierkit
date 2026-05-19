@@ -22,7 +22,7 @@ export class ContextCompareCommand extends Command<CliContext> {
   static override paths = [["context", "compare"]];
 
   static override usage = Command.Usage({
-    category: "Context",
+    category: "Savings",
     description: "Run baseline + compressed via the same profile and compare; mutates artifact.json",
     examples: [
       ["Compare with Claude", "tierkit context compare ctx_a3b2c1d4e5 --profile claudeSonnet --yes"],

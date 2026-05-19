@@ -7,7 +7,7 @@ export class ModelsTestCommand extends Command<CliContext> {
   static override paths = [["models", "test"]];
 
   static override usage = Command.Usage({
-    category: "Models",
+    category: "Cost routing",
     description: "Probe a configured model profile to verify reachability and credentials",
     examples: [
       ["Probe a local Ollama profile", "tierkit models test localFast"],

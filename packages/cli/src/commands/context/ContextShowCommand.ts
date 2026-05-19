@@ -7,7 +7,7 @@ export class ContextShowCommand extends Command<CliContext> {
   static override paths = [["context", "show"]];
 
   static override usage = Command.Usage({
-    category: "Context",
+    category: "Savings",
     description: "Print a context artifact summary (or its raw JSON with --json)",
     examples: [
       ["Pretty print", "tierkit context show ctx_a3b2c1d4e5"],
