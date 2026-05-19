@@ -122,8 +122,10 @@ export {
   RiskThresholdsSchema,
   SecurityPolicySchema,
   BudgetPolicySchema,
+  PerProfileBudgetSchema,
   CONFIG_FILENAME,
   type TierkitConfig,
+  type PerProfileBudget,
 } from "./config/TierkitConfig.js";
 export {
   loadConfig,

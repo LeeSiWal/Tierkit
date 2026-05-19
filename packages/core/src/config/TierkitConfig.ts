@@ -38,10 +38,39 @@ export const SecurityPolicySchema = z
   })
   .strict();
 
+/**
+ * Per-profile budget caps. Whichever cap (USD or input tokens, daily or monthly)
+ * is reached first blocks calls to this profile until reset or until the cap is
+ * raised. Token caps count INPUT TOKENS only — output cost is reflected in the
+ * USD-based caps via accumulated usage.
+ *
+ * Boundary: `>` comparison — at-limit allowed, over-limit blocked.
+ *
+ * Per-paymentModel semantics:
+ *   per-token: USD + input-token caps both enforced.
+ *   flat-rate: USD caps are display-only metadata (subscription already paid).
+ *              Input-token cap protects subscription quota.
+ *   free:      USD caps are ignored. Input-token cap protects local resources.
+ *
+ * `tierkit doctor` warns when USD limits are set on flat-rate or free profiles.
+ */
+export const PerProfileBudgetSchema = z
+  .object({
+    dailyUsdLimit:           z.number().nonnegative().optional(),
+    monthlyUsdLimit:         z.number().nonnegative().optional(),
+    dailyInputTokenLimit:    z.number().int().nonnegative().optional(),
+    monthlyInputTokenLimit:  z.number().int().nonnegative().optional(),
+  })
+  .strict();
+
+export type PerProfileBudget = z.infer<typeof PerProfileBudgetSchema>;
+
 export const BudgetPolicySchema = z
   .object({
     dailyUsdLimit: z.number().nonnegative().optional(),
     monthlyUsdLimit: z.number().nonnegative().optional(),
+    /** Per-profile budgets (optional). Whichever cap is reached first applies. */
+    perProfile: z.record(z.string(), PerProfileBudgetSchema).optional(),
     warnAtPercent: z.number().min(0).max(100).default(70),
     blockAtPercent: z.number().min(0).max(100).default(100),
   })
