@@ -3,6 +3,8 @@ import type { AddressInfo } from "node:net";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { explainRoute } from "../usecases/explainRoute.js";
+import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
+import { writeArtifact } from "./contextArtifactStore.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -189,6 +191,42 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
             : {}),
         });
         return sendJson(res, 200, result);
+      }
+
+      if (route === "POST /v1/context/build") {
+        const body = await readJsonBody<{
+          task?: unknown;
+          budget?: unknown;
+          extraIgnoreGlobs?: unknown;
+        }>(req).catch(() => null);
+        if (!body || typeof body.task !== "string") {
+          res.statusCode = 400;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ ok: false, code: "bad-request", message: "task is required" }));
+          return;
+        }
+        const result = await buildCompressedContext({
+          task: body.task,
+          workspaceRoot: opts.cwd,
+          ...(body.budget ? { budget: body.budget as never } : {}),
+          ...(body.extraIgnoreGlobs ? { extraIgnoreGlobs: body.extraIgnoreGlobs as string[] } : {}),
+        });
+        if (!result.ok) {
+          res.statusCode = 400;
+          res.setHeader("content-type", "application/json");
+          res.end(JSON.stringify({ ok: false, code: result.code, message: result.message }));
+          return;
+        }
+        const { id } = await writeArtifact(opts.cwd, result.artifact, result.promptMd);
+        const finalized = { ...result.artifact, id };
+        res.statusCode = 200;
+        res.setHeader("content-type", "application/json");
+        res.end(JSON.stringify({
+          ok: true,
+          artifact: finalized,
+          promptMdWorkspacePath: path.posix.join(".tierkit/runtime/context-artifacts", id, "prompt.md"),
+        }));
+        return;
       }
 
       if (route === "POST /v1/check/command") {
