@@ -149,8 +149,9 @@ async function listRecentContexts(workspaceRoot: string) {
         hasCompare: artifact.compare !== undefined,
         hasVerdict: verdict !== null,
       });
-    } catch {
-      // malformed — skip silently; excluded from both recent[] and totalCount
+    } catch (err) {
+      console.warn(`Warning: skipping ${name} in recent list: ${(err as Error).message ?? err}`);
+      // malformed — excluded from both recent[] and totalCount
     }
   }
 
