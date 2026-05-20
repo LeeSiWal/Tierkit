@@ -141,6 +141,7 @@ export {
 } from "./config/loadConfig.js";
 export { DEFAULT_MODEL_PROFILES, DEFAULT_PROFILE_IDS } from "./config/defaultProfiles.js";
 export { migrateLegacyEnabledField } from "./config/migrateLegacyEnabledField.js";
+export { migrateCanonicalDuplicates } from "./config/migrateCanonicalDuplicates.js";
 export {
   discoverOllamaProfiles,
   _clearDiscoveryCacheForTests,
