@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { searchAndReplaceTool, codebaseSearchTool } from "../src/tools/index.js";
+import { searchAndReplaceTool, codebaseSearchTool, listFilesTool } from "../src/tools/index.js";
 import type { AgentContext } from "../src/types.js";
 
 async function makeTempCwd(): Promise<string> {
@@ -76,5 +76,36 @@ describe("codebase_search", () => {
     const r = await codebaseSearchTool.execute({ query: "a b c" }, ctx(cwd));
     expect(r.ok).toBe(false);
     expect(r.error?.code).toBe("invalid-query");
+  });
+});
+
+describe("list_files", () => {
+  let cwd: string;
+  beforeEach(async () => { cwd = await makeTempCwd(); });
+  afterEach(async () => { await fs.rm(cwd, { recursive: true, force: true }); });
+
+  test("skips arbitrary dotfiles/dotdirs (e.g. .metadata, .claude), keeps .env*", async () => {
+    // Project-y files
+    await fs.writeFile(path.join(cwd, "package.json"), "{}");
+    await fs.mkdir(path.join(cwd, "src"));
+    await fs.writeFile(path.join(cwd, "src/index.ts"), "");
+    // Junk dotdirs that should be skipped (and NOT recursed into)
+    await fs.mkdir(path.join(cwd, ".metadata/.plugins/some.huge.tree"), { recursive: true });
+    await fs.writeFile(path.join(cwd, ".metadata/.plugins/some.huge.tree/x.txt"), "");
+    await fs.mkdir(path.join(cwd, ".claude"));
+    await fs.writeFile(path.join(cwd, ".claude/state.json"), "{}");
+    // Env files that SHOULD show
+    await fs.writeFile(path.join(cwd, ".env"), "FOO=bar");
+    await fs.writeFile(path.join(cwd, ".env.example"), "FOO=");
+
+    const r = await listFilesTool.execute({ path: ".", recursive: true }, ctx(cwd));
+    expect(r.ok).toBe(true);
+    expect(r.content).toContain("package.json");
+    expect(r.content).toContain("src/index.ts");
+    expect(r.content).toContain(".env");
+    expect(r.content).toContain(".env.example");
+    expect(r.content).not.toContain(".metadata");
+    expect(r.content).not.toContain(".claude");
+    expect(r.content).not.toContain("some.huge.tree");
   });
 });

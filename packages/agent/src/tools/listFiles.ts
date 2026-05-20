@@ -90,11 +90,10 @@ async function walk(rootAbs: string, currentAbs: string, recursive: boolean, out
   for (const d of dirents) {
     if (out.length >= MAX_ENTRIES) return true;
     if (SKIP_DIRS.has(d.name)) continue;
-    if (d.name.startsWith(".") && d.name.length > 1 && !d.name.startsWith(".env")) {
-      // Show .env (relevant for code config) but skip other dotfiles like .DS_Store, .vscode, .git
-      // Note: .env still goes through sensitive-file checks when read, this just lists it.
-      // Skip noisier hidden files:
-      if ([".DS_Store", ".vscode", ".idea", ".pytest_cache"].includes(d.name)) continue;
+    // Skip all dotfiles/dotdirs by default. Show .env* (relevant for code config);
+    // .env reads still go through sensitive-file checks elsewhere.
+    if (d.name.startsWith(".") && d.name !== "." && d.name !== ".." && !d.name.startsWith(".env")) {
+      continue;
     }
     const full = path.join(currentAbs, d.name);
     const rel = path.relative(rootAbs, full);
