@@ -198,12 +198,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           task?: unknown;
           budget?: unknown;
           extraIgnoreGlobs?: unknown;
-        }>(req).catch(() => null);
+        }>(req);
         if (!body || typeof body.task !== "string") {
-          res.statusCode = 400;
-          res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ ok: false, code: "bad-request", message: "task is required" }));
-          return;
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "task is required" });
+        }
+        if (body.extraIgnoreGlobs !== undefined && !Array.isArray(body.extraIgnoreGlobs)) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "extraIgnoreGlobs must be an array of strings" });
         }
         const result = await buildCompressedContext({
           task: body.task,
@@ -212,21 +212,15 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           ...(body.extraIgnoreGlobs ? { extraIgnoreGlobs: body.extraIgnoreGlobs as string[] } : {}),
         });
         if (!result.ok) {
-          res.statusCode = 400;
-          res.setHeader("content-type", "application/json");
-          res.end(JSON.stringify({ ok: false, code: result.code, message: result.message }));
-          return;
+          return sendJson(res, 400, { ok: false, code: result.code, message: result.message });
         }
         const { id } = await writeArtifact(opts.cwd, result.artifact, result.promptMd);
         const finalized = { ...result.artifact, id };
-        res.statusCode = 200;
-        res.setHeader("content-type", "application/json");
-        res.end(JSON.stringify({
+        return sendJson(res, 200, {
           ok: true,
           artifact: finalized,
           promptMdWorkspacePath: path.posix.join(".tierkit/runtime/context-artifacts", id, "prompt.md"),
-        }));
-        return;
+        });
       }
 
       if (route === "POST /v1/check/command") {

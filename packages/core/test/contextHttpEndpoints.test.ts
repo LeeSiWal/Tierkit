@@ -54,4 +54,27 @@ describe("POST /v1/context/build", () => {
     expect(body.ok).toBe(false);
     expect(body.code).toBe("no-keywords");
   });
+
+  it("returns 400 bad-request when extraIgnoreGlobs is not an array", async () => {
+    const res = await fetch(`${baseUrl}/v1/context/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "fix the payment function", extraIgnoreGlobs: "not-an-array" }),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe("bad-request");
+  });
+
+  it("returns 400 bad-request when body is missing entirely", async () => {
+    const res = await fetch(`${baseUrl}/v1/context/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("bad-request");
+  });
 });
