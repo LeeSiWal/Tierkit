@@ -9,6 +9,9 @@ import {
 import { DEFAULT_MODEL_PROFILES } from "./defaultProfiles.js";
 import { discoverOllamaProfiles } from "../model/discoverOllamaProfiles.js";
 import type { ModelProfile, ModelProfileMap } from "../model/ModelProfile.js";
+import { migrateLegacyEnabledField } from "./migrateLegacyEnabledField.js";
+import { migrateCanonicalDuplicates } from "./migrateCanonicalDuplicates.js";
+import { canonicalIdentity } from "../model/profileIdentity.js";
 
 /** Where a given config value originated. Surfaced via `/v1/models` so users can see why a profile is visible. */
 export type ConfigSource = "bundled" | "user" | "workspace" | "discovered";
@@ -181,6 +184,24 @@ export async function loadConfig(
     for (const id of Object.keys(wsRead.config.modelProfiles)) profileSources[id] = "workspace";
   }
 
+  // ── v0.12.3 migrations (on-load, in-place, idempotent) ────────────────────
+  // Run before anything depends on the raw shape. If a write occurs, recurse to
+  // pick up the freshly-rewritten files. Two recursive calls at most (one per
+  // migration); each subsequent load sees clean state and returns changed:false.
+  const m1 = await migrateLegacyEnabledField({
+    wsPath: workspacePath, userPath,
+    wsRead: wsRead ? { raw: wsRead.raw } : undefined,
+    userRead: userRead ? { raw: userRead.raw } : undefined,
+  });
+  if (m1.changed) return loadConfig(projectRoot, options);
+
+  const m2 = await migrateCanonicalDuplicates({
+    wsPath: workspacePath, userPath,
+    wsRead: wsRead ? { raw: wsRead.raw } : undefined,
+    userRead: userRead ? { raw: userRead.raw } : undefined,
+  });
+  if (m2.changed) return loadConfig(projectRoot, options);
+
   // ── Ollama auto-discovery ─────────────────────────────────────────────────
   // After all explicit configs (bundled/user/workspace) are merged, look at the local
   // Ollama daemon to see what models the user actually has pulled and synthesize a
@@ -204,9 +225,18 @@ export async function loadConfig(
 
   if (acc.runtime.discoverOllamaModels !== false) {
     const discovered = await discoverOllamaProfiles();
+    // Build a Set of canonical identities already covered by explicit configs
+    // (bundled/user/workspace). Auto-discovery skips anything already covered so
+    // it doesn't synthesize a duplicate of a model the user has explicitly
+    // configured under a different id.
+    const coveredIdentities = new Set<string>();
+    for (const p of Object.values(acc.modelProfiles)) {
+      coveredIdentities.add(canonicalIdentity(p));
+    }
     const merged: ModelProfileMap = { ...acc.modelProfiles };
     for (const [id, p] of Object.entries(discovered)) {
       if (suppressedIds.has(id)) continue; // User explicitly deleted this — don't re-add.
+      if (coveredIdentities.has(canonicalIdentity(p))) continue; // Already covered by an explicit profile.
       if (!(id in merged)) {
         merged[id] = allDisabled.has(id) ? { ...p, enabled: false } : p;
         profileSources[id] = "discovered";
