@@ -2273,6 +2273,30 @@ export const GUI_HTML = `<!doctype html>
     return '';
   }
 
+  // v0.12.3 — defense in depth: even if migration didn't run (older daemon, race
+  // condition), never show two rows with the same canonical identity.
+  // Priority: workspace > user > bundled > discovered; within same source, more
+  // roles (richer metadata) wins.
+  function dedupeByCanonicalIdentity(rows) {
+    const SOURCE_RANK = { workspace: 0, user: 1, bundled: 2, discovered: 3 };
+    const byIdentity = new Map();
+    for (const e of rows) {
+      const p = e.profile || {};
+      const key = (p.provider || '') + '|' + (p.baseUrl || '') + '|' + (p.model || '');
+      const existing = byIdentity.get(key);
+      if (!existing) { byIdentity.set(key, e); continue; }
+      const eRank = SOURCE_RANK[e.source] !== undefined ? SOURCE_RANK[e.source] : 99;
+      const exRank = SOURCE_RANK[existing.source] !== undefined ? SOURCE_RANK[existing.source] : 99;
+      if (eRank < exRank) { byIdentity.set(key, e); continue; }
+      if (eRank === exRank) {
+        const eRoles = (e.profile.roles || []).length;
+        const exRoles = (existing.profile.roles || []).length;
+        if (eRoles > exRoles) byIdentity.set(key, e);
+      }
+    }
+    return Array.from(byIdentity.values());
+  }
+
   async function refreshModels() {
     try {
       const [r, secretsR, configR, usageR] = await Promise.all([
@@ -2285,6 +2309,9 @@ export const GUI_HTML = `<!doctype html>
         jget('/v1/usage').catch(() => ({ profiles: {} })),
       ]);
       const entries = r.entries || [];
+      // v0.12.3 — defense in depth against duplicate canonical identities
+      // surviving in older daemons that haven't run the on-load migration.
+      const dedupedEntries = dedupeByCanonicalIdentity(entries);
       const secretMap = {};
       for (const s of (secretsR.entries || [])) secretMap[s.key] = s;
       // v0.12: client-side join — no new endpoint, no FS read.
@@ -2298,11 +2325,11 @@ export const GUI_HTML = `<!doctype html>
       // v0.12: aggregate row + all-capped-blocked banner. Both render BEFORE
       // the tier subheaders so they're visible without scrolling. Helpers
       // hide their host divs when no relevant data is available.
-      renderCostAggregateRow(entries, perProfileBudgets, profileUsage);
-      renderAllCappedPerTokenBlockedBanner(entries, perProfileBudgets, profileUsage);
-      if (entries.length === 0) {
+      renderCostAggregateRow(dedupedEntries, perProfileBudgets, profileUsage);
+      renderAllCappedPerTokenBlockedBanner(dedupedEntries, perProfileBudgets, profileUsage);
+      if (dedupedEntries.length === 0) {
         root.innerHTML = '<div class="empty">no profiles</div>';
-        renderMissingKeysBanner(entries, secretMap);
+        renderMissingKeysBanner(dedupedEntries, secretMap);
         renderApiKeysSection(secretMap);
         return;
       }
@@ -2315,7 +2342,7 @@ export const GUI_HTML = `<!doctype html>
 
       // Group entries by tier (Polish 2).
       const groups = { 'local-device': [], 'private-remote': [], 'public-cloud': [], 'other': [] };
-      for (const e of entries) {
+      for (const e of dedupedEntries) {
         const kind = (e.profile && e.profile.kind) || 'other';
         (groups[kind] || groups.other).push(e);
       }
@@ -2323,7 +2350,7 @@ export const GUI_HTML = `<!doctype html>
       // Build a quick lookup so we can demote auto-discovered duplicates of
       // user-named profiles (Polish 3). Key = "<provider>::<model>".
       const namedByProviderModel = new Map();
-      for (const e of entries) {
+      for (const e of dedupedEntries) {
         const p = e.profile || {};
         const isDiscovered = e.source === 'discovered' || isAutoDiscoveredId(e.id);
         if (isDiscovered) continue;
@@ -2361,6 +2388,10 @@ export const GUI_HTML = `<!doctype html>
           const budgetHtml = isDimmedDup
             ? ''
             : renderProfileBudgetBlock(e.id, p, perProfileBudgets[e.id], usageMonthFor(e.id));
+          // v0.12.3 — Delete is only meaningful for user-editable scopes. Bundled
+          // and discovered rows re-create themselves on next load, so the button
+          // would appear to do nothing.
+          const canDelete = e.source === 'workspace' || e.source === 'user';
           row.innerHTML =
             '<div class="col-grow">' +
               '<div><span class="mono" style="color:var(--accent)">' + escapeHtml(e.id) + '</span>' +
@@ -2379,14 +2410,16 @@ export const GUI_HTML = `<!doctype html>
               (p.enabled === false ? escapeHtml(i18n.enabledOff) : escapeHtml(i18n.enabledOn)) +
             '</button>' +
             ' <button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
-            ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>';
+            (canDelete
+              ? ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>'
+              : '');
           root.appendChild(row);
         }
       };
       for (const tierKey of TIER_ORDER) renderTier(tierKey);
       renderTier('other');
 
-      renderMissingKeysBanner(entries, secretMap);
+      renderMissingKeysBanner(dedupedEntries, secretMap);
 
       root.querySelectorAll('button[data-action="test"]').forEach((b) => {
         b.onclick = async () => {
