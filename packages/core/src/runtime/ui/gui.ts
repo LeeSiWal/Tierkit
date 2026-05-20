@@ -1140,6 +1140,7 @@ export const GUI_HTML = `<!doctype html>
       labelVerdictSaved:           'Verdict saved',
       labelVerdictEditButton:      'Edit verdict',
       labelCancelButton:           'Cancel',
+      labelRetryCompareButton:     'Retry compare',
     },
     ko: {
       offline: '오프라인',
@@ -1277,6 +1278,7 @@ export const GUI_HTML = `<!doctype html>
       labelVerdictSaved:           '판정 저장됨',
       labelVerdictEditButton:      '판정 수정',
       labelCancelButton:           '취소',
+      labelRetryCompareButton:     '비교 재시도',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
