@@ -1123,6 +1123,7 @@ export const GUI_HTML = `<!doctype html>
       modalCompareTitle:        'Baseline vs compressed compare',
       modalCompareDescription:  'Profile "{profile}" will be invoked twice (paid model calls):',
       modalCompareCostCaveat:   'Estimated input cost only — output cost not included. Tokens may be billed even if you cancel after a call has started.',
+      statusBuilding:           'Building compressed context (no model call)…',
     },
     ko: {
       offline: '오프라인',
@@ -1243,6 +1244,7 @@ export const GUI_HTML = `<!doctype html>
       modalCompareTitle:        '베이스라인 vs 압축 비교',
       modalCompareDescription:  '프로파일 "{profile}"에서 2번의 유료 모델 호출이 발생합니다:',
       modalCompareCostCaveat:   '추정 입력 비용만 표시 — 출력 비용은 포함되지 않습니다. 호출 시작 후 취소해도 토큰이 청구될 수 있습니다.',
+      statusBuilding:           '압축 컨텍스트 생성 중 (모델 호출 없음)…',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -3376,7 +3378,7 @@ export const GUI_HTML = `<!doctype html>
     const btn = $('c122-build-btn');
     btn.disabled = true;
     $('c122-build-status').hidden = false;
-    $('c122-build-status').textContent = 'Building compressed context (no model call)…';
+    $('c122-build-status').textContent = i18n.statusBuilding;
     $('c122-build-error').hidden = true;
     try {
       const r = await jpost('/v1/context/build', { task });
