@@ -30,16 +30,22 @@ afterEach(async () => {
 });
 
 describe("HTTP DELETE /v1/config/profile/:id", () => {
-  it("returns 200 and the profile disappears from /v1/models", async () => {
+  it("rejects delete for a discovered profile with 400 cannot-delete-non-editable (v0.12.3 guard)", async () => {
     const baseUrl = `http://${server!.address}:${server!.port}`;
     const before = await fetch(`${baseUrl}/v1/models`).then((r) => r.json()) as { entries: Array<{ id: string }> };
     expect(before.entries.some((e) => e.id === "ollama-x")).toBe(true);
 
+    // ollama-x is auto-discovered; DELETE must be rejected — the user has to
+    // toggle it off instead (see PATCH test below).
     const del = await fetch(`${baseUrl}/v1/config/profile/ollama-x?scope=workspace`, { method: "DELETE" });
-    expect(del.status).toBe(200);
+    expect(del.status).toBe(400);
+    const body = await del.json() as { code: string; message: string };
+    expect(body.code).toBe("cannot-delete-non-editable");
+    expect(body.message).toContain("source: discovered");
 
+    // Profile is still listed because the guard prevented removal.
     const after = await fetch(`${baseUrl}/v1/models`).then((r) => r.json()) as { entries: Array<{ id: string }> };
-    expect(after.entries.some((e) => e.id === "ollama-x")).toBe(false);
+    expect(after.entries.some((e) => e.id === "ollama-x")).toBe(true);
   });
 });
 

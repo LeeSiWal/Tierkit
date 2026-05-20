@@ -714,6 +714,26 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         const id = decodeURIComponent(url.pathname.slice("/v1/config/profile/".length));
         const scope = (url.searchParams.get("scope") === "user" ? "user" : "workspace") as ProfileScope;
         if (!id) return sendJson(res, 400, { error: "missing profile id in path" });
+
+        // Reject delete for sources that re-create themselves (bundled samples,
+        // auto-discovered Ollama profiles). User must use toggle (PATCH with
+        // enabled:false) instead. Without this guard the suppression marker would
+        // be written, but the user can't see "why" the profile keeps coming back.
+        try {
+          const cfg = await loadConfig(opts.cwd);
+          const source = cfg.profileSources[id];
+          if (source === "bundled" || source === "discovered") {
+            return sendJson(res, 400, {
+              ok: false,
+              code: "cannot-delete-non-editable",
+              message: `cannot delete '${id}' (source: ${source}). Toggle it off instead — it will be re-created automatically otherwise.`,
+            });
+          }
+        } catch {
+          // If loadConfig fails, fall through to the existing remove path; the
+          // CRUD layer will surface a better error than swallowing here.
+        }
+
         try {
           const r = await removeProfile({ cwd: opts.cwd, id, scope });
           return sendJson(res, 200, r);
