@@ -82,12 +82,30 @@ export function buildEscalationChain(
 ): RouteCandidate[] {
   const chain: RouteCandidate[] = [];
   const ceilingRank = tierRank(ceiling);
+  const seen = new Set<string>();
   for (const tier of TIER_ORDER) {
     if (tierRank(tier) < tierRank(primaryTier)) continue;
     if (tierRank(tier) > ceilingRank) break;
     const sorted = sortProfilesForTier(profiles, tier, taskType);
     for (const id of sorted) {
       chain.push({ id, tier, isEscalation: tier !== primaryTier });
+      seen.add(id);
+    }
+  }
+  // Tail fallback: append tiers BELOW the primary tier (low→high) as a last-resort
+  // chain. The user's intent: "API 키가 없어도 로컬로 떨어져야 한다" — when a
+  // private-remote/public-cloud primary candidate fails viability (e.g. no API
+  // key set on this machine), the walker should still find a viable local /
+  // private profile instead of dead-ending. Order: higher fallback tiers first
+  // (closer to primary), so we step down rather than dropping straight to local.
+  const primaryRank = tierRank(primaryTier);
+  for (let r = primaryRank - 1; r >= 0; r--) {
+    const tier = TIER_ORDER[r]!;
+    const sorted = sortProfilesForTier(profiles, tier, taskType);
+    for (const id of sorted) {
+      if (seen.has(id)) continue;
+      chain.push({ id, tier, isEscalation: true });
+      seen.add(id);
     }
   }
   return chain;

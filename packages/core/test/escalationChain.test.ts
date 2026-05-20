@@ -72,6 +72,62 @@ describe("decideRoute escalationChain", () => {
     expect(privateRemoteIds.indexOf("claudeSonnet")).toBeLessThan(privateRemoteIds.indexOf("claudeHaiku"));
   });
 
+  it("appends lower tiers as tail fallback when primary is private-remote (so no-API-key fall back to local)", () => {
+    // High-risk task → primary=private-remote. Without the tail-fallback,
+    // viability prune (in autoResolver) would return only Anthropic profiles
+    // and a missing ANTHROPIC_API_KEY surfaces as dead-end error.
+    const r = decideRoute({
+      task: { task: "production deploy review" }, // production+deploy → score 55 → private-remote
+      profiles,
+      ceiling: "private-remote",
+      taskType: "code-review",
+    });
+    expect(r.tier).toBe("private-remote");
+    const tiers = r.escalationChain.map((c) => c.tier);
+    // private-remote should come first, local-device LAST (tail fallback)
+    expect(tiers[0]).toBe("private-remote");
+    expect(tiers).toContain("local-device");
+    expect(tiers.lastIndexOf("local-device")).toBeGreaterThan(tiers.indexOf("private-remote"));
+    // Tail entries should be marked as escalation (semantically: "we're stepping outside the primary tier")
+    for (const c of r.escalationChain.filter((c) => c.tier === "local-device")) {
+      expect(c.isEscalation).toBe(true);
+    }
+  });
+
+  it("tail fallback adds BOTH private-remote and local-device when primary=public-cloud", () => {
+    // Force public-cloud via custom thresholds so this stays a router-logic test
+    // (independent of the risk-scorer's keyword weights).
+    const r = decideRoute({
+      task: { task: "write a function" },
+      profiles,
+      ceiling: "public-cloud",
+      thresholds: { localFastMax: 0, localStrongMax: 0, privateRemoteMax: 0, publicCloudReviewMin: 1 },
+    });
+    expect(r.tier).toBe("public-cloud");
+    const tiers = r.escalationChain.map((c) => c.tier);
+    // Order: public-cloud first, then private-remote, then local-device
+    expect(tiers[0]).toBe("public-cloud");
+    expect(tiers).toContain("private-remote");
+    expect(tiers).toContain("local-device");
+    const publicLast = tiers.lastIndexOf("public-cloud");
+    const privateFirst = tiers.indexOf("private-remote");
+    const localFirst = tiers.indexOf("local-device");
+    expect(privateFirst).toBeGreaterThan(publicLast);
+    expect(localFirst).toBeGreaterThan(privateFirst);
+  });
+
+  it("no double-inclusion: each profile appears at most once in the chain", () => {
+    const r = decideRoute({
+      task: { task: "review my code" },
+      profiles,
+      ceiling: "private-remote",
+      taskType: "code-review",
+    });
+    const ids = r.escalationChain.map((c) => c.id);
+    const unique = new Set(ids);
+    expect(unique.size).toBe(ids.length);
+  });
+
   it("for unrelated taskType, neutral profiles come BEFORE anti-fit profiles", () => {
     const r = decideRoute({
       task: { task: "translate something" }, // taskType=translate
