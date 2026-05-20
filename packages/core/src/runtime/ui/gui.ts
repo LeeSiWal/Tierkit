@@ -3439,13 +3439,14 @@ export const GUI_HTML = `<!doctype html>
         '<div class="c122-cancelled-note" id="c122-cancelled-note" hidden></div>';
       c122PopulateProfileSelect();
       $('c122-compare-btn').onclick = () => c122StartCompare(artifact.id);
+      $('c122-result-block').innerHTML = '';
+      $('c122-verdict-block').innerHTML = '';
     } else {
-      // State F or H — render result (Task 9 will refine with verdict block)
+      // State F or G — render result + verdict block
       cmpBlock.innerHTML = '';
       c122RenderCompareDone(artifact, artifact.compare);
+      if (verdict) c122RenderSavedVerdict(artifact.id, verdict);
     }
-    $('c122-result-block').innerHTML = '';
-    $('c122-verdict-block').innerHTML = '';
   }
 
   async function c122PopulateProfileSelect() {
@@ -3600,7 +3601,89 @@ export const GUI_HTML = `<!doctype html>
         '<tr><td>' + i18n.labelMetricCost + '</td><td>' + fmtCostCmp(compare.baseline.actualCostUsd) + '</td><td>' + fmtCostCmp(compare.compressed.actualCostUsd) + '</td><td>' + (compare.savedCostUsdActual !== undefined ? fmtCostCmp(compare.savedCostUsdActual) : '—') + '</td></tr>' +
         '<tr><td>' + i18n.labelMetricLatency + '</td><td>' + fmt(compare.baseline.latencyMs) + 'ms</td><td>' + fmt(compare.compressed.latencyMs) + 'ms</td><td>—</td></tr>' +
       '</table>';
-    // Task 9 inserts the verdict block here.
+    c122RenderVerdictForm(artifact.id, null);  // null = no saved verdict yet
+  }
+
+  function c122RenderVerdictForm(artifactId, existing) {
+    const block = $('c122-verdict-block');
+    const sel = (v) => existing && existing.qualityVerdict === v ? 'checked' : '';
+    const missingChecked = existing && existing.missingContext ? 'checked' : '';
+    const notesVal = existing && existing.notes ? existing.notes : '';
+    block.innerHTML =
+      '<hr/>' +
+      '<div><strong data-i18n="labelVerdictHeader">Quality verdict:</strong></div>' +
+      '<div class="c122-verdict-row">' +
+        '<label><input type="radio" name="c122-qv" value="same" '       + sel('same')     + '> ' + i18n.labelVerdictSame + '</label>' +
+        '<label><input type="radio" name="c122-qv" value="better" '     + sel('better')   + '> ' + i18n.labelVerdictBetter + '</label>' +
+        '<label><input type="radio" name="c122-qv" value="worse" '      + sel('worse')    + '> ' + i18n.labelVerdictWorse + '</label>' +
+        '<label><input type="radio" name="c122-qv" value="unusable" '   + sel('unusable') + '> ' + i18n.labelVerdictUnusable + '</label>' +
+      '</div>' +
+      '<label><input type="checkbox" id="c122-qv-missing" ' + missingChecked + '> ' + i18n.labelVerdictMissingContext + '</label>' +
+      '<div><label data-i18n="labelVerdictNotes">Notes:</label></div>' +
+      '<textarea id="c122-qv-notes" rows="3">' + escapeHtml(notesVal) + '</textarea>' +
+      '<div class="c122-notes-counter" id="c122-qv-counter">' + i18n.hintNotesCounter.replace('{count}', String(notesVal.length)) + '</div>' +
+      '<button id="c122-save-verdict-btn" data-i18n="labelVerdictSaveButton">Save verdict</button>';
+
+    // Disable Save until a radio is chosen
+    const saveBtn = $('c122-save-verdict-btn');
+    const radios = document.getElementsByName('c122-qv');
+    const updateSaveState = () => {
+      const anyChecked = Array.from(radios).some((r) => r.checked);
+      const notesLen = $('c122-qv-notes').value.length;
+      const tooLong = notesLen > 2000;
+      saveBtn.disabled = !anyChecked || tooLong;
+      const counter = $('c122-qv-counter');
+      counter.textContent = i18n.hintNotesCounter.replace('{count}', String(notesLen));
+      counter.classList.toggle('over', tooLong);
+    };
+    for (const r of radios) r.onchange = updateSaveState;
+    $('c122-qv-notes').oninput = updateSaveState;
+    updateSaveState();
+
+    saveBtn.onclick = () => c122SaveVerdict(artifactId);
+  }
+
+  async function c122SaveVerdict(artifactId) {
+    const radios = document.getElementsByName('c122-qv');
+    let qv = null;
+    for (const r of radios) if (r.checked) qv = r.value;
+    if (!qv) return;
+    const missingContext = $('c122-qv-missing').checked;
+    const notes = $('c122-qv-notes').value;
+    const saveBtn = $('c122-save-verdict-btn');
+    saveBtn.disabled = true;
+    try {
+      const res = await fetch('/v1/context/' + artifactId + '/verdict', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ qualityVerdict: qv, missingContext, notes: notes || undefined }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ code: 'http-' + res.status, message: res.statusText }));
+        alert(err.code + ': ' + err.message);
+        saveBtn.disabled = false;
+        return;
+      }
+      const data = await res.json();
+      c122RenderSavedVerdict(artifactId, data.verdict);
+    } catch {
+      alert(i18n.errDaemonOffline);
+      saveBtn.disabled = false;
+    }
+  }
+
+  function c122RenderSavedVerdict(artifactId, verdict) {
+    const block = $('c122-verdict-block');
+    const when = new Date(verdict.reviewedAt).toLocaleString();
+    block.innerHTML =
+      '<hr/>' +
+      '<div class="c122-saved-verdict">' +
+        i18n.labelVerdictSaved + ': <strong>' + verdict.qualityVerdict + '</strong> · ' + escapeHtml(when) +
+        (verdict.missingContext ? ' · ' + i18n.labelVerdictMissingContext : '') +
+      '</div>' +
+      (verdict.notes ? '<div class="dim" style="white-space:pre-wrap;font-size:11px;margin-top:4px">' + escapeHtml(verdict.notes) + '</div>' : '') +
+      '<button id="c122-edit-verdict-btn" data-i18n="labelVerdictEditButton">' + i18n.labelVerdictEditButton + '</button>';
+    $('c122-edit-verdict-btn').onclick = () => c122RenderVerdictForm(artifactId, verdict);
   }
 
   function c122RenderCompareFailed(artifactId, baselineText, compressedText, err) {
