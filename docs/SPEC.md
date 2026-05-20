@@ -99,6 +99,28 @@ Enforcement varies by `paymentModel`:
 
 The gate runs **after `redactSecrets`** and **before `provider.stream`**, against the final post-redact `ChatRequest`. Per-profile block → skip candidate + return `budget-exceeded` with `details[]`. Global budget block → hard stop (single-line message, no details). Both have error code `budget-exceeded`; clients differentiate via `message` and `details` presence.
 
+### 2.7 Validation flow (UI) (v0.12.2)
+
+The Cost Control sidebar exposes the v0.11/v0.12 measurement loop as
+a complete validation flow: task input → build → estimated savings →
+cost-confirmation modal → SSE-streamed compare → savings summary →
+human quality verdict saved to sidecar `verdict.json`.
+
+Five HTTP endpoints under `/v1/context/*` (build / `:id` / recent /
+`:id/compare` (SSE) / `:id/verdict`) wrap the existing core usecases.
+The compare endpoint requires explicit `{ confirm: true }` in the
+request body — without it, returns `412 confirm-required` with an
+`estimated` cost payload (which is what the UI modal renders). One
+compare per artifact at a time; second concurrent request returns
+`409 compare-already-running`. SSE client disconnect aborts the
+in-flight run best-effort; no background continuation.
+
+Verdict storage is a sidecar `verdict.json` — no `ContextArtifact`
+schema change. Verdict write requires that `artifact.compare`
+exists, else `409 compare-not-run`. The recorded `qualityVerdict`
+values (`same | better | worse | unusable`) feed the v0.14 entry
+gate validation.
+
 ---
 
 ## 3. High-level architecture

@@ -311,6 +311,22 @@ tierkit doctor                     # 80%+ warnings + blocked profiles
 
 Payment model semantics: `per-token` caps both USD and input tokens; `flat-rate` and `free` only cap input tokens (USD is metadata or ignored — see the spec for the full rationale). v0.12 does not yet route to flat-rate subscription CLIs as model providers — that lands in v0.13.
 
+### UI validation flow (v0.12.2)
+
+The Cost Control sidebar now lets you run the full measurement loop
+without leaving the editor: type a task → click Build → see selected
+files + token estimates → click Compare → confirm cost in a modal →
+watch baseline and compressed responses stream side-by-side → save a
+human quality verdict (`same / better / worse / unusable`).
+
+Verdicts persist as sidecar `verdict.json` next to each artifact at
+`.tierkit/runtime/context-artifacts/<id>/verdict.json`. They feed the
+validation-log compilation that gates v0.14 (local LLM rerank/compress).
+
+The flow is GUI-only in v0.12.2 — the existing
+`tierkit context build / show / send / compare` CLI commands continue
+to work unchanged.
+
 ## 자연어로 플러그인 만들기 (v0.3.5)
 
 사이드바 → **Active plugins** 카드 → `+ Describe & generate` 버튼:

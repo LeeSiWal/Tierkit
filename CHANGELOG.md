@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.12.2 — 2026-05-19
+
+### Added — UI Validation Flow
+
+- **5 new HTTP endpoints** under `/v1/context/*`:
+  - `POST /v1/context/build` — wraps `buildCompressedContext` + persists artifact
+  - `GET /v1/context/:id` — returns artifact + verdict (or null)
+  - `GET /v1/context/recent` — last 20 valid artifacts sorted by `createdAt`,
+    `totalCount` excludes malformed dirs
+  - `POST /v1/context/:id/compare` — SSE stream (phase / delta / side-result /
+    compare-done / error events); requires `{ confirm: true }` body
+  - `POST /v1/context/:id/verdict` — writes sidecar `verdict.json`
+- **`compareCompressedContext` callbacks wired to SSE** — onPhase /
+  onBaselineDelta / onCompressedDelta events stream live to the GUI.
+- **Sidecar `verdict.json`** alongside `artifact.json` —
+  `{ artifactId, qualityVerdict: "same"|"better"|"worse"|"unusable", missingContext?, notes?, reviewedAt }`.
+  Atomic write (tmp + rename), lenient read (corrupted → null + log warning,
+  doesn't break artifact view).
+- **New GUI "Current project — validation" card** in the Cost Control sidebar.
+  Replaces the inert v0.11.2 stub. 8 states (A–H, including failed-partial).
+  Recent-contexts dropdown + Build flow + cost-confirmation modal + live
+  SSE response viewer + savings table + human verdict form. Session-only
+  current-artifact memory (no localStorage).
+- **`streamSsePost(url, body, handlers, abortSignal)` helper** inline in
+  `gui.ts` — fetch-based SSE consumer (POST + manual `\n\n` parsing) since
+  native `EventSource` only supports GET.
+
+### Safety policies pinned at the API layer
+
+- `POST /v1/context/:id/compare` requires `{ confirm: true }`. Without →
+  `412 confirm-required` with `estimated` cost payload (the 412 IS the modal
+  preview).
+- One compare per artifact at a time → `409 compare-already-running` on
+  concurrent requests.
+- SSE client disconnect → server `AbortController.abort()` on the in-flight
+  compare; no background continuation.
+- `POST /v1/context/:id/verdict` requires `artifact.compare !== undefined` →
+  `409 compare-not-run` otherwise. `artifactId` and `reviewedAt` are
+  server-stamped — caller cannot forge either.
+- After SSE headers sent, all errors become SSE `error` events
+  (`error.side` carries "baseline" | "compressed").
+
+### Backward compatibility
+
+- No `ContextArtifact` schema change. No `ConfigSchema` change. Existing
+  artifacts without `verdict.json` show `verdict: null`.
+- All 5 new endpoints are additive. No existing endpoint changed.
+- CLI commands unchanged.
+- Existing v0.12 features (per-profile budget, doctor warnings, GUI per-profile
+  bars, `usage --by-profile`) unchanged.
+
+### Non-goals (explicit, deferred)
+
+- `POST /v1/context/:id/send` endpoint + `[Send compressed only]` button →
+  v0.12.3 / v0.13 if validation reveals demand
+- `[Open prompt.md]` (webview message bridge or file-serve endpoint) →
+  v0.12.3+; replaced with path text + `[Copy path]` button in v0.12.2
+- CLI `tierkit verdict` commands — not planned (verdict is UI-only)
+- Aggregate validation-log generator (`tierkit validation-log`) → v0.13
+  polish candidate
+- Subscription CLI subprocess provider → v0.13
+- Local LLM rerank/compress → v0.14
+- Cross-session job queue / daemon-restart job resume → non-goal by principle
+  (in-process loopback only)
+- LLM-based auto-verdict → non-goal by principle (the human verdict IS the
+  validation gate)
+
 ## 0.12.0 — 2026-05-19
 
 ### Added — Cost-aware routing v2
