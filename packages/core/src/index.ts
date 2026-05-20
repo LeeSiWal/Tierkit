@@ -63,6 +63,10 @@ export {
   effectivePaymentModel,
 } from "./model/ModelProfile.js";
 export {
+  canonicalIdentity,
+  isProfileDisabled,
+} from "./model/profileIdentity.js";
+export {
   scoreRisk,
   tierForScore,
   DEFAULT_RISK_THRESHOLDS,
