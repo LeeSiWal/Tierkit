@@ -16,6 +16,17 @@ beforeEach(async () => {
     path.join(tmp, "src/foo.ts"),
     "export function payment() { return 'paid' }\n",
   );
+  // Extra fixture files so the GET /v1/context/recent tests can build artifacts for
+  // tasks containing "bar" / "baz" / "tests" — the recent tests build three artifacts
+  // with distinct tasks and need each one to produce ≥1 candidate.
+  await fs.writeFile(
+    path.join(tmp, "src/bar.ts"),
+    "export function bar() { return 'bar' }\n",
+  );
+  await fs.writeFile(
+    path.join(tmp, "src/baz.test.ts"),
+    "export function baz() { return 'baz' }\n",
+  );
   server = await startServer({ cwd: tmp, host: "127.0.0.1", port: 0 });
   baseUrl = `http://${server.address}:${server.port}`;
 });
@@ -103,5 +114,65 @@ describe("GET /v1/context/:id", () => {
     const body = await res.json();
     expect(body.ok).toBe(false);
     expect(body.code).toBe("not-found");
+  });
+});
+
+describe("GET /v1/context/recent", () => {
+  it("returns empty list when no artifacts exist", async () => {
+    const res = await fetch(`${baseUrl}/v1/context/recent`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.recent).toEqual([]);
+    expect(body.totalCount).toBe(0);
+  });
+
+  it("returns recent artifacts sorted by createdAt DESC with normalized task preview", async () => {
+    // Build three with different tasks (newest last)
+    const ids: string[] = [];
+    for (const task of [
+      "fix the\n\npayment\nfunction",  // task with whitespace to test normalization
+      "rename foo to bar",
+      "add tests for baz",
+    ]) {
+      const r = await fetch(`${baseUrl}/v1/context/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ task }),
+      });
+      const { artifact } = await r.json();
+      ids.push(artifact.id);
+      await new Promise((rr) => setTimeout(rr, 10)); // ensure distinct createdAt
+    }
+
+    const res = await fetch(`${baseUrl}/v1/context/recent`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.recent.length).toBe(3);
+    expect(body.totalCount).toBe(3);
+    // Sorted by createdAt DESC: newest (last built) first
+    expect(body.recent[0].id).toBe(ids[2]);
+    expect(body.recent[2].id).toBe(ids[0]);
+    // Task with newlines should be normalized to single spaces
+    expect(body.recent[2].task).toBe("fix the payment function");
+    expect(body.recent[2].task).not.toContain("\n");
+  });
+
+  it("skips malformed artifact dirs and excludes them from totalCount", async () => {
+    // Build one valid
+    await fetch(`${baseUrl}/v1/context/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "fix the payment function" }),
+    });
+    // Create a malformed dir
+    const dir = path.join(tmp, ".tierkit/runtime/context-artifacts/ctx_bad0000000");
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(path.join(dir, "artifact.json"), "{not json");
+
+    const res = await fetch(`${baseUrl}/v1/context/recent`);
+    const body = await res.json();
+    expect(body.recent.length).toBe(1);          // malformed skipped
+    expect(body.totalCount).toBe(1);             // malformed excluded from count too
   });
 });

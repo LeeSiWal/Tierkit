@@ -112,6 +112,52 @@ export interface RunningServer {
 
 const VERSION = TIERKIT_VERSION;
 
+const ARTIFACTS_SUBDIR = ".tierkit/runtime/context-artifacts";
+const RECENT_CAP = 20;
+const CTX_ID_RE = /^ctx_[a-f0-9]{10}$/;
+
+async function listRecentContexts(workspaceRoot: string) {
+  const dir = path.join(workspaceRoot, ARTIFACTS_SUBDIR);
+  let names: string[];
+  try { names = await fs.readdir(dir); }
+  catch { return { recent: [], totalCount: 0 }; }
+
+  type Entry = {
+    id: string;
+    createdAt: string;
+    task: string;
+    candidatesCount: number;
+    estimatedBaselineInputTokens: number;
+    estimatedCompressedInputTokens: number;
+    hasCompare: boolean;
+    hasVerdict: boolean;
+  };
+  const entries: Entry[] = [];
+
+  for (const name of names) {
+    if (!CTX_ID_RE.test(name)) continue;
+    try {
+      const { artifact } = await readArtifact(workspaceRoot, name);
+      const verdict = await readVerdict(workspaceRoot, name);
+      entries.push({
+        id: name,
+        createdAt: artifact.createdAt,
+        task: artifact.task.replace(/\s+/g, " ").slice(0, 120),
+        candidatesCount: artifact.candidates.length,
+        estimatedBaselineInputTokens: artifact.estimatedBaselineInputTokens,
+        estimatedCompressedInputTokens: artifact.estimatedCompressedInputTokens,
+        hasCompare: artifact.compare !== undefined,
+        hasVerdict: verdict !== null,
+      });
+    } catch {
+      // malformed — skip silently; excluded from both recent[] and totalCount
+    }
+  }
+
+  entries.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
+  return { recent: entries.slice(0, RECENT_CAP), totalCount: entries.length };
+}
+
 /**
  * Start the Tierkit runtime HTTP daemon. Returns once the server is listening.
  *
@@ -222,6 +268,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           artifact: finalized,
           promptMdWorkspacePath: path.posix.join(".tierkit/runtime/context-artifacts", id, "prompt.md"),
         });
+      }
+
+      if (route === "GET /v1/context/recent") {
+        const { recent, totalCount } = await listRecentContexts(opts.cwd);
+        return sendJson(res, 200, { ok: true, recent, totalCount });
       }
 
       if (method === "GET" && url.pathname.startsWith("/v1/context/") && url.pathname !== "/v1/context/recent") {
