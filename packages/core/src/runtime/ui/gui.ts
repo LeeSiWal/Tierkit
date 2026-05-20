@@ -595,6 +595,7 @@ export const GUI_HTML = `<!doctype html>
   .c122-notes-counter { font-size: 10px; color: var(--fg-muted, #999); }
   .c122-notes-counter.over { color: #d73a49; }
   .c122-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+  .c122-modal-backdrop[hidden] { display: none; }
   .c122-modal { background: var(--bg, #1e1e1e); padding: 16px; border-radius: 6px; max-width: 460px; border: 1px solid var(--border, #444); }
   .c122-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
   .c122-error-banner { background: rgba(215,58,73,0.1); border: 1px solid #d73a49; padding: 8px; border-radius: 4px; margin: 6px 0; font-size: 12px; }
