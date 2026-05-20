@@ -252,10 +252,11 @@ export class OllamaClient implements ProviderClient {
       });
       const latencyMs = Math.round(performance.now() - start);
       if (!res.ok) {
+        const friendly = res.status === 404 ? await describeOllama404(profile.baseUrl, profile.model) : null;
         return {
           ok: false,
           code: "bad-status",
-          message: `ollama responded with ${res.status} ${res.statusText}`,
+          message: friendly ?? `ollama responded with ${res.status} ${res.statusText}`,
           latencyMs,
           status: res.status,
         };
@@ -339,10 +340,11 @@ export class OllamaClient implements ProviderClient {
       return;
     }
     if (!res.ok) {
+      const friendly = res.status === 404 ? await describeOllama404(profile.baseUrl, profile.model) : null;
       yield {
         type: "error",
         code: "bad-status",
-        message: `ollama responded with ${res.status} ${res.statusText}`,
+        message: friendly ?? `ollama responded with ${res.status} ${res.statusText}`,
         latencyMs: Math.round(performance.now() - start),
         status: res.status,
       };
@@ -389,4 +391,30 @@ export class OllamaClient implements ProviderClient {
 function joinUrl(base: string, path: string): string {
   if (base.endsWith("/")) return base.slice(0, -1) + path;
   return base + path;
+}
+
+/**
+ * Ollama returns 404 on /api/chat when the model isn't installed locally.
+ * The raw "ollama responded with 404 Not Found" message is useless — the user
+ * can't tell if they need to start Ollama, pull a model, or fix the config.
+ * Do a quick /api/tags lookup to produce an actionable message.
+ *
+ * Returns null on any failure (network, parse, etc.) — caller falls back to
+ * the raw status text in that case.
+ */
+async function describeOllama404(baseUrl: string, modelName: string): Promise<string | null> {
+  try {
+    const res = await fetch(joinUrl(baseUrl, "/api/tags"));
+    if (!res.ok) return null;
+    const body = (await res.json()) as OllamaTagsResponse;
+    const models = body.models ?? [];
+    const has = models.some((m) => m.name === modelName || m.name.startsWith(modelName + ":"));
+    if (has) return null; // model IS installed — 404 is from something else
+    if (models.length === 0) {
+      return `model "${modelName}" not found on ollama at ${baseUrl} — ollama is running but has no models installed. Run: ollama pull ${modelName}`;
+    }
+    return `model "${modelName}" not installed on ollama at ${baseUrl} (${models.length} other model(s) available). Run: ollama pull ${modelName}`;
+  } catch {
+    return null;
+  }
 }
