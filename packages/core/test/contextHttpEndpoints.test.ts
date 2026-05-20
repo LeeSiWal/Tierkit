@@ -176,3 +176,86 @@ describe("GET /v1/context/recent", () => {
     expect(body.totalCount).toBe(1);             // malformed excluded from count too
   });
 });
+
+describe("POST /v1/context/:id/verdict", () => {
+  // Helper: seed an artifact with a compare result, since verdict requires it.
+  async function seedArtifactWithCompare(): Promise<string> {
+    const buildRes = await fetch(`${baseUrl}/v1/context/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "fix the payment function" }),
+    });
+    const { artifact } = await buildRes.json();
+    // Directly mutate the artifact to add a compare result (simulating a
+    // completed compare without actually running providers).
+    const dir = path.join(tmp, ".tierkit/runtime/context-artifacts", artifact.id);
+    const ajsonPath = path.join(dir, "artifact.json");
+    const ajson = JSON.parse(await fs.readFile(ajsonPath, "utf8"));
+    ajson.baselineMdPath = "baseline.md";
+    ajson.baselineEstimatedTokens = 100;
+    ajson.compare = {
+      ranAt: new Date().toISOString(),
+      profileId: "claudeSonnet",
+      baseline: { inputPath: "baseline.md", estimatedInputTokens: 100, responsePath: "response-baseline.md" },
+      compressed: { inputPath: "prompt.md", estimatedInputTokens: 30, responsePath: "response-compressed.md" },
+      savedInputTokensEstimate: 70,
+    };
+    await fs.writeFile(ajsonPath, JSON.stringify(ajson, null, 2));
+    return artifact.id;
+  }
+
+  it("writes verdict and returns it with server-stamped reviewedAt", async () => {
+    const id = await seedArtifactWithCompare();
+    const res = await fetch(`${baseUrl}/v1/context/${id}/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qualityVerdict: "same", missingContext: false, notes: "hello" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.verdict.artifactId).toBe(id);
+    expect(body.verdict.qualityVerdict).toBe("same");
+    expect(typeof body.verdict.reviewedAt).toBe("string");
+  });
+
+  it("returns 409 compare-not-run when artifact has no compare", async () => {
+    // Build without compare
+    const buildRes = await fetch(`${baseUrl}/v1/context/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "fix the payment function" }),
+    });
+    const { artifact } = await buildRes.json();
+    const res = await fetch(`${baseUrl}/v1/context/${artifact.id}/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qualityVerdict: "same" }),
+    });
+    expect(res.status).toBe(409);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe("compare-not-run");
+  });
+
+  it("returns 404 when artifact does not exist", async () => {
+    const res = await fetch(`${baseUrl}/v1/context/ctx_ffffffffff/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ qualityVerdict: "same" }),
+    });
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.code).toBe("artifact-not-found");
+  });
+
+  it("returns 400 on missing qualityVerdict", async () => {
+    const id = await seedArtifactWithCompare();
+    const res = await fetch(`${baseUrl}/v1/context/${id}/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+});

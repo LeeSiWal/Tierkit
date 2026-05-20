@@ -5,7 +5,7 @@ import path from "node:path";
 import { explainRoute } from "../usecases/explainRoute.js";
 import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
 import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
-import { readVerdict } from "./verdictStore.js";
+import { readVerdict, writeVerdict, VerdictStoreError } from "./verdictStore.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -293,6 +293,38 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           }
         }
         // Malformed id (doesn't match ctx_[a-f0-9]{10}) → fall through to other route checks.
+      }
+
+      if (method === "POST" && url.pathname.startsWith("/v1/context/") && url.pathname.endsWith("/verdict")) {
+        const idMatch = url.pathname.match(/^\/v1\/context\/(ctx_[a-f0-9]{10})\/verdict$/);
+        if (!idMatch) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "invalid context id in path" });
+        }
+        const id = idMatch[1]!;
+        const body = await readJsonBody<{ qualityVerdict?: unknown; missingContext?: unknown; notes?: unknown }>(req);
+        if (!body || typeof body.qualityVerdict !== "string") {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "qualityVerdict is required" });
+        }
+        try {
+          const verdict = await writeVerdict(opts.cwd, id, {
+            qualityVerdict: body.qualityVerdict as never,
+            ...(body.missingContext !== undefined ? { missingContext: body.missingContext as boolean } : {}),
+            ...(body.notes !== undefined ? { notes: body.notes as string } : {}),
+          });
+          return sendJson(res, 200, { ok: true, verdict });
+        } catch (err) {
+          if (err instanceof VerdictStoreError) {
+            const status = err.code === "artifact-not-found" ? 404
+                         : err.code === "compare-not-run" ? 409
+                         : 400;
+            return sendJson(res, status, { ok: false, code: err.code, message: err.message });
+          }
+          // zod validation error (e.g. notes too long, bad enum) → 400
+          if ((err as Error).name === "ZodError" || (err as { issues?: unknown }).issues) {
+            return sendJson(res, 400, { ok: false, code: "bad-request", message: (err as Error).message });
+          }
+          throw err;
+        }
       }
 
       if (route === "POST /v1/check/command") {
