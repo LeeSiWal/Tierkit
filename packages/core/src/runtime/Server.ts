@@ -406,11 +406,19 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
         runningCompares.add(id);
         const writeEvent = (eventName: string, payload: unknown) => {
-          res.write(`event: ${eventName}\n`);
-          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          if (res.writableEnded || res.destroyed) return;
+          try {
+            res.write(`event: ${eventName}\n`);
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          } catch {
+            // socket closed during write — abort future writes by returning silently
+          }
         };
         // Keepalive every 15s
-        const keepalive = setInterval(() => { res.write(":\n\n"); }, 15_000);
+        const keepalive = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          try { res.write(":\n\n"); } catch { /* socket closed */ }
+        }, 15_000);
 
         // Best-effort: abort on client disconnect. compareCompressedContext does not
         // currently accept an AbortSignal, so this controller is only used as a signal
@@ -420,9 +428,6 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           abortController.abort();
         });
 
-        // Track latencies + usage for side-result events
-        const sideStartMs: Partial<Record<"baseline" | "compressed", number>> = {};
-
         try {
           const result = await compareCompressedContext({
             workspaceRoot: opts.cwd,
@@ -431,8 +436,6 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
             ...(typeof body.mode === "string" ? { mode: body.mode as "plan" | "review" | "execute" } : {}),
             onPhase: (phase) => {
               writeEvent("phase", { phase });
-              if (phase === "baseline-start") sideStartMs.baseline = Date.now();
-              else if (phase === "compressed-start") sideStartMs.compressed = Date.now();
             },
             onBaselineDelta: (text) => { writeEvent("delta", { side: "baseline", text }); },
             onCompressedDelta: (text) => { writeEvent("delta", { side: "compressed", text }); },
@@ -461,7 +464,9 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         } finally {
           clearInterval(keepalive);
           runningCompares.delete(id);
-          res.end();
+          if (!res.writableEnded) {
+            try { res.end(); } catch { /* socket closed */ }
+          }
         }
         return;
       }
