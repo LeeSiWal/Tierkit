@@ -78,3 +78,30 @@ describe("POST /v1/context/build", () => {
     expect(body.code).toBe("bad-request");
   });
 });
+
+describe("GET /v1/context/:id", () => {
+  it("returns artifact + verdict null for an existing artifact without verdict", async () => {
+    // First build an artifact
+    const buildRes = await fetch(`${baseUrl}/v1/context/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task: "fix the payment function" }),
+    });
+    const { artifact } = await buildRes.json();
+
+    const res = await fetch(`${baseUrl}/v1/context/${artifact.id}`);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(body.artifact.id).toBe(artifact.id);
+    expect(body.verdict).toBeNull();
+  });
+
+  it("returns 404 not-found for an unknown id", async () => {
+    const res = await fetch(`${baseUrl}/v1/context/ctx_ffffffffff`);
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.ok).toBe(false);
+    expect(body.code).toBe("not-found");
+  });
+});

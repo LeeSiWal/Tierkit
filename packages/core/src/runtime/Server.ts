@@ -4,7 +4,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { explainRoute } from "../usecases/explainRoute.js";
 import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
-import { writeArtifact } from "./contextArtifactStore.js";
+import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
+import { readVerdict } from "./verdictStore.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -221,6 +222,25 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           artifact: finalized,
           promptMdWorkspacePath: path.posix.join(".tierkit/runtime/context-artifacts", id, "prompt.md"),
         });
+      }
+
+      if (method === "GET" && url.pathname.startsWith("/v1/context/") && url.pathname !== "/v1/context/recent") {
+        const idMatch = url.pathname.match(/^\/v1\/context\/(ctx_[a-f0-9]{10})$/);
+        if (idMatch) {
+          const id = idMatch[1]!;
+          try {
+            const { artifact } = await readArtifact(opts.cwd, id);
+            const verdict = await readVerdict(opts.cwd, id);
+            return sendJson(res, 200, { ok: true, artifact, verdict });
+          } catch (err) {
+            const e = err as { code?: string; message?: string };
+            if (e.code === "not-found") {
+              return sendJson(res, 404, { ok: false, code: "not-found", message: e.message ?? `artifact '${id}' not found` });
+            }
+            throw err;
+          }
+        }
+        // Malformed id (doesn't match ctx_[a-f0-9]{10}) → fall through to other route checks.
       }
 
       if (route === "POST /v1/check/command") {
