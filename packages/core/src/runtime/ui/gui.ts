@@ -581,6 +581,27 @@ export const GUI_HTML = `<!doctype html>
     .card { padding: 8px; }
     .card h2 { font-size: 13px; }
   }
+  /* v0.12.2 — UI validation flow */
+  .c122-validation-card { display: flex; flex-direction: column; gap: 8px; }
+  .c122-state-row { display: flex; gap: 8px; align-items: center; }
+  .c122-files-list { list-style: none; padding-left: 0; margin: 4px 0; max-height: 120px; overflow-y: auto; }
+  .c122-files-list li { font-family: monospace; font-size: 11px; color: var(--fg-muted, #999); }
+  .c122-prompt-path-row { font-size: 11px; color: var(--fg-muted, #999); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .c122-response-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 6px 0; }
+  .c122-response-col { border: 1px solid var(--border, #444); padding: 6px; overflow-y: auto; max-height: 240px; font-size: 12px; white-space: pre-wrap; }
+  .c122-compare-summary { width: 100%; font-size: 11px; border-collapse: collapse; }
+  .c122-compare-summary td, .c122-compare-summary th { padding: 2px 6px; border-bottom: 1px dotted var(--border, #444); text-align: left; }
+  .c122-verdict-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .c122-notes-counter { font-size: 10px; color: var(--fg-muted, #999); }
+  .c122-notes-counter.over { color: #d73a49; }
+  .c122-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+  .c122-modal { background: var(--bg, #1e1e1e); padding: 16px; border-radius: 6px; max-width: 460px; border: 1px solid var(--border, #444); }
+  .c122-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+  .c122-error-banner { background: rgba(215,58,73,0.1); border: 1px solid #d73a49; padding: 8px; border-radius: 4px; margin: 6px 0; font-size: 12px; }
+  .c122-cancelled-note { font-size: 11px; color: var(--fg-muted, #999); margin-top: 4px; }
+  .c122-saved-verdict { background: rgba(40,167,69,0.1); padding: 4px 8px; border-radius: 3px; font-size: 12px; }
+  .c122-api-key-hint { font-size: 11px; color: var(--fg-muted, #999); margin: 4px 0; }
+  .c122-progress { font-size: 10px; color: var(--fg-muted, #999); }
 </style>
 </head>
 <body>
@@ -672,10 +693,47 @@ export const GUI_HTML = `<!doctype html>
   <!-- ── CURRENT PROJECT ────────────────────────────────────────────── -->
   <h3 class="settings-group" data-i18n="groupCurrentProject">Current project</h3>
 
-  <section class="card">
-    <h2><span data-i18n="cardCurrentArtifact">Last compressed context</span></h2>
-    <!-- v0.11.1: static stub. NO filesystem scan. v0.12 will populate from real state. -->
-    <div class="metric">— · <span data-i18n="hintBuildContext">Run \`tierkit context build\` to create one.</span></div>
+  <section class="card c122-validation-card">
+    <h2><span data-i18n="cardCurrentProjectValidation">Current project — validation</span></h2>
+
+    <!-- Recent contexts dropdown + New button -->
+    <div class="c122-state-row">
+      <label data-i18n="labelRecentContexts">Recent:</label>
+      <select id="c122-recent-select"></select>
+      <button id="c122-new-btn" type="button" data-i18n="labelNewContext">+ New</button>
+    </div>
+    <div class="dim" id="c122-recent-hint" hidden></div>
+
+    <!-- Task input -->
+    <div>
+      <label data-i18n="labelTask">Task:</label>
+      <textarea id="c122-task" rows="3" placeholder=""></textarea>
+    </div>
+    <button id="c122-build-btn" type="button" data-i18n="labelBuildButton">Build compressed context</button>
+    <div class="c122-progress" id="c122-build-status" hidden></div>
+    <div class="c122-error-banner" id="c122-build-error" hidden></div>
+
+    <!-- After-build block (hidden until State D) -->
+    <div id="c122-built-block" hidden>
+      <hr/>
+      <div><strong data-i18n="labelContextId">Context:</strong> <code id="c122-artifact-id"></code></div>
+      <div><strong data-i18n="labelBaselineEst">Baseline (est):</strong> <span id="c122-baseline-est">—</span> tokens</div>
+      <div><strong data-i18n="labelCompressedEst">Compressed (est):</strong> <span id="c122-compressed-est">—</span> tokens</div>
+      <div><strong data-i18n="labelSavingsEst">Savings (est):</strong> <span id="c122-savings-est">—</span></div>
+      <div><strong data-i18n="labelFilesInScope">Files in scope:</strong></div>
+      <ul class="c122-files-list" id="c122-files-list"></ul>
+      <div class="c122-prompt-path-row">
+        <span data-i18n="labelPromptPath">Prompt:</span>
+        <code id="c122-prompt-path"></code>
+        <button id="c122-copy-path-btn" type="button" data-i18n="labelCopyPathButton">Copy path</button>
+      </div>
+      <!-- Compare block (Task 8 adds Profile picker + Compare button) -->
+      <div id="c122-compare-block"></div>
+      <!-- Result block (Task 8 adds Response viewer + summary) -->
+      <div id="c122-result-block"></div>
+      <!-- Verdict block (Task 9) -->
+      <div id="c122-verdict-block"></div>
+    </div>
   </section>
 
   <!-- ── COST ROUTING ───────────────────────────────────────────────── -->
@@ -868,6 +926,59 @@ export const GUI_HTML = `<!doctype html>
         '한도가 설정된 모든 per-token 프로파일이 소진되었습니다. 한도 초기화, 상향, ' +
         '또는 다른 프로파일 추가 전까지 per-token 퍼블릭 클라우드 fallback이 제한될 수 ' +
         '있습니다. 로컬/한도 없는 프로파일로 라우팅 가능한 작업은 정상 동작합니다.',
+      // v0.12.2 — UI validation flow
+      cardCurrentProjectValidation:     '현재 프로젝트 — 검증',
+      labelTask:                        '작업',
+      labelRecentContexts:              '최근',
+      labelNewContext:                  '+ 새 컨텍스트',
+      labelContextId:                   '컨텍스트',
+      labelFilesCount:                  '파일',
+      labelCopyPathButton:              '경로 복사',
+      labelPromptPath:                  '프롬프트',
+      labelBaselineEst:                 '베이스라인 (추정)',
+      labelCompressedEst:               '압축 (추정)',
+      labelSavingsEst:                  '예상 절감률',
+      labelFilesInScope:                '선택된 파일',
+      labelProfile:                     '프로파일',
+      labelBuildButton:                 '압축 컨텍스트 생성',
+      labelCompareButton:               '베이스라인 vs 압축 비교',
+      labelCancelButton:                '취소',
+      labelRunCompareButton:            '비교 실행',
+      labelApiKeyHint:                  '선택한 프로파일에 API 키가 필요할 수 있습니다. 인증 실패 시 provider 오류가 표시됩니다.',
+      modalCompareTitle:                '베이스라인 vs 압축 비교',
+      modalCompareDescription:          '프로파일 "{profile}"에서 2번의 유료 모델 호출이 발생합니다:',
+      modalCompareCostCaveat:           '추정 입력 비용만 표시 — 출력 비용은 포함되지 않습니다. 호출 시작 후 취소해도 토큰이 청구될 수 있습니다.',
+      labelCompareSummary:              '비교 요약',
+      labelCompareMetric:               '항목',
+      labelCompareBaseline:             '베이스라인',
+      labelCompareCompressed:           '압축',
+      labelCompareSavings:              '절감',
+      labelMetricInput:                 '입력',
+      labelMetricOutput:                '출력',
+      labelMetricCost:                  '비용',
+      labelMetricLatency:               '지연',
+      labelVerdictHeader:               '품질 판정',
+      labelVerdictSame:                 '동등 (same)',
+      labelVerdictBetter:               '더 나음 (better)',
+      labelVerdictWorse:                '못함 (worse)',
+      labelVerdictUnusable:             '쓸 수 없음 (unusable)',
+      labelVerdictMissingContext:       '맥락 누락',
+      labelVerdictNotes:                '메모',
+      labelVerdictSaveButton:           '판정 저장',
+      labelVerdictEditButton:           '판정 수정',
+      labelVerdictSaved:                '판정 저장됨',
+      labelRetryCompareButton:          '비교 재시도',
+      hintNoRecentContexts:             '아직 컨텍스트가 없습니다.',
+      hintShowingOfTotal:               '20개 표시 / 전체 {total}개 — 오래된 컨텍스트는 \`tierkit context show <id>\` (CLI)',
+      hintCompareCancelled:             '비교가 취소되었습니다. provider 호출이 이미 시작된 경우 일부 토큰이 청구될 수 있습니다.',
+      hintCompareFailedPartial:         '압축 단계에서 비교가 실패했습니다. 베이스라인 응답은 저장되었지만 비교 결과는 기록되지 않았습니다.',
+      hintNotesCounter:                 '{count} / 2000자',
+      hintNotesExceeded:                '메모는 2000자 이하여야 합니다.',
+      errBuildFailed:                   '빌드 실패',
+      errCompareFailed:                 '비교 실패',
+      errCompareAlreadyRunning:         '다른 비교가 이미 실행 중입니다. 끝나기를 기다리거나 다른 창에서 취소하세요.',
+      errContextNotFound:               '컨텍스트를 찾을 수 없습니다 (디스크에서 삭제됐을 수 있습니다).',
+      errDaemonOffline:                 '데몬에 연결할 수 없습니다. \`tierkit runtime status\`로 확인하세요.',
     },
   };
   const lang = (navigator.language || 'en').toLowerCase().startsWith('ko') ? 'ko' : 'en';
@@ -996,6 +1107,22 @@ export const GUI_HTML = `<!doctype html>
         'All capped per-token profiles are exhausted. Until you reset caps, raise limits, or ' +
         'add another profile, per-token public-cloud fallback may be restricted. Tasks that can ' +
         'route to local or uncapped profiles still work normally.',
+      // v0.12.2 — UI validation flow (JS-accessed strings)
+      hintNoRecentContexts:     'No contexts yet.',
+      hintShowingOfTotal:       'Showing 20 of {total} — older contexts via \`tierkit context show <id>\` (CLI)',
+      hintCompareCancelled:     'Compare cancelled. If a provider call had already started, some tokens may have been billed.',
+      hintCompareFailedPartial: 'Compare failed during the compressed leg. The baseline response was saved but the comparison was not recorded.',
+      hintNotesCounter:         '{count} / 2000 chars',
+      hintNotesExceeded:        'Notes must be 2000 characters or fewer.',
+      errBuildFailed:           'Build failed',
+      errCompareFailed:         'Compare failed',
+      errCompareAlreadyRunning: 'Another compare is already running. Wait for it to finish or cancel it from the other window.',
+      errContextNotFound:       'Context not found (it may have been deleted from disk).',
+      errDaemonOffline:         'Cannot reach the daemon. Check \`tierkit runtime status\`.',
+      labelApiKeyHint:          'The selected profile may require an API key. Authentication failures will surface as provider errors.',
+      modalCompareTitle:        'Baseline vs compressed compare',
+      modalCompareDescription:  'Profile "{profile}" will be invoked twice (paid model calls):',
+      modalCompareCostCaveat:   'Estimated input cost only — output cost not included. Tokens may be billed even if you cancel after a call has started.',
     },
     ko: {
       offline: '오프라인',
@@ -1100,6 +1227,22 @@ export const GUI_HTML = `<!doctype html>
       enableToggle: '활성/비활성 토글',
       discoverBtn: '🔍 Ollama 모델 자동 찾기',
       discoverDone: '발견됨',
+      // v0.12.2 — UI validation flow (JS-accessed strings)
+      hintNoRecentContexts:     '아직 컨텍스트가 없습니다.',
+      hintShowingOfTotal:       '20개 표시 / 전체 {total}개 — 오래된 컨텍스트는 \`tierkit context show <id>\` (CLI)',
+      hintCompareCancelled:     '비교가 취소되었습니다. provider 호출이 이미 시작된 경우 일부 토큰이 청구될 수 있습니다.',
+      hintCompareFailedPartial: '압축 단계에서 비교가 실패했습니다. 베이스라인 응답은 저장되었지만 비교 결과는 기록되지 않았습니다.',
+      hintNotesCounter:         '{count} / 2000자',
+      hintNotesExceeded:        '메모는 2000자 이하여야 합니다.',
+      errBuildFailed:           '빌드 실패',
+      errCompareFailed:         '비교 실패',
+      errCompareAlreadyRunning: '다른 비교가 이미 실행 중입니다. 끝나기를 기다리거나 다른 창에서 취소하세요.',
+      errContextNotFound:       '컨텍스트를 찾을 수 없습니다 (디스크에서 삭제됐을 수 있습니다).',
+      errDaemonOffline:         '데몬에 연결할 수 없습니다. \`tierkit runtime status\`로 확인하세요.',
+      labelApiKeyHint:          '선택한 프로파일에 API 키가 필요할 수 있습니다. 인증 실패 시 provider 오류가 표시됩니다.',
+      modalCompareTitle:        '베이스라인 vs 압축 비교',
+      modalCompareDescription:  '프로파일 "{profile}"에서 2번의 유료 모델 호출이 발생합니다:',
+      modalCompareCostCaveat:   '추정 입력 비용만 표시 — 출력 비용은 포함되지 않습니다. 호출 시작 후 취소해도 토큰이 청구될 수 있습니다.',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -3142,6 +3285,134 @@ export const GUI_HTML = `<!doctype html>
   }
   $('btn-settings-reload').onclick = refreshSettings;
 
+  // ───────────────── v0.12.2 validation card ─────────────────
+
+  let c122CurrentArtifactId = null;     // session-only — no localStorage
+
+  async function c122RefreshRecent() {
+    let data;
+    try { data = await jget('/v1/context/recent'); }
+    catch { return; }                   // daemon offline — leave as-is
+    const sel = $('c122-recent-select');
+    const hint = $('c122-recent-hint');
+    if (!data.recent || data.recent.length === 0) {
+      sel.innerHTML = '';
+      sel.hidden = true;
+      hint.hidden = false;
+      hint.textContent = i18n.hintNoRecentContexts;
+      return;
+    }
+    sel.hidden = false;
+    sel.innerHTML = data.recent.map((r) => {
+      const pct = r.estimatedBaselineInputTokens > 0
+        ? Math.round((1 - r.estimatedCompressedInputTokens / r.estimatedBaselineInputTokens) * 100)
+        : 0;
+      const status = !r.hasCompare ? '(no compare)'
+                   : r.hasVerdict ? '(verdict saved)'
+                   : '(' + pct + '% est, no verdict)';
+      const taskShort = r.task.length > 60 ? r.task.slice(0, 57) + '…' : r.task;
+      return '<option value="' + r.id + '">' + r.id + ' — ' + escapeHtml(taskShort) + '  ' + status + '</option>';
+    }).join('');
+    if (data.totalCount > data.recent.length) {
+      hint.hidden = false;
+      hint.textContent = i18n.hintShowingOfTotal.replace('{total}', String(data.totalCount));
+    } else {
+      hint.hidden = true;
+    }
+    // Default selection: most recent (first) — unless session already chose one
+    if (!c122CurrentArtifactId) {
+      c122CurrentArtifactId = data.recent[0].id;
+      sel.value = c122CurrentArtifactId;
+      await c122LoadArtifact(c122CurrentArtifactId);
+    } else {
+      sel.value = c122CurrentArtifactId;
+    }
+  }
+
+  async function c122LoadArtifact(id) {
+    c122ResetUI();
+    let data;
+    try { data = await jget('/v1/context/' + id); }
+    catch (err) {
+      c122ShowError('build', i18n.errContextNotFound);
+      return;
+    }
+    c122RenderArtifact(data.artifact, data.verdict);
+  }
+
+  function c122RenderArtifact(artifact, verdict) {
+    $('c122-built-block').hidden = false;
+    $('c122-artifact-id').textContent = artifact.id;
+    $('c122-baseline-est').textContent = artifact.estimatedBaselineInputTokens.toLocaleString();
+    $('c122-compressed-est').textContent = artifact.estimatedCompressedInputTokens.toLocaleString();
+    const pct = artifact.estimatedBaselineInputTokens > 0
+      ? Math.round((1 - artifact.estimatedCompressedInputTokens / artifact.estimatedBaselineInputTokens) * 100)
+      : 0;
+    $('c122-savings-est').textContent = pct + '%';
+    $('c122-files-list').innerHTML = artifact.candidates
+      .map((c) => '<li>' + escapeHtml(c.path) + '</li>')
+      .join('');
+    const promptPath = '.tierkit/runtime/context-artifacts/' + artifact.id + '/prompt.md';
+    $('c122-prompt-path').textContent = promptPath;
+    $('c122-copy-path-btn').onclick = () => navigator.clipboard.writeText(promptPath);
+    // Tasks 8 + 9 populate compare-block, result-block, verdict-block here
+  }
+
+  function c122ResetUI() {
+    $('c122-built-block').hidden = true;
+    $('c122-build-error').hidden = true;
+    $('c122-build-status').hidden = true;
+  }
+
+  function c122ShowError(kind, msg) {
+    const el = $('c122-' + kind + '-error');
+    if (el) { el.textContent = msg; el.hidden = false; }
+  }
+
+  async function c122Build() {
+    const taskEl = $('c122-task');
+    const task = taskEl.value.trim();
+    if (!task) return;
+    const btn = $('c122-build-btn');
+    btn.disabled = true;
+    $('c122-build-status').hidden = false;
+    $('c122-build-status').textContent = 'Building compressed context (no model call)…';
+    $('c122-build-error').hidden = true;
+    try {
+      const r = await jpost('/v1/context/build', { task });
+      if (!r.ok) {
+        const err = r.data || { code: 'http-' + r.status, message: 'request failed' };
+        c122ShowError('build', i18n.errBuildFailed + ': ' + (err.code || r.status) + ' — ' + (err.message || ''));
+        return;
+      }
+      const data = r.data;
+      c122CurrentArtifactId = data.artifact.id;
+      await c122RefreshRecent();           // re-pull so dropdown includes the new entry
+      c122RenderArtifact(data.artifact, null);
+    } catch (err) {
+      c122ShowError('build', i18n.errDaemonOffline);
+    } finally {
+      btn.disabled = false;
+      $('c122-build-status').hidden = true;
+    }
+  }
+
+  // Wiring (call once during init)
+  function c122Init() {
+    $('c122-build-btn').onclick = c122Build;
+    $('c122-new-btn').onclick = () => {
+      c122CurrentArtifactId = null;
+      $('c122-task').value = '';
+      $('c122-task').focus();
+      c122ResetUI();
+    };
+    $('c122-recent-select').onchange = (e) => {
+      c122CurrentArtifactId = e.target.value;
+      c122LoadArtifact(c122CurrentArtifactId);
+    };
+    c122RefreshRecent();
+  }
+
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
     wirePresetButtons();
@@ -3149,6 +3420,7 @@ export const GUI_HTML = `<!doctype html>
   }
   $('btn-refresh').onclick = refreshAll;
 
+  c122Init();
   refreshAll();
   // Auto-refresh activity + usage every 5s — the user wants to see Roo's calls appear live.
   setInterval(() => { refreshActivity(); refreshUsage(); refreshHealth(); }, 5_000);
