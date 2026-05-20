@@ -1325,6 +1325,72 @@ export const GUI_HTML = `<!doctype html>
     return { ok: r.ok, status: r.status, data: r.data };
   }
 
+  /**
+   * POST with text/event-stream response. Parses each \\n\\n-delimited block as
+   * one SSE event (single-line JSON \`data:\` payloads only — see spec §3).
+   * Calls the matching handler per event name. Aborts on supplied AbortSignal.
+   *
+   * NOTE: Uses raw fetch() rather than the transport abstraction because the
+   * transport.stream() helper drops SSE event names (yields only data: payloads).
+   * v0.12.2 compare needs to distinguish phase / delta / side-result / compare-done /
+   * error event names. In VS Code webview mode raw loopback fetch may be blocked
+   * by the sandbox; the compare flow will surface that as 'fetch-failed'.
+   */
+  async function streamSsePost(url, body, handlers, abortSignal) {
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+        body: JSON.stringify(body),
+        signal: abortSignal,
+      });
+    } catch (err) {
+      if (err.name === 'AbortError') return;
+      handlers.onError && handlers.onError({ code: 'fetch-failed', message: String(err.message || err) });
+      return;
+    }
+    if (!res.ok) {
+      let err;
+      try { err = await res.json(); } catch { err = { code: 'http-' + res.status, message: res.statusText }; }
+      handlers.onError && handlers.onError(err);
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      // Normalize CRLF → LF so injected proxies don't break the parser
+      buffer += decoder.decode(value, { stream: true }).replace(/\\r\\n/g, '\\n');
+      let idx;
+      while ((idx = buffer.indexOf('\\n\\n')) >= 0) {
+        const raw = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        if (raw.startsWith(':')) continue;          // SSE comment / keepalive
+        const evt = parseSseChunk(raw);
+        switch (evt.event) {
+          case 'phase':        handlers.onPhase        && handlers.onPhase(evt.data);        break;
+          case 'delta':        handlers.onDelta        && handlers.onDelta(evt.data);        break;
+          case 'side-result':  handlers.onSideResult   && handlers.onSideResult(evt.data);   break;
+          case 'compare-done': handlers.onCompareDone  && handlers.onCompareDone(evt.data);  break;
+          case 'error':        handlers.onError        && handlers.onError(evt.data);        break;
+        }
+      }
+    }
+  }
+
+  function parseSseChunk(raw) {
+    const lines = raw.split('\\n');
+    let event = 'message', data = '';
+    for (const line of lines) {
+      if (line.startsWith('event:')) event = line.slice(6).trim();
+      else if (line.startsWith('data:')) data += line.slice(5).trim();
+    }
+    return { event, data: data ? JSON.parse(data) : undefined };
+  }
+
   function toast(msg, kind) {
     const el = document.createElement('div');
     el.className = 'toast ' + (kind || '');
@@ -3357,7 +3423,199 @@ export const GUI_HTML = `<!doctype html>
     const promptPath = '.tierkit/runtime/context-artifacts/' + artifact.id + '/prompt.md';
     $('c122-prompt-path').textContent = promptPath;
     $('c122-copy-path-btn').onclick = () => navigator.clipboard.writeText(promptPath);
-    // Tasks 8 + 9 populate compare-block, result-block, verdict-block here
+
+    // Compare block
+    const cmpBlock = $('c122-compare-block');
+    if (!artifact.compare) {
+      // State D — profile picker + Compare button
+      cmpBlock.innerHTML =
+        '<hr/>' +
+        '<div class="c122-state-row">' +
+          '<label data-i18n="labelProfile">Profile:</label>' +
+          '<select id="c122-profile-select"></select>' +
+        '</div>' +
+        '<div class="c122-api-key-hint" data-i18n="labelApiKeyHint">' + i18n.labelApiKeyHint + '</div>' +
+        '<button id="c122-compare-btn" data-i18n="labelCompareButton">Compare baseline vs compressed</button>' +
+        '<div class="c122-cancelled-note" id="c122-cancelled-note" hidden></div>';
+      c122PopulateProfileSelect();
+      $('c122-compare-btn').onclick = () => c122StartCompare(artifact.id);
+    } else {
+      // State F or H — render result (Task 9 will refine with verdict block)
+      cmpBlock.innerHTML = '';
+      c122RenderCompareDone(artifact, artifact.compare);
+    }
+    $('c122-result-block').innerHTML = '';
+    $('c122-verdict-block').innerHTML = '';
+  }
+
+  async function c122PopulateProfileSelect() {
+    let models = [];
+    try { models = await jget('/v1/models'); } catch { return; }
+    const sel = $('c122-profile-select');
+    if (!sel) return;
+    sel.innerHTML = (models.profiles || []).map((p) =>
+      '<option value="' + p.id + '">' + p.id + ' (' + p.provider + '/' + p.model + ')</option>'
+    ).join('');
+    if (sel.options.length === 0) {
+      $('c122-compare-btn').disabled = true;
+      sel.innerHTML = '<option value="">(no profiles configured)</option>';
+    }
+  }
+
+  let c122CompareAbort = null;
+
+  async function c122StartCompare(artifactId) {
+    const sel = $('c122-profile-select');
+    const profileId = sel ? sel.value : null;
+    if (!profileId) return;
+    const cancelledNote = $('c122-cancelled-note');
+    if (cancelledNote) cancelledNote.hidden = true;
+    const btn = $('c122-compare-btn');
+    btn.disabled = true;
+    try {
+      // Preflight: expect 412 with estimated payload
+      const pre = await fetch('/v1/context/' + artifactId + '/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ profileId, mode: 'execute' }),
+      });
+      if (pre.status === 412) {
+        const body = await pre.json();
+        c122ShowModal(body.estimated, () => c122RunCompare(artifactId, profileId), () => { btn.disabled = false; });
+        return;
+      }
+      if (pre.status === 409) {
+        c122ShowError('build', i18n.errCompareAlreadyRunning);
+        btn.disabled = false;
+        return;
+      }
+      if (!pre.ok) {
+        const err = await pre.json().catch(() => ({ code: 'http-' + pre.status, message: pre.statusText }));
+        c122ShowError('build', i18n.errCompareFailed + ': ' + err.code + ' — ' + err.message);
+        btn.disabled = false;
+        return;
+      }
+    } catch {
+      c122ShowError('build', i18n.errDaemonOffline);
+      btn.disabled = false;
+    }
+  }
+
+  function c122ShowModal(estimated, onRun, onCancel) {
+    $('c122-modal-profile').textContent = estimated.profileId;
+    $('c122-modal-baseline-tokens').textContent = estimated.baselineInputTokens.toLocaleString();
+    $('c122-modal-compressed-tokens').textContent = estimated.compressedInputTokens.toLocaleString();
+    $('c122-modal-baseline-cost').textContent =
+      estimated.baselineInputCostUsd !== null
+        ? '$' + estimated.baselineInputCostUsd.toFixed(3)
+        : 'unknown';
+    $('c122-modal-compressed-cost').textContent =
+      estimated.compressedInputCostUsd !== null
+        ? '$' + estimated.compressedInputCostUsd.toFixed(3)
+        : 'unknown';
+    $('c122-modal-backdrop').hidden = false;
+    const cancelBtn = $('c122-modal-cancel');
+    const runBtn = $('c122-modal-run');
+    cancelBtn.focus();
+    const close = () => { $('c122-modal-backdrop').hidden = true; document.removeEventListener('keydown', escHandler); };
+    const escHandler = (e) => { if (e.key === 'Escape') { close(); onCancel(); } };
+    document.addEventListener('keydown', escHandler);
+    cancelBtn.onclick = () => { close(); onCancel(); };
+    runBtn.onclick = () => { close(); onRun(); };
+  }
+
+  async function c122RunCompare(artifactId, profileId) {
+    // Transition to State E
+    const resultBlock = $('c122-result-block');
+    resultBlock.innerHTML =
+      '<hr/>' +
+      '<div class="c122-progress" id="c122-compare-progress">baseline pending…</div>' +
+      '<div class="c122-response-cols">' +
+        '<div class="c122-response-col" id="c122-resp-baseline"></div>' +
+        '<div class="c122-response-col" id="c122-resp-compressed"></div>' +
+      '</div>' +
+      '<button id="c122-cancel-compare-btn">Cancel</button>';
+
+    c122CompareAbort = new AbortController();
+    $('c122-cancel-compare-btn').onclick = () => c122CompareAbort && c122CompareAbort.abort();
+
+    let baselineText = '', compressedText = '';
+    let gotCompareDone = false;
+    let gotError = null;
+
+    await streamSsePost('/v1/context/' + artifactId + '/compare',
+      { profileId, mode: 'execute', confirm: true },
+      {
+        onPhase: ({ phase }) => {
+          $('c122-compare-progress').textContent = phase;
+        },
+        onDelta: ({ side, text }) => {
+          if (side === 'baseline') {
+            baselineText += text;
+            $('c122-resp-baseline').textContent = baselineText;
+          } else {
+            compressedText += text;
+            $('c122-resp-compressed').textContent = compressedText;
+          }
+        },
+        onSideResult: () => { /* aggregated into compare-done */ },
+        onCompareDone: (data) => {
+          gotCompareDone = true;
+          c122RenderCompareDone(data.artifact, data.compare);
+        },
+        onError: (err) => {
+          gotError = err;
+        },
+      },
+      c122CompareAbort.signal,
+    );
+
+    if (gotError) {
+      c122RenderCompareFailed(artifactId, baselineText, compressedText, gotError);
+    } else if (!gotCompareDone) {
+      // Cancelled — show cancelled note
+      const note = $('c122-cancelled-note');
+      if (note) {
+        note.hidden = false;
+        note.textContent = i18n.hintCompareCancelled;
+      }
+      // Re-enable Compare
+      const cmpBtn = $('c122-compare-btn');
+      if (cmpBtn) cmpBtn.disabled = false;
+      resultBlock.innerHTML = '';
+    }
+  }
+
+  function c122RenderCompareDone(artifact, compare) {
+    const resultBlock = $('c122-result-block');
+    const fmt = (n) => n === undefined ? '—' : n.toLocaleString();
+    const fmtCostCmp = (n) => n === undefined ? '—' : '$' + n.toFixed(3);
+    const fmtPct = (saved, base) => (base === 0 || saved === undefined) ? '—' : (Math.round((saved / base) * 1000) / 10) + '%';
+    resultBlock.innerHTML =
+      '<hr/>' +
+      '<table class="c122-compare-summary">' +
+        '<tr><th>' + i18n.labelCompareMetric + '</th><th>' + i18n.labelCompareBaseline + '</th><th>' + i18n.labelCompareCompressed + '</th><th>' + i18n.labelCompareSavings + '</th></tr>' +
+        '<tr><td>' + i18n.labelMetricInput + '</td><td>' + fmt(compare.baseline.actualInputTokens) + '</td><td>' + fmt(compare.compressed.actualInputTokens) + '</td><td>' + (compare.savedInputTokensActual !== undefined ? fmt(compare.savedInputTokensActual) + ' (' + fmtPct(compare.savedInputTokensActual, compare.baseline.actualInputTokens) + ')' : '—') + '</td></tr>' +
+        '<tr><td>' + i18n.labelMetricOutput + '</td><td>' + fmt(compare.baseline.actualOutputTokens) + '</td><td>' + fmt(compare.compressed.actualOutputTokens) + '</td><td>—</td></tr>' +
+        '<tr><td>' + i18n.labelMetricCost + '</td><td>' + fmtCostCmp(compare.baseline.actualCostUsd) + '</td><td>' + fmtCostCmp(compare.compressed.actualCostUsd) + '</td><td>' + (compare.savedCostUsdActual !== undefined ? fmtCostCmp(compare.savedCostUsdActual) : '—') + '</td></tr>' +
+        '<tr><td>' + i18n.labelMetricLatency + '</td><td>' + fmt(compare.baseline.latencyMs) + 'ms</td><td>' + fmt(compare.compressed.latencyMs) + 'ms</td><td>—</td></tr>' +
+      '</table>';
+    // Task 9 inserts the verdict block here.
+  }
+
+  function c122RenderCompareFailed(artifactId, baselineText, compressedText, err) {
+    const resultBlock = $('c122-result-block');
+    resultBlock.innerHTML =
+      '<hr/>' +
+      '<div class="c122-error-banner">' + escapeHtml(i18n.errCompareFailed + ': ' + err.code + ' — ' + err.message) + '</div>' +
+      '<div class="c122-response-cols">' +
+        '<div class="c122-response-col">' + escapeHtml(baselineText) + '</div>' +
+        '<div class="c122-response-col">' + escapeHtml(compressedText) + '</div>' +
+      '</div>' +
+      '<div class="dim">' + i18n.hintCompareFailedPartial + '</div>' +
+      '<button id="c122-retry-compare-btn" data-i18n="labelRetryCompareButton">' + i18n.labelRetryCompareButton + '</button>';
+    $('c122-retry-compare-btn').onclick = () => c122LoadArtifact(artifactId);
+    // No verdict block in state H.
   }
 
   function c122ResetUI() {
@@ -3428,6 +3686,36 @@ export const GUI_HTML = `<!doctype html>
   setInterval(() => { refreshActivity(); refreshUsage(); refreshHealth(); }, 5_000);
 })();
 </script>
+
+<!-- v0.12.2 — Compare cost-preview modal (populated by JS) -->
+<div id="c122-modal-backdrop" class="c122-modal-backdrop" hidden>
+  <div class="c122-modal" role="dialog" aria-labelledby="c122-modal-title">
+    <h3 id="c122-modal-title" data-i18n="modalCompareTitle">Compare baseline vs compressed</h3>
+    <p>
+      <span data-i18n="modalCompareDescription">This runs 2 paid model calls on </span>
+      <code id="c122-modal-profile">claudeSonnet</code>:
+    </p>
+    <table>
+      <tr>
+        <td data-i18n="labelCompareBaseline">Baseline</td>
+        <td><span id="c122-modal-baseline-tokens">—</span> input tokens</td>
+        <td>est cost <span id="c122-modal-baseline-cost">—</span></td>
+      </tr>
+      <tr>
+        <td data-i18n="labelCompareCompressed">Compressed</td>
+        <td><span id="c122-modal-compressed-tokens">—</span> input tokens</td>
+        <td>est cost <span id="c122-modal-compressed-cost">—</span></td>
+      </tr>
+    </table>
+    <p class="dim" data-i18n="modalCompareCostCaveat">
+      Estimated input cost only — output cost not included. If you cancel after a call has started, tokens may still be billed.
+    </p>
+    <div class="c122-modal-actions">
+      <button id="c122-modal-cancel" data-i18n="labelCancelButton">Cancel</button>
+      <button id="c122-modal-run" class="primary" data-i18n="labelRunCompareButton">Run compare</button>
+    </div>
+  </div>
+</div>
 
 </body>
 </html>`;
