@@ -428,6 +428,17 @@ export {
 } from "./runtime/contextArtifactStore.js";
 
 export {
+  QUALITY_VERDICTS,
+  type QualityVerdict,
+  VerdictSchema,
+  type ArtifactVerdict,
+  readVerdict,
+  writeVerdict,
+  VerdictStoreError,
+  type VerdictStoreErrorCode,
+} from "./runtime/verdictStore.js";
+
+export {
   sendCompressedContext,
   type SendCompressedContextInput,
   type SendCompressedContextResult,
