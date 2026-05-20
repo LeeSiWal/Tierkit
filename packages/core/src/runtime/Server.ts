@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { explainRoute } from "../usecases/explainRoute.js";
 import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
+import { compareCompressedContext } from "../usecases/compareCompressedContext.js";
 import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
 import { readVerdict, writeVerdict, VerdictStoreError } from "./verdictStore.js";
 import { checkCommand } from "../usecases/checkCommand.js";
@@ -179,6 +180,10 @@ async function listRecentContexts(workspaceRoot: string) {
 export function startServer(opts: ServerOptions): Promise<RunningServer> {
   const env = opts.env ?? (process.env as Record<string, string | undefined>);
 
+  // Tracks artifacts that currently have an in-flight compare. Per-daemon
+  // (not module-global) so tests with independent daemons don't share state.
+  const runningCompares = new Set<string>();
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -325,6 +330,140 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           }
           throw err;
         }
+      }
+
+      if (method === "POST" && url.pathname.startsWith("/v1/context/") && url.pathname.endsWith("/compare")) {
+        const idMatch = url.pathname.match(/^\/v1\/context\/(ctx_[a-f0-9]{10})\/compare$/);
+        if (!idMatch) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "invalid context id in path" });
+        }
+        const id = idMatch[1]!;
+        const body = await readJsonBody<{
+          profileId?: unknown;
+          confirm?: unknown;
+          mode?: unknown;
+        }>(req);
+        if (!body || typeof body.profileId !== "string") {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "profileId is required" });
+        }
+        // 1. Artifact existence
+        let artifact;
+        try {
+          ({ artifact } = await readArtifact(opts.cwd, id));
+        } catch (err) {
+          const e = err as { code?: string; message?: string };
+          if (e.code === "not-found") {
+            return sendJson(res, 404, { ok: false, code: "not-found", message: e.message ?? `artifact '${id}' not found` });
+          }
+          throw err;
+        }
+
+        // 2. Profile existence
+        const cfg = (await loadConfig(opts.cwd)).config;
+        const profile = cfg.modelProfiles[body.profileId];
+        if (!profile) {
+          return sendJson(res, 400, {
+            ok: false, code: "bad-request",
+            message: `unknown profile "${body.profileId}"`,
+          });
+        }
+
+        // 3. confirm: true precondition
+        if (body.confirm !== true) {
+          const estBaseline = artifact.estimatedBaselineInputTokens;
+          const estCompressed = artifact.estimatedCompressedInputTokens;
+          const inputCostPerM =
+            profile.cost?.type === "per-token" ? profile.cost.inputUsdPerMillion : null;
+          return sendJson(res, 412, {
+            ok: false,
+            code: "confirm-required",
+            message: "compare runs 2 paid model calls; pass { confirm: true } to proceed",
+            estimated: {
+              baselineInputTokens: estBaseline,
+              compressedInputTokens: estCompressed,
+              baselineInputCostUsd: inputCostPerM !== null ? (estBaseline / 1_000_000) * inputCostPerM : null,
+              compressedInputCostUsd: inputCostPerM !== null ? (estCompressed / 1_000_000) * inputCostPerM : null,
+              profileId: body.profileId,
+            },
+          });
+        }
+
+        // 4. compare-already-running dedup
+        if (runningCompares.has(id)) {
+          return sendJson(res, 409, {
+            ok: false,
+            code: "compare-already-running",
+            message: `another compare is already running for ${id}`,
+          });
+        }
+
+        // 5. Switch to SSE — from here on, errors become SSE error events.
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        res.setHeader("connection", "keep-alive");
+        res.flushHeaders?.();
+
+        runningCompares.add(id);
+        const writeEvent = (eventName: string, payload: unknown) => {
+          res.write(`event: ${eventName}\n`);
+          res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        };
+        // Keepalive every 15s
+        const keepalive = setInterval(() => { res.write(":\n\n"); }, 15_000);
+
+        // Best-effort: abort on client disconnect. compareCompressedContext does not
+        // currently accept an AbortSignal, so this controller is only used as a signal
+        // for future wiring + to surface disconnect intent in logs.
+        const abortController = new AbortController();
+        req.on("close", () => {
+          abortController.abort();
+        });
+
+        // Track latencies + usage for side-result events
+        const sideStartMs: Partial<Record<"baseline" | "compressed", number>> = {};
+
+        try {
+          const result = await compareCompressedContext({
+            workspaceRoot: opts.cwd,
+            id,
+            profileId: body.profileId,
+            ...(typeof body.mode === "string" ? { mode: body.mode as "plan" | "review" | "execute" } : {}),
+            onPhase: (phase) => {
+              writeEvent("phase", { phase });
+              if (phase === "baseline-start") sideStartMs.baseline = Date.now();
+              else if (phase === "compressed-start") sideStartMs.compressed = Date.now();
+            },
+            onBaselineDelta: (text) => { writeEvent("delta", { side: "baseline", text }); },
+            onCompressedDelta: (text) => { writeEvent("delta", { side: "compressed", text }); },
+          });
+          if (!result.ok) {
+            const side = result.phase === "baseline" || result.phase === "compressed" ? result.phase : undefined;
+            writeEvent("error", { code: result.code, message: result.message, ...(side ? { side } : {}) });
+            return;
+          }
+          // Emit side-result for each side from the compare result.
+          for (const side of ["baseline", "compressed"] as const) {
+            const sr = result.compare[side];
+            writeEvent("side-result", {
+              side,
+              ...(sr.actualInputTokens !== undefined ? { actualInputTokens: sr.actualInputTokens } : {}),
+              ...(sr.actualOutputTokens !== undefined ? { actualOutputTokens: sr.actualOutputTokens } : {}),
+              ...(sr.actualCostUsd !== undefined ? { actualCostUsd: sr.actualCostUsd } : {}),
+              ...(sr.latencyMs !== undefined ? { latencyMs: sr.latencyMs } : {}),
+              ...(sr.failureCode !== undefined ? { failureCode: sr.failureCode } : {}),
+            });
+          }
+          writeEvent("compare-done", { compare: result.compare, artifact: result.artifact });
+        } catch (err) {
+          const e = err as Error;
+          writeEvent("error", { code: "unexpected", message: e.message ?? String(err) });
+        } finally {
+          clearInterval(keepalive);
+          runningCompares.delete(id);
+          res.end();
+        }
+        return;
       }
 
       if (route === "POST /v1/check/command") {

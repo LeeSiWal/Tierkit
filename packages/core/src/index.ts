@@ -248,6 +248,11 @@ export {
 // v1.0 runtime
 export { startServer, type ServerOptions, type RunningServer } from "./runtime/Server.js";
 export {
+  type CompareSsePhase,
+  type CompareSseSide,
+  type CompareSseEvent,
+} from "./runtime/compareSseEvents.js";
+export {
   appendUsage,
   readUsage,
   summarizeUsage,
