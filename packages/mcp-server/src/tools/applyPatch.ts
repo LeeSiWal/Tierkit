@@ -27,7 +27,7 @@ function sha256(content: string | Buffer): string {
 function approvalEnvelope(workspaceRoot: string, patchId: string): { guiPath: string; cliCommand: string } {
   return {
     guiPath: `/v1/mcp/patches/${patchId}`,
-    cliCommand: `tierkit mcp patch approve ${patchId} --workspace ${workspaceRoot}`,
+    cliCommand: `tierkit mcp patch approve ${patchId} --workspace "${workspaceRoot}"`,
   };
 }
 
@@ -150,7 +150,7 @@ export async function applyPatchTool(input: ApplyPatchInput): Promise<ApplyPatch
   // ---- write (atomic per file via temp + rename) ----
   const written: string[] = [];
   for (const [i, f] of ticket.files.entries()) {
-    const payload = payloads[i] ?? "";
+    const payload = payloads[i]!;
     const absPath = resolveUnderWorkspace(input.workspaceRoot, f.path);
     await fs.mkdir(path.dirname(absPath), { recursive: true });
     const tmp = `${absPath}.tmp-${process.pid}-${Date.now()}`;

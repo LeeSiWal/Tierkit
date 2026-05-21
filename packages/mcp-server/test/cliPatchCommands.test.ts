@@ -23,7 +23,8 @@ describe("tierkit mcp patch CLI", () => {
     const p = await proposePatchTool({ workspaceRoot: workspace, files: [{ path: "a.ts", newContent: "v2" }] });
     expect(p.ok).toBe(true);
     if (!p.ok) return;
-    const out = spawnSync("node", [CLI, "mcp", "patch", "list", "--workspace", workspace], { encoding: "utf8" });
+    const out = spawnSync("node", [CLI, "mcp", "patch", "list", "--workspace", workspace], { encoding: "utf8", timeout: 10000 });
+    expect(out.error).toBeUndefined();
     expect(out.status).toBe(0);
     expect(out.stdout).toContain(p.patchId);
   });
@@ -36,7 +37,8 @@ describe("tierkit mcp patch CLI", () => {
     // first apply → awaiting_approval
     await applyPatchTool({ workspaceRoot: workspace, patchId: p.patchId });
 
-    const out = spawnSync("node", [CLI, "mcp", "patch", "approve", p.patchId, "--workspace", workspace], { encoding: "utf8" });
+    const out = spawnSync("node", [CLI, "mcp", "patch", "approve", p.patchId, "--workspace", workspace], { encoding: "utf8", timeout: 10000 });
+    expect(out.error).toBeUndefined();
     expect(out.status).toBe(0);
     expect(out.stdout).toContain(`approved ${p.patchId}`);
 
@@ -55,7 +57,8 @@ describe("tierkit mcp patch CLI", () => {
     if (!p.ok) return;
     await applyPatchTool({ workspaceRoot: workspace, patchId: p.patchId });
 
-    const out = spawnSync("node", [CLI, "mcp", "patch", "reject", p.patchId, "--workspace", workspace, "--note", "no thanks"], { encoding: "utf8" });
+    const out = spawnSync("node", [CLI, "mcp", "patch", "reject", p.patchId, "--workspace", workspace, "--note", "no thanks"], { encoding: "utf8", timeout: 10000 });
+    expect(out.error).toBeUndefined();
     expect(out.status).toBe(0);
     expect(out.stdout).toContain(`rejected ${p.patchId}`);
 

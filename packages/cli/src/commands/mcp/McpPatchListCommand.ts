@@ -5,7 +5,7 @@ import type { CliContext } from "../../context/CliContext.js";
 export class McpPatchListCommand extends Command<CliContext> {
   static override paths = [["mcp", "patch", "list"]];
   static override usage = Command.Usage({
-    description: "List pending MCP patch tickets in a workspace",
+    description: "List MCP patch tickets in a workspace (all statuses)",
     examples: [
       ["List all patches for a workspace", "tierkit mcp patch list --workspace /path/to/project"],
     ],
