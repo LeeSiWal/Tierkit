@@ -713,6 +713,21 @@ export const GUI_HTML = `<!doctype html>
     <div id="onboarding-trace" style="display:none;font-size:11px;margin-top:8px;padding:6px 8px;background:var(--bg-input);border-radius:4px;font-family:var(--mono);color:var(--fg-dim)"></div>
   </div>
 
+  <!-- ── MCP BRIDGE card (v0.15) ─────────────────────────────────────── -->
+  <section class="card mcp-bridge-card">
+    <h2 data-i18n="cardMcpBridge">Connect Claude Code (MCP)</h2>
+    <p data-i18n="mcpBridgeIntro">Let Claude Code, Claude Desktop, or any MCP-aware agent use Tierkit's gated tools for safe file editing and command execution.</p>
+    <button id="btn-mcp-show-snippet" data-i18n="mcpShowSnippet">Show config snippet</button>
+    <pre id="mcp-snippet-output" style="display:none"></pre>
+    <button id="btn-mcp-copy-snippet" style="display:none" data-i18n="mcpCopySnippet">Copy to clipboard</button>
+  </section>
+
+  <!-- ── PENDING MCP PATCHES panel (v0.15) ──────────────────────────── -->
+  <section class="card mcp-patches-card">
+    <h2 data-i18n="cardMcpPatches">Pending MCP patches</h2>
+    <div id="mcp-patches-list" class="mcp-patches-list"></div>
+  </section>
+
   <!-- ── TODAY hero ─────────────────────────────────────────────────── -->
   <div class="usage-hero">
     <div class="hero-stat"><span class="label" data-i18n="calls">calls</span><span class="value" id="stat-calls">—</span></div>
@@ -1250,6 +1265,17 @@ export const GUI_HTML = `<!doctype html>
       // v0.14.2 — single-shot footer + timeout error
       singleShotFooter:             '📝 Single-shot planner output. To enable multi-turn file editing, set an API key in Settings → API Keys.',
       timeoutError:                 'claudeCode timed out after \${seconds}s. Try a shorter prompt, or enable an API-key profile in Settings → API Keys.',
+      // v0.15 — MCP Bridge card + pending patches panel
+      cardMcpBridge:                'Connect Claude Code (MCP)',
+      mcpBridgeIntro:               "Let Claude Code, Claude Desktop, or any MCP-aware agent use Tierkit's gated tools for safe file editing and command execution.",
+      mcpShowSnippet:               'Show config snippet',
+      mcpCopySnippet:               'Copy to clipboard',
+      cardMcpPatches:               'Pending MCP patches',
+      mcpPatchApprove:              'Approve',
+      mcpPatchReject:               'Reject',
+      mcpPatchNoneYet:              'No pending patches',
+      mcpPatchRiskHigh:             'high risk',
+      mcpPatchRiskMedium:           'medium risk',
     },
     ko: {
       offline: '오프라인',
@@ -1440,6 +1466,17 @@ export const GUI_HTML = `<!doctype html>
       // v0.14.2 — single-shot footer + timeout error
       singleShotFooter:             '📝 단발 planner 응답입니다. 멀티턴 파일 편집을 활성화하려면 Settings → API Keys 에서 키를 설정하세요.',
       timeoutError:                 'claudeCode가 \${seconds}초 후 타임아웃됐습니다. 더 짧은 프롬프트를 시도하거나 Settings → API Keys 에서 API 키를 설정하세요.',
+      // v0.15 — MCP Bridge card + pending patches panel
+      cardMcpBridge:                'Claude Code (MCP) 연결',
+      mcpBridgeIntro:               'Claude Code / Claude Desktop 또는 MCP 호환 에이전트가 Tierkit의 게이트된 도구를 사용할 수 있도록 합니다.',
+      mcpShowSnippet:               '설정 스니펫 보기',
+      mcpCopySnippet:               '클립보드에 복사',
+      cardMcpPatches:               '대기 중인 MCP 패치',
+      mcpPatchApprove:              '승인',
+      mcpPatchReject:               '거부',
+      mcpPatchNoneYet:              '대기 중인 패치 없음',
+      mcpPatchRiskHigh:             '위험',
+      mcpPatchRiskMedium:           '주의',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -4676,6 +4713,68 @@ export const GUI_HTML = `<!doctype html>
     const envD = await getEnvData();
     if (envD.taskTypes) _knownTaskTypes = envD.taskTypes;
   };
+
+  // ── v0.15 MCP Bridge: snippet buttons + pending patches panel ──────────
+  const showSnippetBtn = $('btn-mcp-show-snippet');
+  const copySnippetBtn = $('btn-mcp-copy-snippet');
+  const snippetOutput = $('mcp-snippet-output');
+  if (showSnippetBtn) {
+    showSnippetBtn.onclick = async () => {
+      try {
+        const r = await fetch('/v1/mcp/config');
+        const json = await r.json();
+        snippetOutput.style.display = 'block';
+        snippetOutput.textContent = JSON.stringify(json, null, 2);
+        copySnippetBtn.style.display = 'inline-block';
+      } catch (err) {
+        snippetOutput.style.display = 'block';
+        snippetOutput.textContent = 'Error: ' + String(err);
+      }
+    };
+  }
+  if (copySnippetBtn) {
+    copySnippetBtn.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(snippetOutput.textContent);
+        copySnippetBtn.textContent = '✓ Copied';
+        setTimeout(() => { copySnippetBtn.textContent = i18n.mcpCopySnippet; }, 1500);
+      } catch { /* ignore */ }
+    };
+  }
+
+  async function renderMcpPatches() {
+    const wrap = $('mcp-patches-list');
+    if (!wrap) return;
+    try {
+      const r = await jget('/v1/mcp/patches');
+      const patches = (r.patches || []).filter((p) => p.status === 'proposed' || p.status === 'awaiting_approval');
+      if (patches.length === 0) {
+        wrap.innerHTML = '<div class="dim">' + escapeHtml(i18n.mcpPatchNoneYet) + '</div>';
+        return;
+      }
+      wrap.innerHTML = patches.map((p) =>
+        '<div class="mcp-patch-row">' +
+          '<span class="mcp-patch-id">' + escapeHtml(p.patchId) + '</span>' +
+          '<span class="mcp-patch-risk risk-' + (['high', 'medium', 'low'].includes(p.risk.level) ? p.risk.level : 'unknown') + '">' + escapeHtml(p.risk.level === 'high' ? i18n.mcpPatchRiskHigh : i18n.mcpPatchRiskMedium) + '</span>' +
+          '<span class="mcp-patch-files">' + escapeHtml(p.files.map((f) => f.path).join(', ')) + '</span>' +
+          '<button data-action="approve" data-id="' + escapeHtml(p.patchId) + '">' + escapeHtml(i18n.mcpPatchApprove) + '</button>' +
+          '<button data-action="reject"  data-id="' + escapeHtml(p.patchId) + '">' + escapeHtml(i18n.mcpPatchReject) + '</button>' +
+        '</div>'
+      ).join('');
+      wrap.querySelectorAll('button[data-action]').forEach((btn) => {
+        btn.onclick = async () => {
+          const id = btn.getAttribute('data-id');
+          const action = btn.getAttribute('data-action');
+          await jpost('/v1/mcp/patches/' + id + '/' + action, {});
+          renderMcpPatches();
+        };
+      });
+    } catch (err) {
+      wrap.innerHTML = '<div class="err">' + escapeHtml(String(err)) + '</div>';
+    }
+  }
+  renderMcpPatches();
+  setInterval(renderMcpPatches, 5000);
 
   refreshAll();
   // Auto-refresh activity + usage every 5s — the user wants to see Roo's calls appear live.

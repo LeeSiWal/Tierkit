@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/cli",
-  "version": "0.14.2",
+  "version": "0.15.0",
   "description": "The `tierkit` CLI — measure token savings, build compressed contexts, route work across local / private / cloud models, and audit cost.",
   "license": "MIT",
   "type": "module",
@@ -26,6 +26,7 @@
     "@tierkit/adapter-continue": "workspace:*",
     "@tierkit/adapter-roo": "workspace:*",
     "@tierkit/core": "workspace:*",
+    "@tierkit/mcp-server": "workspace:*",
     "clipanion": "^4.0.0-rc.4",
     "typanion": "^3.14.0"
   },

@@ -618,3 +618,65 @@ OpenAI-compatible endpoint auto-compression, agent-loop integration
 (Claude Code / Roo / Cline / Continue), GUI Token Savings card,
 HTTP endpoints, tree-sitter, response-quality auto-judge, parallel
 compare, multi-compare per artifact.
+
+## MCP Bridge (v0.15.0)
+
+Tierkit adds a second distribution surface: an MCP server (`@tierkit/mcp-server`)
+that exposes gated file I/O, search, patch, and command tools to Claude Code,
+Claude Desktop, and any MCP-aware client via stdio transport. Claude remains the
+agent; Tierkit becomes the local policy gateway.
+
+Full design spec: [`docs/superpowers/specs/2026-05-21-v0.15-tierkit-mcp-bridge-design.md`](superpowers/specs/2026-05-21-v0.15-tierkit-mcp-bridge-design.md)
+User setup guide: [`docs/MCP_BRIDGE.md`](MCP_BRIDGE.md)
+
+**Distribution surface update** (see §1 Positioning table): CLI + VS Code extension +
+HTTP loopback daemon + OpenAI-compatible gateway + **MCP server (from v0.15.0, shipped)**.
+
+### v0.15 Tool surface
+
+7 tools are exposed under the `tierkit` MCP server name:
+
+| Tool | Description |
+|---|---|
+| `tierkit.list_files` | List workspace files; denylist drops secrets, ignore sources prune further |
+| `tierkit.read_file` | Read a file with content redaction; denylisted paths refused |
+| `tierkit.codebase_search` | Full-text search; denylisted results dropped, snippets redacted |
+| `tierkit.propose_patch` | Propose a file edit (or new file); returns patchId + diff + risk. Does not write. |
+| `tierkit.apply_patch` | Apply a proposed patch by patchId; runs freshness + approval + payload-integrity gates |
+| `tierkit.run_command` | Run a shell command; gated by dangerous-command classifier + sandbox |
+| `tierkit.get_policy_status` | Snapshot of current workspace policy state |
+
+### v0.15 Error codes
+
+Every tool result envelope is `{ ok, code, message, ... }`. The complete set of `code`
+values emitted by the v0.15.0 implementation (verified against source + tests):
+
+| Error code | Tool(s) | Meaning |
+|---|---|---|
+| `outside-workspace` | propose_patch, apply_patch, read_file, list_files, codebase_search | Path resolved outside the workspace root |
+| `ignored-path` | propose_patch, read_file | Path is on the bundled denylist or an ignore source (list_files drops silently rather than returning this code) |
+| `delete-not-supported` | propose_patch | File deletion is not supported in v0.15 |
+| `invalid-input` | propose_patch | Missing or malformed input fields |
+| `invalid-query` | codebase_search | Search query is empty or invalid input |
+| `not-found` | apply_patch, read_file, list_files | `patchId` does not exist on disk (apply_patch); file does not exist (read_file, list_files) |
+| `not-a-file` | read_file | Path resolves to a directory or non-regular file |
+| `not-a-directory` | list_files | Target path is a file, not a directory |
+| `invalid-status` | apply_patch, approve/reject helpers | Ticket is in a status that disallows this transition (e.g. already applied) |
+| `stale-patch` | apply_patch | `beforeHash` no longer matches the file (or new-file conflict) |
+| `expired-patch` | apply_patch | Ticket is older than 24h |
+| `approval-required` | apply_patch, run_command | Caller must approve out of band; in v0.15.0 `run_command` does NOT execute approval-required commands even after approval (command-ticket flow is v0.15.1) |
+| `approval-rejected` | apply_patch | Ticket was rejected via CLI or HTTP |
+| `payload-missing` | apply_patch | Sidecar payload file is absent |
+| `payload-corrupt` | apply_patch | Sidecar payload sha256 does not match the ticket's `afterHash` |
+| `command-blocked` | run_command | Hard-blocked by the dangerous-command classifier |
+| `command-timeout` | run_command | Command exceeded `timeoutMs` |
+| `spawn-failed` | run_command | Node failed to spawn the child process |
+| `not-implemented` | (placeholder) | Tool branch not wired yet — should not appear in 0.15.0 release |
+| `thrown` | any | An unexpected throw escaped the tool body; surfaced by `withActivityLog` |
+
+Note: `run_command` reports stdout/stderr truncation via the `truncated: true` field on
+a successful result, NOT as an error code. There is no `command-output-too-large` code.
+
+Note: `list_files` silently drops entries that match ignore sources / denylist during
+directory walk, rather than returning `ignored-path`. The `ignored-path` code is returned
+only by `read_file` (direct refusal) and `propose_patch` (per-file check).

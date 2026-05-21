@@ -466,3 +466,39 @@ export {
 // banner (Cli#binaryVersion) stays in sync with packages/core/package.json
 // without a separate hardcoded literal in packages/cli/src/cli.ts.
 export { TIERKIT_VERSION } from "./version.js";
+
+// v0.15 MCP Bridge — activity log (shared by mcp-server, CLI, and daemon)
+export {
+  logMcpActivity,
+  readMcpActivity,
+  type McpActivityInput,
+  type McpActivityEntry,
+} from "./mcp/activityLog.js";
+
+// v0.15 MCP Bridge — patch ticket store (shared by mcp-server, CLI, and daemon)
+export {
+  // CRUD
+  createPatchTicket,
+  readPatchTicket,
+  listPatchTickets,
+  updatePatchTicket,
+  deletePatchTicket,
+  // state-guarded transitions
+  approvePatchTicket,
+  rejectPatchTicket,
+  // payload sidecar
+  writePatchPayload,
+  readPatchPayload,
+  // GC
+  cleanupExpiredAndApplied,
+  // error
+  InvalidPatchStateError,
+  // types
+  type PatchTicket,
+  type PatchFileEntry,
+  type PatchApproval,
+  type PatchStatus,
+  type ApprovalState,
+  type CreatePatchInput,
+  type ApprovedBy,
+} from "./mcp/patchStore.js";

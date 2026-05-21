@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.15.0 — 2026-05-21
+
+### Added — Tierkit MCP Bridge
+
+- **New package `@tierkit/mcp-server`** plus CLI command `tierkit mcp serve
+  --workspace <path>`. Spawned by Claude Code / Claude Desktop / any MCP-aware
+  client via standard `mcpServers` stdio transport. Implements 7 gated tools:
+  `tierkit.list_files`, `tierkit.read_file`, `tierkit.codebase_search`,
+  `tierkit.propose_patch`, `tierkit.apply_patch`, `tierkit.run_command`,
+  `tierkit.get_policy_status`.
+- **Ephemeral patch ticket model.** `propose_patch` never mutates files;
+  persists ticket to `.tierkit/runtime/mcp/patches/<id>.json` with risk
+  scoring, beforeHash for freshness, payload sidecar at `<id>.payload/f<i>.txt`,
+  24h TTL. `apply_patch` accepts ONLY `patchId`, runs freshness + approval
+  gates, sha256-verifies each payload against the ticket's afterHash before
+  writing, then applies atomically. Raw `write_file` and raw-diff
+  `apply_patch` are not exposed.
+- **patchStore lives in `@tierkit/core`** so the CLI, the HTTP daemon, and
+  the MCP-server stdio process can all read/write the same on-disk state
+  without a circular dependency.
+- **State-guarded approve/reject.** `approvePatchTicket` / `rejectPatchTicket`
+  helpers refuse transitions on already-applied / expired / rejected tickets;
+  CLI exits 1 and HTTP returns 409 with the same `InvalidPatchStateError`
+  message.
+- **Daemon-optional approval channels.** `tierkit mcp patch {approve,reject,list}`
+  CLI commands manipulate the same ticket store as the daemon's
+  `POST /v1/mcp/patches/:id/{approve,reject}` endpoints. The MCP server
+  works without a running daemon; the daemon is convenience only.
+- **Activity log.** Every MCP tool call appends one JSONL line to
+  `.tierkit/runtime/usage.jsonl` (tool name, ok, code, durationMs,
+  redactionHits, sanitized input/output summary). Audit trail does not
+  include file bodies, env values, or full command lines.
+- **GUI integration.** New "Connect Claude Code (MCP)" card in the
+  onboarding panel surfaces the suggested `mcpServers` JSON for the current
+  workspace. New "Pending MCP patches" card lists tickets and exposes
+  approve/reject buttons.
+- **`GET /v1/mcp/config`** returns the suggested `mcpServers` JSON with
+  `type: "stdio"`.
+- **Path-level secret filter.** `list_files`, `read_file`, and
+  `codebase_search` apply a hard denylist (`.env*`, `*.pem`, `*.key`,
+  `id_rsa*`, `secrets.json`, `.tierkit/runtime/`) in addition to content
+  redaction. Denylisted paths are refused for read_file and dropped from
+  list/search output.
+- **`run_command` sandboxing.** `cwd` locked to workspace, env allowlist
+  (no Anthropic/OpenAI keys passed through), 60s default timeout (max 600s),
+  1MB stdout / 256KB stderr caps, stdout/stderr piped through redaction.
+  v0.15.0 classifies non-safe non-blocked commands as `approval-required`
+  and **does NOT execute them through MCP** — command-ticket flow lands in
+  v0.15.1.
+
+### Decided not to do (v0.14.2 spike outcome)
+
+- Claude Agent SDK is **not** integrated as a ProviderClient. The spike
+  ([`2026-05-21-claude-agent-sdk-spike.md`](docs/superpowers/spikes/2026-05-21-claude-agent-sdk-spike.md))
+  found that Path A is architecturally infeasible (the SDK is a Claude-CLI
+  subprocess orchestrator, not a pure model client) and Path B would weaken
+  Tierkit's redaction guarantee. The MCP Bridge is the chosen pivot: Claude
+  remains the agent; Tierkit becomes the gated tool gateway.
+
 ## 0.14.2 — 2026-05-21
 
 ### Fixed — AgentLoop ↔ subscription-CLI mismatch
