@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { listPatchTickets, TIERKIT_VERSION } from "@tierkit/core";
+import { TOOL_NAMES } from "../server.js";
 
 export interface GetPolicyStatusInput {
   workspaceRoot: string;
@@ -41,16 +42,6 @@ const BUNDLED_DENYLIST_DISPLAY = [
   ".tierkit/",
 ];
 
-const TOOL_NAMES = [
-  "tierkit.list_files",
-  "tierkit.read_file",
-  "tierkit.codebase_search",
-  "tierkit.propose_patch",
-  "tierkit.apply_patch",
-  "tierkit.run_command",
-  "tierkit.get_policy_status",
-];
-
 async function fileExists(p: string): Promise<boolean> {
   try {
     await fs.stat(p);
@@ -75,7 +66,7 @@ export async function getPolicyStatusTool(input: GetPolicyStatusInput): Promise<
     hasLegacyIgnoreFile: await fileExists(path.join(root, ".tierkit-ignore")),
     hasGitignore: await fileExists(path.join(root, ".gitignore")),
     respectGitignore: true, // v0.15.0 always respects .gitignore
-    toolNames: TOOL_NAMES,
+    toolNames: [...TOOL_NAMES],
     pendingPatches,
     version: TIERKIT_VERSION,
   };

@@ -18,6 +18,7 @@ export type RunCommandResult =
       stderr: string;
       truncated: boolean;
       durationMs: number;
+      redactionHits?: Array<{ ruleId: string; count: number }>;
     }
   | {
       ok: false;
@@ -78,7 +79,7 @@ export async function runCommandTool(input: RunCommandInput): Promise<RunCommand
     };
   }
 
-  const timeoutMs = Math.min(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
+  const timeoutMs = Math.max(1, Math.min(input.timeoutMs ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS));
   const maxStdoutBytes = input.maxStdoutBytes ?? DEFAULT_MAX_STDOUT;
   const maxStderrBytes = input.maxStderrBytes ?? DEFAULT_MAX_STDERR;
   const started = Date.now();
@@ -138,6 +139,7 @@ export async function runCommandTool(input: RunCommandInput): Promise<RunCommand
         stderr: redStderr.text,
         truncated,
         durationMs: Date.now() - started,
+        redactionHits: [...redStdout.hits, ...redStderr.hits],
       });
     });
 

@@ -15,7 +15,7 @@ export interface CreateMcpServerOptions {
   env?: Record<string, string | undefined>;
 }
 
-const TOOL_NAMES = [
+export const TOOL_NAMES = [
   "tierkit.list_files",
   "tierkit.read_file",
   "tierkit.codebase_search",
@@ -25,7 +25,7 @@ const TOOL_NAMES = [
   "tierkit.get_policy_status",
 ] as const;
 
-type ToolName = (typeof TOOL_NAMES)[number];
+export type ToolName = (typeof TOOL_NAMES)[number];
 
 interface ToolCallContext {
   workspaceRoot: string;
