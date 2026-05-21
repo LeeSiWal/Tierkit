@@ -3,6 +3,7 @@ import type { ProviderClient } from "./types.js";
 import { OllamaClient } from "./ollama.js";
 import { OpenAICompatibleClient } from "./openaiCompatible.js";
 import { AnthropicClient } from "./anthropic.js";
+import { ClaudeCodeProvider } from "./claudeCode.js";
 import { MockModelClient } from "./mock.js";
 
 /**
@@ -18,10 +19,11 @@ export function pickProviderClient(profile: ModelProfile): ProviderClient | unde
   if (p === "ollama") return new OllamaClient();
   if (p === "openai" || p === "openai-compatible") return new OpenAICompatibleClient();
   if (p === "anthropic") return new AnthropicClient();
+  if (p === "claude-code") return new ClaudeCodeProvider();
   if (p === "mock") return new MockModelClient();
   return undefined;
 }
 
-export { OllamaClient, OpenAICompatibleClient, AnthropicClient, MockModelClient };
+export { OllamaClient, OpenAICompatibleClient, AnthropicClient, ClaudeCodeProvider, MockModelClient };
 export type { ProbeResult, ProbeOk, ProbeFail, ProviderClient } from "./types.js";
 export { ProviderError } from "./types.js";
