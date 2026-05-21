@@ -1,0 +1,44 @@
+name: CI
+
+# v0.17: cross-OS regression gate. Runs `pnpm build` + `pnpm test` on
+# ubuntu-latest, macos-latest, AND windows-latest so Windows-only failures
+# (path quoting, junction-point handling, .cmd-shim spawn behaviour) surface
+# at PR time instead of release time. `fail-fast: false` so a Windows-only
+# break doesn't mask Linux feedback.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: ['20']
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # pnpm/action-setup reads the version from root package.json
+      # (packageManager: pnpm@9.0.0). Don't specify version: here.
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Test
+        run: pnpm run test
