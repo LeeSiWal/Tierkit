@@ -2,6 +2,8 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { logMcpActivity } from "@tierkit/core";
 import { listFilesTool } from "./tools/listFiles.js";
+import { readFileTool } from "./tools/readFile.js";
+import { countHits } from "./redactOutput.js";
 
 export interface CreateMcpServerOptions {
   workspaceRoot: string;
@@ -27,9 +29,11 @@ interface ToolCallContext {
 interface ToolEnvelope {
   // Per-tool functions return JSON-serializable results. ok/code/redactionHits
   // are conventions used to derive activity-log fields.
+  // redactionHits may be a number (legacy/simple) or an array of { ruleId, count }
+  // objects (from tools that use redactOutput). withActivityLog handles both.
   ok?: boolean;
   code?: string;
-  redactionHits?: number;
+  redactionHits?: number | Array<{ ruleId: string; count: number }>;
   [k: string]: unknown;
 }
 
@@ -54,7 +58,12 @@ async function dispatchTool(
         path: typeof args.path === "string" ? args.path : ".",
         recursive: args.recursive === true,
       });
-    case "tierkit.read_file":         return notImplemented(name);
+    case "tierkit.read_file":
+      return readFileTool({
+        workspaceRoot: ctx.workspaceRoot,
+        path: typeof args.path === "string" ? args.path : "",
+        maxBytes: typeof args.maxBytes === "number" ? args.maxBytes : undefined,
+      });
     case "tierkit.codebase_search":   return notImplemented(name);
     // Phase 4-5 fill these in:
     case "tierkit.propose_patch":     return notImplemented(name);
@@ -139,7 +148,11 @@ async function withActivityLog(
     code = "thrown";
     result = { ok: false, code: "thrown", message: String(err?.message ?? err) };
   }
-  const redactionHits = typeof result.redactionHits === "number" ? result.redactionHits : 0;
+  const redactionHits = typeof result.redactionHits === "number"
+    ? result.redactionHits
+    : Array.isArray(result.redactionHits)
+      ? countHits(result.redactionHits as Parameters<typeof countHits>[0])
+      : 0;
 
   await logMcpActivity(ctx.workspaceRoot, {
     tool: name,
