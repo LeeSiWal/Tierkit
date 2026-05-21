@@ -5,6 +5,7 @@ import { listFilesTool } from "./tools/listFiles.js";
 import { readFileTool } from "./tools/readFile.js";
 import { codebaseSearchTool } from "./tools/codebaseSearch.js";
 import { proposePatchTool } from "./tools/proposePatch.js";
+import { applyPatchTool } from "./tools/applyPatch.js";
 import { countHits } from "./redactOutput.js";
 
 export interface CreateMcpServerOptions {
@@ -81,7 +82,8 @@ async function dispatchTool(
         note: typeof args.note === "string" ? args.note : undefined,
         proposedBy: typeof args.proposedBy === "string" ? args.proposedBy : undefined,
       });
-    case "tierkit.apply_patch":       return notImplemented(name);
+    case "tierkit.apply_patch":
+      return applyPatchTool({ workspaceRoot: ctx.workspaceRoot, patchId: args.patchId as string });
     // Phase 6 fills these in:
     case "tierkit.run_command":       return notImplemented(name);
     case "tierkit.get_policy_status": return notImplemented(name);
