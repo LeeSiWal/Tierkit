@@ -45,7 +45,10 @@ export const executeCommandTool: Tool = {
     { name: "maxStderrBytes", type: "number", description: "Default 32768; capped at 262144.", required: false },
   ],
   example: ["<execute_command>", "<command>pnpm test</command>", "</execute_command>"].join("\n"),
-  approval: "destructive-only",
+  // approval: "always" preserves v0.15 user-approval prompt for every shell command.
+  // The "destructive-only" tier exists in the type union (types.ts) but AgentLoop only
+  // gates on "always" — wiring "destructive-only" through the loop is a v0.16.1 followup.
+  approval: "always",
 
   async execute(args: Record<string, unknown>, ctx: AgentContext): Promise<ToolResult> {
     const input = args as ExecuteCommandArgs;
