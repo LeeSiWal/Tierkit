@@ -47,6 +47,8 @@ export async function doctor(input: DoctorInput = {}): Promise<DoctorResult> {
   checks.push(await checkPluginRiskCombos(projectRoot));
   checks.push(await checkApiKeyEnvVars(projectRoot));
   for (const c of await checkPerProfileBudgets(projectRoot)) checks.push(c);
+  const cliTimeoutCheck = await checkRecentCliTimeouts(projectRoot);
+  if (cliTimeoutCheck) checks.push(cliTimeoutCheck);
 
   const status: CheckStatus = checks.some((c) => c.status === "fail")
     ? "fail"
@@ -403,6 +405,51 @@ function checkPerProfileBudgetBlocked(
     detail:
       `profile '${profileId}' is blocked by ${reason}. ` +
       `Routing to this profile will be skipped until next reset (monthly) or until cap raised.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// v0.16 — recent cli-timeout hint
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans `.tierkit/runtime/usage.jsonl` for recent (last 7 days) entries with
+ * `code === "cli-timeout"`. Returns a warning DoctorCheck when found so users
+ * know to raise `transport.timeoutMs` on the affected profile.
+ */
+async function checkRecentCliTimeouts(workspaceRoot: string): Promise<DoctorCheck | null> {
+  const logPath = path.join(workspaceRoot, ".tierkit", "runtime", "usage.jsonl");
+  let raw: string;
+  try {
+    raw = await fs.readFile(logPath, "utf8");
+  } catch {
+    return null;
+  }
+  const cutoff = Date.now() - 7 * 24 * 3600 * 1000; // last 7 days
+  let timeoutCount = 0;
+  let totalRecent = 0;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    let entry: Record<string, unknown>;
+    try {
+      entry = JSON.parse(line) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const ts = Date.parse(entry.ts as string);
+    if (!Number.isFinite(ts) || ts < cutoff) continue;
+    totalRecent++;
+    if (entry.code === "cli-timeout") timeoutCount++;
+  }
+  if (timeoutCount === 0) return null;
+  return {
+    id: "cli-timeout-hint",
+    label: "subscription CLI timeout hint",
+    status: "warn",
+    detail:
+      `${timeoutCount} cli-timeout result(s) in the last 7 days of ${totalRecent} entries. ` +
+      `Consider raising transport.timeoutMs on the affected profile. ` +
+      `See docs/MODEL_PROFILES.md for per-profile tuning.`,
   };
 }
 
