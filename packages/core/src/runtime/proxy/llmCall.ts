@@ -36,6 +36,8 @@ export interface LlmCallOk {
   latencyMs: number;
   profileId: string;
   model: string;
+  /** Where the token usage counts came from. Forwarded from the underlying ChatOk. */
+  usageSource: "provider-reported" | "estimated";
   /** Tool calls the model requested (when caller provided `tools`). */
   toolCalls?: ToolCall[];
   /** Why the model stopped (forwarded from the provider). */
@@ -298,6 +300,7 @@ export async function executeLlmCall(
     latencyMs: chatResult.latencyMs,
     profileId: request.profileId,
     model: chatResult.model,
+    usageSource: chatResult.usageSource,
     ...(resultToolCalls !== undefined ? { toolCalls: resultToolCalls } : {}),
     ...(resultFinishReason !== undefined ? { finishReason: resultFinishReason } : {}),
     redactionHits: allHits,

@@ -218,6 +218,7 @@ export async function handleOpenAIChatCompletions(
     // that ignore unknown fields. Surfaces routing/redaction info to whoever wants it.
     tierkit: {
       profileId: result.profileId,
+      usageSource: result.usageSource,
       tier: result.model,
       latencyMs: result.latencyMs,
       costUsd: result.costUsd,
