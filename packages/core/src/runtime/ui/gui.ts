@@ -2241,7 +2241,43 @@ export const GUI_HTML = `<!doctype html>
   }
   function renderListFilesEnvelope(env)    { return renderEnvelopeSuccessGeneric(env); }
   function renderSearchFilesEnvelope(env)  { return renderEnvelopeSuccessGeneric(env); }
-  function renderRunCommandEnvelope(env)   { return renderEnvelopeSuccessGeneric(env); }
+
+  function renderRunCommandEnvelope(env) {
+    const icon = iconForTool(env.tool);
+    const data = env.data || {};
+    const size = env.size || {};
+
+    const headerBadges = [];
+    const exitBadgeCls = (data.exitCode === 0) ? 'badge-ok' : 'badge-fail';
+    const dur = ((data.durationMs || 0) / 1000).toFixed(1);
+    headerBadges.push('<span class="env-badge ' + exitBadgeCls + '">exit ' + escapeHtml(String(data.exitCode == null ? '?' : data.exitCode)) + ' · ' + dur + 's</span>');
+    if (env.truncated) {
+      headerBadges.push('<span class="env-badge badge-truncated">truncated</span>');
+    }
+
+    const stdoutBytes = size.stdoutBytesReturned || 0;
+    const stderrBytes = size.stderrBytesReturned || 0;
+    const stdoutSuffix = size.stdoutTruncated ? ' · truncated' : '';
+    const stderrSuffix = size.stderrTruncated ? ' · truncated' : '';
+
+    const parts = [
+      '<div class="env-card">',
+      '  <div class="env-header">' + icon + ' <strong>run_command</strong> ' + headerBadges.join(' ') + '</div>',
+      '  <div class="env-body">',
+      '    <div class="env-stream-label">STDOUT (' + fmtBytes(stdoutBytes) + ')' + stdoutSuffix + '</div>',
+      '    <pre class="env-code env-stream">' + escapeHtml(String(data.stdout == null ? '' : data.stdout)) + '</pre>',
+      '    <div class="env-stream-label">STDERR (' + fmtBytes(stderrBytes) + ')' + stderrSuffix + '</div>',
+      '    <pre class="env-code env-stream env-stderr">' + escapeHtml(String(data.stderr == null ? '' : data.stderr)) + '</pre>',
+      '  </div>',
+    ];
+    if (env.warnings) {
+      for (const w of env.warnings) {
+        parts.push('<div class="env-warning">⚠ ' + escapeHtml(String(w)) + '</div>');
+      }
+    }
+    parts.push('</div>');
+    return parts.join('\\n');
+  }
 
   function renderToolResultEnvelope(toolResultContent) {
     let env;
