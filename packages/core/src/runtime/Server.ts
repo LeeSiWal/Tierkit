@@ -41,6 +41,13 @@ import type { Target } from "../plugin/PluginManifest.js";
 import { GUI_HTML } from "./ui/gui.js";
 import type { SessionState } from "./session/ExecutionSession.js";
 import type { SecretsStore } from "../security/SecretsStore.js";
+import {
+  listPatchTickets,
+  readPatchTicket,
+  approvePatchTicket,
+  rejectPatchTicket,
+  InvalidPatchStateError,
+} from "../index.js";
 
 export interface ServerOptions {
   /** Project root the runtime operates on. */
@@ -1302,6 +1309,53 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           },
         };
         return sendJson(res, 200, config);
+      }
+
+      if (route === "GET /v1/mcp/patches") {
+        const patches = await listPatchTickets(opts.cwd);
+        return sendJson(res, 200, { patches });
+      }
+
+      if (method === "POST" && url.pathname.match(/^\/v1\/mcp\/patches\/[^/]+\/approve$/)) {
+        const id = url.pathname.split("/")[4]!;
+        try { await readPatchTicket(opts.cwd, id); }
+        catch (err: unknown) {
+          if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+            return sendJson(res, 404, { error: "patch not found" });
+          }
+          throw err;
+        }
+        const body = await readJsonBody<{ note?: string }>(req).catch(() => undefined);
+        try {
+          await approvePatchTicket(opts.cwd, id, "gui", body?.note ?? null);
+        } catch (err) {
+          if (err instanceof InvalidPatchStateError) {
+            return sendJson(res, 409, { error: err.message });
+          }
+          throw err;
+        }
+        return sendJson(res, 200, { ok: true });
+      }
+
+      if (method === "POST" && url.pathname.match(/^\/v1\/mcp\/patches\/[^/]+\/reject$/)) {
+        const id = url.pathname.split("/")[4]!;
+        try { await readPatchTicket(opts.cwd, id); }
+        catch (err: unknown) {
+          if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
+            return sendJson(res, 404, { error: "patch not found" });
+          }
+          throw err;
+        }
+        const body = await readJsonBody<{ note?: string }>(req).catch(() => undefined);
+        try {
+          await rejectPatchTicket(opts.cwd, id, "gui", body?.note ?? null);
+        } catch (err) {
+          if (err instanceof InvalidPatchStateError) {
+            return sendJson(res, 409, { error: err.message });
+          }
+          throw err;
+        }
+        return sendJson(res, 200, { ok: true });
       }
 
       // ── GUI ──
