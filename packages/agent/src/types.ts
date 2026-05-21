@@ -182,6 +182,23 @@ export interface AgentRunInput {
    * (수정/고쳐/fix/edit/...). Defaults to false.
    */
   forceEdit?: boolean;
+  /**
+   * Single-shot mode — set by the runtime when the selected profile is a subprocess
+   * (subscription-CLI) provider such as claudeCode or codex-cli.
+   *
+   * When true the AgentLoop:
+   *   - skips XML tool parsing on the response
+   *   - emits the raw response text as `assistant_text` exactly once
+   *   - appends the SINGLE_SHOT_FOOTER advisory message
+   *   - immediately emits `task_complete` and exits (no multi-turn loop)
+   *
+   * This prevents the infinite-loop bug where claudeCode's narrative output
+   * containing `<tool_name>` XML tags was re-executed as real tool calls.
+   *
+   * The signal used by the runtime: `profile.transport?.type === "subprocess"`.
+   * The agent package itself stays decoupled from core's profile types.
+   */
+  isSingleShot?: boolean;
 }
 
 export interface ImageAttachment {

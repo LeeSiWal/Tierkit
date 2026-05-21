@@ -26,6 +26,7 @@
 import type http from "node:http";
 import { runAgent } from "./AgentLoop.js";
 import type { AgentEvent, AgentRunInput, AgentToolCall } from "./types.js";
+import { loadConfig } from "@tierkit/core";
 
 export interface AgentServerExtensionOptions {
   /** Daemon's own base URL for nested model calls. Defaults to the request's Host header. */
@@ -167,6 +168,24 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
           }
         }
 
+        // Detect subprocess (subscription-CLI) profiles so AgentLoop can enter single-shot mode.
+        // Profile resolution: if the user passed a specific modelId, look it up; otherwise
+        // "auto" routing means we can't know in advance — leave isSingleShot undefined and let
+        // the AgentLoop proceed normally (auto-route will not select subprocess profiles for
+        // multi-turn tasks by default, since they're defaultDisabled and review-only).
+        let isSingleShot: boolean | undefined;
+        if (body.modelId && body.modelId !== "auto") {
+          try {
+            const cfg = await loadConfig(ctx.cwd);
+            const profile = cfg.config.modelProfiles[body.modelId];
+            if (profile?.transport?.type === "subprocess") {
+              isSingleShot = true;
+            }
+          } catch {
+            // Config load failures are non-fatal for this detection — proceed without single-shot
+          }
+        }
+
         const input: AgentRunInput = {
           task: body.task,
           cwd: ctx.cwd,
@@ -177,6 +196,7 @@ export function createAgentRouteExtension(options: AgentServerExtensionOptions =
           ...(body.maxTurns !== undefined ? { maxTurns: body.maxTurns } : {}),
           ...(attachments.length > 0 ? { attachments } : {}),
           ...(body.forceEdit ? { forceEdit: true } : {}),
+          ...(isSingleShot ? { isSingleShot: true } : {}),
           approve: approveImpl,
           abortSignal: runAbort.signal,
         };

@@ -1247,6 +1247,9 @@ export const GUI_HTML = `<!doctype html>
       profileChipAddPlaceholder:    'type a value, enter to add',
       profileResetConfirm:          'Remove the workspace override and use the bundled default for \${id}?',
       profileDeleteConfirm:         'Delete profile \${id}? This cannot be undone.',
+      // v0.14.2 — single-shot footer + timeout error
+      singleShotFooter:             '📝 Single-shot planner output. To enable multi-turn file editing, set an API key in Settings → API Keys.',
+      timeoutError:                 'claudeCode timed out after \${seconds}s. Try a shorter prompt, or enable an API-key profile in Settings → API Keys.',
     },
     ko: {
       offline: '오프라인',
@@ -1434,6 +1437,9 @@ export const GUI_HTML = `<!doctype html>
       profileChipAddPlaceholder:    '값 입력 후 Enter',
       profileResetConfirm:          '\${id}의 워크스페이스 오버라이드를 제거하고 기본값을 사용할까요?',
       profileDeleteConfirm:         '\${id} 프로파일을 삭제할까요? 되돌릴 수 없습니다.',
+      // v0.14.2 — single-shot footer + timeout error
+      singleShotFooter:             '📝 단발 planner 응답입니다. 멀티턴 파일 편집을 활성화하려면 Settings → API Keys 에서 키를 설정하세요.',
+      timeoutError:                 'claudeCode가 \${seconds}초 후 타임아웃됐습니다. 더 짧은 프롬프트를 시도하거나 Settings → API Keys 에서 API 키를 설정하세요.',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -2027,7 +2033,12 @@ export const GUI_HTML = `<!doctype html>
         const row = document.createElement('div');
         row.className = 'activity-row';
         const statusColor = rec.ok ? 'var(--accent)' : 'var(--err)';
-        const profileSpan = '<span style="color:' + statusColor + '">' + escapeHtml(rec.profileId) + '</span>';
+        // v0.14.2: show profileId as primary label; append (model) in dim if model differs
+        // (e.g. claudeCode shows "claudeCode (auto)" so it's clear which profile served it)
+        const modelSuffix = (rec.model && rec.model !== rec.profileId)
+          ? ' <span class="dim">(' + escapeHtml(rec.model) + ')</span>'
+          : '';
+        const profileSpan = '<span style="color:' + statusColor + '">' + escapeHtml(rec.profileId) + '</span>' + modelSuffix;
         const latency = rec.latencyMs ? rec.latencyMs + 'ms' : '';
         // v0.13: prepend ≈ to token counts when usageSource === "estimated"
         const tokenPrefix = rec.usageSource === 'estimated' ? '≈' : '';

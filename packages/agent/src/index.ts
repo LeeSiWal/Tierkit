@@ -3,6 +3,7 @@ export { buildSystemPrompt } from "./systemPrompt.js";
 export { parseAgentResponse, type ParsedResponse } from "./parseResponse.js";
 export {
   runAgent,
+  SINGLE_SHOT_FOOTER,
   type RunAgentDeps,
   type ModelCallRequest,
   type ModelCallResponse,

@@ -50,4 +50,8 @@ describe("DEFAULT_MODEL_PROFILES.claudeCode", () => {
   it("transport args invoke headless JSON output", () => {
     expect(claudeCode.transport.args).toEqual(["-p", "--output-format", "json"]);
   });
+
+  it("transport.timeoutMs is 180_000 (3 min, bumped in v0.14.2)", () => {
+    expect(claudeCode.transport.timeoutMs).toBe(180_000);
+  });
 });

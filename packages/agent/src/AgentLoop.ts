@@ -32,6 +32,18 @@ import { createGitCheckpoint } from "./tools/gitCheckpoint.js";
 const DEFAULT_MAX_TURNS = 25;
 const DEFAULT_BASE_URL = "http://127.0.0.1:4101";
 
+/**
+ * Advisory footer appended after single-shot (subscription-CLI) responses.
+ * Hard-coded English here because the agent package sits below the UI layer in
+ * the dependency graph. The GUI can intercept `assistant_text` events that match
+ * this constant and replace with a localized string if needed.
+ */
+export const SINGLE_SHOT_FOOTER =
+  "📝 Single-shot planner output. claudeCode (and other subscription-CLI providers) " +
+  "return text only — they cannot perform multi-turn tool calls. " +
+  "To enable file editing and multi-turn agent behavior, set an API key in Settings → API Keys " +
+  "(ANTHROPIC_API_KEY for claudeSonnet, OPENAI_API_KEY for gpt4o).";
+
 /** Tool names that mutate the workspace — we snapshot via git stash create before running. */
 const DESTRUCTIVE_TOOLS = new Set(["write_file", "apply_diff", "search_and_replace"]);
 
@@ -101,6 +113,9 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
   const maxTurns = input.maxTurns ?? DEFAULT_MAX_TURNS;
   const tools = deps.tools ?? DEFAULT_TOOLS;
   const callModel = deps.callModel ?? makeDefaultCallModel(tierkitBaseUrl);
+  // Single-shot mode: set when the selected profile is a subprocess (subscription-CLI) provider.
+  // Prevents the infinite-loop bug where XML tags in narrative text were re-executed as tools.
+  const isSingleShot = input.isSingleShot === true;
   // Edit-intent auto-detection. Matches Korean + English action verbs. Used as a heuristic:
   // when the user's initial task hits this regex AND a turn ends with no tool calls, we
   // retry once with forced tool_choice. Conservative — false positives just mean ONE extra
@@ -226,7 +241,26 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
         throw new Error("model call ended without a response");
       }
     } catch (err) {
-      yield { type: "error", code: "model-call-failed", message: (err as Error).message };
+      const errCode = (err as { code?: string }).code ?? "model-call-failed";
+      const errMsg = (err as Error).message ?? String(err);
+      // Fix C: subscription-CLI timeout → surface as explicit error, no auto-fallback.
+      // When the provider throws with code "cli-timeout" AND we're in single-shot mode,
+      // emit a structured error event and exit cleanly rather than retrying a weaker model.
+      if (isSingleShot && errCode === "cli-timeout") {
+        const secondsMatch = errMsg.match(/(\d+)\s*ms/) ?? errMsg.match(/(\d+)\s*s/);
+        const seconds = secondsMatch
+          ? (errMsg.includes("ms") ? Math.round(parseInt(secondsMatch[1]!, 10) / 1000) : parseInt(secondsMatch[1]!, 10))
+          : "?";
+        yield {
+          type: "error",
+          code: "subscription-cli-timeout",
+          message: `claudeCode timed out after ${seconds}s. The task may be too large for a single response — try breaking it into smaller pieces, or enable an API-key profile for multi-turn editing.`,
+        };
+        yield { type: "turn_end", reason: "error" };
+        yield { type: "task_complete", taskId, turnCount: turn };
+        return;
+      }
+      yield { type: "error", code: errCode, message: errMsg };
       yield { type: "turn_end", reason: "error" };
       return;
     }
@@ -241,6 +275,23 @@ export async function* runAgent(input: AgentRunInput, deps: RunAgentDeps = {}): 
         ...(modelResponse.profileId ? { profileId: modelResponse.profileId } : {}),
       };
     }
+
+    // ── Fix A: Single-shot mode for subscription-CLI providers ───────────────
+    // Subscription-CLI providers (claudeCode, codex-cli) return plain text only —
+    // they cannot perform multi-turn tool calls. Emitting the raw text as-is and
+    // immediately completing prevents the infinite-loop where XML tags in the narrative
+    // were extracted and re-executed as tool calls, which then looped back to the CLI
+    // provider that had no memory of the prior turn.
+    if (isSingleShot) {
+      const fullText = modelResponse.text;
+      if (fullText && fullText.trim().length > 0) {
+        yield { type: "assistant_text", text: fullText };
+      }
+      yield { type: "assistant_text", text: SINGLE_SHOT_FOOTER };
+      yield { type: "task_complete", taskId, turnCount: turn };
+      return;
+    }
+
     // ── Parse for tool calls FIRST so we can emit narrative text without raw XML ──
     // Weak local models emit `<tool_name>...</tool_name>` blocks inline with their prose.
     // We must strip those before surfacing `assistant_text` so the chat UI doesn't render
