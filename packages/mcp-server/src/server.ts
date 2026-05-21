@@ -31,16 +31,13 @@ interface ToolCallContext {
   workspaceRoot: string;
 }
 
-interface ToolEnvelope {
-  // Per-tool functions return JSON-serializable results. ok/code/redactionHits
-  // are conventions used to derive activity-log fields.
-  // redactionHits may be a number (legacy/simple) or an array of { ruleId, count }
-  // objects (from tools that use redactOutput). withActivityLog handles both.
-  ok?: boolean;
-  code?: string;
-  redactionHits?: number | Array<{ ruleId: string; count: number }>;
-  [k: string]: unknown;
-}
+// ToolEnvelope covers both the legacy ad-hoc shape (propose_patch, apply_patch,
+// get_policy_status) and the v0.16 tool-result-envelope.v1 shape returned by
+// the migrated tools (read_file, list_files, codebase_search, run_command).
+// We use `any` here because the strict envelope types from @tierkit/core do not
+// carry an index signature, so they can't be directly assigned to a mapped type.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ToolEnvelope = any;
 
 function notImplemented(name: string): ToolEnvelope {
   return { ok: false, code: "not-implemented", message: `${name} not wired yet` };
@@ -66,8 +63,10 @@ async function dispatchTool(
     case "tierkit.read_file":
       return readFileTool({
         workspaceRoot: ctx.workspaceRoot,
-        path: typeof args.path === "string" ? args.path : "",
-        maxBytes: typeof args.maxBytes === "number" ? args.maxBytes : undefined,
+        path: typeof args.path === "string" ? args.path : undefined,
+        startLine: typeof args.startLine === "number" ? args.startLine : undefined,
+        maxLines: typeof args.maxLines === "number" ? args.maxLines : undefined,
+        cursor: typeof args.cursor === "string" ? args.cursor : undefined,
       });
     case "tierkit.codebase_search":
       return codebaseSearchTool({

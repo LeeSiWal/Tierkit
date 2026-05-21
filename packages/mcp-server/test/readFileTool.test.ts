@@ -14,8 +14,8 @@ describe("tierkit.read_file", () => {
     const r = await readFileTool({ workspaceRoot: workspace, path: "a.txt" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.content).toBe("hello");
-    expect(r.redacted).toBe(false);
+    // v0.16 envelope: content lives in data.content
+    expect((r as any).data.content).toBe("hello");
   });
 
   it("redacts API keys in content", async () => {
@@ -26,9 +26,10 @@ describe("tierkit.read_file", () => {
     const r = await readFileTool({ workspaceRoot: workspace, path: "secret.txt" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.content).not.toMatch(/sk-ant-api03-[A-Z]/);
-    expect(r.redacted).toBe(true);
-    expect(r.redactionHits.length).toBeGreaterThan(0);
+    // v0.16 envelope: content lives in data.content
+    expect((r as any).data.content).not.toMatch(/sk-ant-api03-[A-Z]/);
+    // Redaction is performed — the content is clean (no separate redacted/redactionHits in envelope)
+    expect((r as any).data.content).not.toContain("sk-ant-api03-");
   });
 
   it("refuses denylisted paths", async () => {
@@ -36,7 +37,8 @@ describe("tierkit.read_file", () => {
     const r = await readFileTool({ workspaceRoot: workspace, path: ".env" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("ignored-path");
+    // v0.16 envelope: failure uses error.code
+    expect((r as any).error.code).toBe("ignored-path");
   });
 
   it("refuses paths matched by .tierkit/ignore", async () => {
@@ -47,13 +49,13 @@ describe("tierkit.read_file", () => {
     const r = await readFileTool({ workspaceRoot: workspace, path: "private.md" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("ignored-path");
+    expect((r as any).error.code).toBe("ignored-path");
   });
 
   it("refuses paths outside workspace", async () => {
     const r = await readFileTool({ workspaceRoot: workspace, path: "/etc/passwd" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("outside-workspace");
+    expect((r as any).error.code).toBe("outside-workspace");
   });
 });
