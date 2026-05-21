@@ -296,6 +296,7 @@ export {
   type UsageSummary,
   type ProfileUsageEntry,
 } from "./runtime/usageLog.js";
+export { computeRoutingSavings, type RoutingSavingsSummary } from "./runtime/routingSavings.js";
 export { checkBudget, type BudgetCheckResult, type BudgetStatus, type BudgetPolicy } from "./runtime/budget.js";
 export {
   checkPerProfileBudget,

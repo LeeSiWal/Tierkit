@@ -164,6 +164,15 @@ export const TierkitConfigSchema = z
       dataDir: ".tierkit/runtime",
       host: "127.0.0.1",
     }),
+    /**
+     * v0.17: profile id used as the cost baseline for the Savings card. The
+     * "estimated cost saved" metric assumes that every local-device call would
+     * have gone to this profile instead, and multiplies the routed tokens by
+     * its per-token cost. Optional — when absent, defaults to `"claudeCode"`.
+     * Resolution: if the id is missing from `modelProfiles` OR the profile
+     * lacks `cost`, the Savings endpoint returns `baselineConfigured:false`.
+     */
+    routingBaseline: z.string().min(1).optional(),
     migrations: z.object({
       defaultDisabledSeededProfileIds: z.array(z.string().min(1)).default([]),
     }).default({}),
