@@ -175,3 +175,54 @@ export async function updateProfileEnabled(input: UpdateProfileEnabledInput): Pr
   await fs.rename(tempPath, targetPath);
   return { path: targetPath, scope, id: input.id };
 }
+
+export interface UpdateProfileFieldsInput {
+  id: string;
+  cwd?: string;
+  scope?: ProfileScope;
+  roles?: string[];
+  goodAt?: string[];
+  notGoodAt?: string[];
+}
+
+/**
+ * Patch specific fields (roles, goodAt, notGoodAt) of an existing profile in the target
+ * config file. If the profile does not exist in the target scope, it is created as a
+ * partial override (other fields remain from lower-priority layers after load-time merge).
+ */
+export async function updateProfileFields(input: UpdateProfileFieldsInput): Promise<ProfileCrudResult> {
+  const cwd = input.cwd ?? process.cwd();
+  const scope = input.scope ?? "workspace";
+  const targetPath = resolveConfigPath(cwd, scope);
+
+  let raw: Record<string, unknown> = {};
+  try {
+    const text = await fs.readFile(targetPath, "utf8");
+    raw = JSON.parse(text) as Record<string, unknown>;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    raw = { version: "0.1" };
+  }
+
+  if (typeof raw.modelProfiles !== "object" || raw.modelProfiles === null) {
+    raw.modelProfiles = {};
+  }
+  const profiles = raw.modelProfiles as Record<string, Record<string, unknown>>;
+  const existing = typeof profiles[input.id] === "object" && profiles[input.id] !== null
+    ? profiles[input.id]
+    : {};
+
+  const updated = { ...existing };
+  if (input.roles !== undefined) updated.roles = input.roles;
+  if (input.goodAt !== undefined) updated.goodAt = input.goodAt;
+  if (input.notGoodAt !== undefined) updated.notGoodAt = input.notGoodAt;
+  profiles[input.id] = updated;
+
+  await fs.mkdir(path.dirname(targetPath), { recursive: true });
+  const text3 = JSON.stringify(raw, null, 2) + "\n";
+  const tempPath3 = targetPath + ".tmp";
+  await fs.writeFile(tempPath3, text3, "utf8");
+  await fs.rename(tempPath3, targetPath);
+
+  return { path: targetPath, scope, id: input.id };
+}

@@ -603,6 +603,40 @@ export const GUI_HTML = `<!doctype html>
   .c122-saved-verdict { background: rgba(40,167,69,0.1); padding: 4px 8px; border-radius: 3px; font-size: 12px; }
   .c122-api-key-hint { font-size: 11px; color: var(--fg-muted, #999); margin: 4px 0; }
   .c122-progress { font-size: 10px; color: var(--fg-muted, #999); }
+  /* v0.14 — onboarding card */
+  .onboarding-card { background: rgba(80,200,120,0.06); border: 1px solid rgba(80,200,120,0.35); border-radius: 6px; padding: 12px 14px; margin-bottom: 10px; }
+  .onboarding-card h3 { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--fg); }
+  .onboarding-list { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-direction: column; gap: 4px; }
+  .onboarding-list li { display: flex; align-items: center; gap: 6px; font-size: 12px; }
+  .onboarding-list .ob-icon { width: 16px; text-align: center; flex-shrink: 0; }
+  .onboarding-list .ob-label { flex: 1; }
+  .onboarding-list .ob-action button { font-size: 11px; padding: 1px 7px; }
+  .onboarding-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .onboarding-actions button { font-size: 12px; padding: 4px 12px; }
+  /* v0.14 — profile inline editor */
+  .profile-editor { margin-top: 6px; padding: 8px 10px; background: rgba(0,0,0,0.15); border-radius: 5px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+  .profile-editor label { color: var(--fg-dim); font-size: 11px; font-weight: 600; margin-bottom: 2px; display: block; }
+  .chip-input { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 24px; background: var(--bg-input); border: 1px solid var(--border); border-radius: 4px; padding: 3px 6px; }
+  .chip { display: inline-flex; align-items: center; gap: 3px; background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 1px 7px; font-size: 11px; font-family: var(--mono); }
+  .chip.chip-invalid { border-color: #d73a49; color: #d73a49; }
+  .chip .chip-x { cursor: pointer; opacity: 0.6; margin-left: 2px; }
+  .chip .chip-x:hover { opacity: 1; }
+  .chip-add-btn { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0 4px; font-size: 14px; line-height: 1; }
+  .chip-input-field { border: none; background: transparent; color: var(--fg); font-size: 11px; outline: none; width: 120px; }
+  .chip-suggest { position: absolute; background: var(--bg-card); border: 1px solid var(--border); border-radius: 5px; max-height: 140px; overflow-y: auto; z-index: 10; font-size: 11px; font-family: var(--mono); box-shadow: 0 4px 12px rgba(0,0,0,0.4); min-width: 140px; }
+  .chip-suggest div { padding: 4px 8px; cursor: pointer; }
+  .chip-suggest div:hover { background: var(--bg-input); }
+  .profile-editor-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  /* v0.14 — secrets card */
+  .secrets-card { display: flex; flex-direction: column; gap: 8px; }
+  .secrets-card h2 { margin-bottom: 0; }
+  .secret-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
+  .secret-row:last-of-type { border-bottom: none; }
+  .secret-row .secret-key { font-family: var(--mono); font-weight: 600; flex-shrink: 0; min-width: 160px; }
+  .secret-row .secret-val { font-family: var(--mono); color: var(--fg-dim); flex: 1; font-size: 11px; }
+  .secret-row .secret-notset { color: var(--warn); font-size: 11px; }
+  .secret-inline-form { padding: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .secret-inline-form input[type=password], .secret-inline-form input[type=text] { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 160px; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 3px 6px; border-radius: 4px; }
 </style>
 </head>
 <body>
@@ -667,6 +701,17 @@ export const GUI_HTML = `<!doctype html>
 </div><!-- /tab-panel:chat -->
 
 <main class="tab-panel" data-tab-panel="settings">
+
+  <!-- ── ONBOARDING CARD (v0.14; hidden by JS when seenOnboarding===true) ── -->
+  <div class="onboarding-card" id="onboarding-card" style="display:none">
+    <h3 data-i18n="onboardingTitle">Setup</h3>
+    <ul class="onboarding-list" id="onboarding-list"></ul>
+    <div class="onboarding-actions">
+      <button id="onboarding-test" data-i18n="onboardingQuickTest">Quick check ▷</button>
+      <button id="onboarding-dismiss" data-i18n="onboardingDismiss">Got it, hide</button>
+    </div>
+    <div id="onboarding-trace" style="display:none;font-size:11px;margin-top:8px;padding:6px 8px;background:var(--bg-input);border-radius:4px;font-family:var(--mono);color:var(--fg-dim)"></div>
+  </div>
 
   <!-- ── TODAY hero ─────────────────────────────────────────────────── -->
   <div class="usage-hero">
@@ -814,6 +859,14 @@ export const GUI_HTML = `<!doctype html>
       </span>
     </h2>
     <div id="tools-list"><div class="empty" data-i18n="loading">loading…</div></div>
+  </section>
+
+  <!-- ── SECRETS (v0.14) ───────────────────────────────────────────── -->
+  <section class="card secrets-card" id="secrets-card">
+    <h2 data-i18n="cardSecrets">API Keys</h2>
+    <div id="secrets-list"><div class="empty" data-i18n="loading">loading…</div></div>
+    <button id="btn-add-secret" class="tiny" data-i18n="secretAddCustom">+ Custom key</button>
+    <div id="secrets-add-form" style="display:none;margin-top:8px"></div>
   </section>
 
   <!-- ── ADVANCED ───────────────────────────────────────────────────── -->
@@ -1163,6 +1216,37 @@ export const GUI_HTML = `<!doctype html>
       bannerGotIt:                 'Got it',
       warningStreamDegraded:       'stream degraded',
       modelTestBadge:              'model-test',
+      // v0.14 — onboarding card
+      onboardingTitle:              'Setup',
+      onboardingDetectOllama:       'Ollama',
+      onboardingDetectClaude:       'claude CLI',
+      onboardingDetectClaudeProfile:'claudeCode enabled',
+      onboardingDetectKey:          '\${name}',
+      onboardingActionEnable:       'Enable',
+      onboardingActionAddKey:       'Add key',
+      onboardingActionInstall:      'Install',
+      onboardingQuickTest:          'Quick check ▷',
+      onboardingDismiss:            'Got it, hide',
+      onboardingTracePrefix:        'Route trace:',
+      // v0.14 — secrets card
+      cardSecrets:                  'API Keys',
+      secretEditBtn:                'Edit',
+      secretRemoveBtn:              'Remove',
+      secretAddCustom:              '+ Custom key',
+      secretSave:                   'Save',
+      secretCancel:                 'Cancel',
+      secretNotSet:                 '(not set)',
+      // v0.14 — profile editor
+      profileEditBtn:               'Edit',
+      profileSaveBtn:               'Save',
+      profileResetBundled:          'Reset to bundled',
+      profileDeleteBtn:             'Delete',
+      profileFieldRoles:            'roles',
+      profileFieldGoodAt:           'goodAt',
+      profileFieldNotGoodAt:        'notGoodAt',
+      profileChipAddPlaceholder:    'type a value, enter to add',
+      profileResetConfirm:          'Remove the workspace override and use the bundled default for \${id}?',
+      profileDeleteConfirm:         'Delete profile \${id}? This cannot be undone.',
     },
     ko: {
       offline: '오프라인',
@@ -1319,6 +1403,37 @@ export const GUI_HTML = `<!doctype html>
       bannerGotIt:                 '확인',
       warningStreamDegraded:       '스트림 강등',
       modelTestBadge:              '모델 테스트',
+      // v0.14 — onboarding card
+      onboardingTitle:              '설정',
+      onboardingDetectOllama:       'Ollama',
+      onboardingDetectClaude:       'claude CLI',
+      onboardingDetectClaudeProfile:'claudeCode 활성화',
+      onboardingDetectKey:          '\${name}',
+      onboardingActionEnable:       '활성화',
+      onboardingActionAddKey:       '키 추가',
+      onboardingActionInstall:      '설치',
+      onboardingQuickTest:          '빠른 점검 ▷',
+      onboardingDismiss:            '확인했어요',
+      onboardingTracePrefix:        '라우팅 흐름:',
+      // v0.14 — secrets card
+      cardSecrets:                  'API 키',
+      secretEditBtn:                '편집',
+      secretRemoveBtn:              '삭제',
+      secretAddCustom:              '+ 사용자 키',
+      secretSave:                   '저장',
+      secretCancel:                 '취소',
+      secretNotSet:                 '(미설정)',
+      // v0.14 — profile editor
+      profileEditBtn:               '편집',
+      profileSaveBtn:               '저장',
+      profileResetBundled:          '기본값으로',
+      profileDeleteBtn:             '삭제',
+      profileFieldRoles:            'roles',
+      profileFieldGoodAt:           '잘하는 작업',
+      profileFieldNotGoodAt:        '못하는 작업',
+      profileChipAddPlaceholder:    '값 입력 후 Enter',
+      profileResetConfirm:          '\${id}의 워크스페이스 오버라이드를 제거하고 기본값을 사용할까요?',
+      profileDeleteConfirm:         '\${id} 프로파일을 삭제할까요? 되돌릴 수 없습니다.',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -1345,6 +1460,8 @@ export const GUI_HTML = `<!doctype html>
   document.querySelectorAll('.tab-btn').forEach((b) => {
     b.addEventListener('click', () => setActiveTab(b.dataset.tab));
   });
+  // v0.14: on first activation (seenOnboarding !== true), force tab to 'chat'.
+  // This is resolved later after config is loaded in the main init block.
   setActiveTab(loadActiveTab() || 'chat');
 
   // ── State + helpers ────────────────────────────────────────────────────────
@@ -3985,6 +4102,555 @@ export const GUI_HTML = `<!doctype html>
   $('btn-refresh').onclick = refreshAll;
 
   c122Init();
+
+  // ── v0.14: Onboarding card ────────────────────────────────────────────────
+  let _envCache = null;
+  let _taskTypes = [];
+  async function getEnvData() {
+    if (_envCache) return _envCache;
+    try { _envCache = await jget('/v1/environment'); _taskTypes = _envCache.taskTypes || []; } catch { _envCache = {}; }
+    return _envCache;
+  }
+
+  async function renderOnboardingCard() {
+    try {
+      const configR = await jget('/v1/config').catch(() => ({ config: {} }));
+      const notices = (configR && configR.config && configR.config.notices) || {};
+      const card = $('onboarding-card');
+      if (!card) return;
+      if (notices.seenOnboarding === true) { card.style.display = 'none'; return; }
+      card.style.display = 'block';
+
+      // v0.14: force chat tab on first activation when onboarding not yet seen
+      if (!loadActiveTab() || loadActiveTab() === 'settings') {
+        setActiveTab('chat');
+      }
+
+      const env = await getEnvData();
+      const profiles = (configR && configR.config && configR.config.modelProfiles) || {};
+      const disabledIds = (configR && configR.config && configR.config.disabledProfileIds) || [];
+      const connectionsR = await jget('/v1/connections').catch(() => ({ connections: [] }));
+      const connections = connectionsR.connections || [];
+
+      const list = $('onboarding-list');
+      list.innerHTML = '';
+
+      function mkRow(icon, label, actionHtml) {
+        const li = document.createElement('li');
+        li.innerHTML =
+          '<span class="ob-icon">' + escapeHtml(icon) + '</span>' +
+          '<span class="ob-label">' + escapeHtml(label) + '</span>' +
+          (actionHtml ? '<span class="ob-action">' + actionHtml + '</span>' : '');
+        list.appendChild(li);
+        return li;
+      }
+
+      // Ollama
+      const ollamaRunning = env.ollama && env.ollama.running;
+      mkRow(ollamaRunning ? '✅' : '◯', i18n.onboardingDetectOllama + (ollamaRunning ? ' (' + (env.ollama.modelCount || 0) + ' models)' : ''), '');
+
+      // claude CLI
+      const claudeOnPath = env.claudeCli && env.claudeCli.onPath;
+      mkRow(claudeOnPath ? '✅' : '◯', i18n.onboardingDetectClaude, '');
+
+      // claudeCode enabled
+      const claudeEnabled = !disabledIds.includes('claudeCode');
+      const claudeRow = mkRow(claudeEnabled ? '✅' : '⚠️', i18n.onboardingDetectClaudeProfile,
+        !claudeEnabled
+          ? '<button class="tiny" id="ob-enable-claude">' + escapeHtml(i18n.onboardingActionEnable) + '</button>'
+          : '');
+      if (!claudeEnabled) {
+        const btn = claudeRow.querySelector('#ob-enable-claude');
+        if (btn) btn.onclick = async () => {
+          btn.disabled = true;
+          try {
+            const scope = profiles.claudeCode ? (profiles.claudeCode._source || 'workspace') : 'workspace';
+            await transport.request('/v1/config/profile/claudeCode', { method: 'PATCH', body: { enabled: true, scope } });
+            await renderOnboardingCard();
+          } finally { btn.disabled = false; }
+        };
+      }
+
+      // ANTHROPIC_API_KEY
+      const anthropicPresent = env.envVars && env.envVars.ANTHROPIC_API_KEY && env.envVars.ANTHROPIC_API_KEY.present;
+      const anthropicRow = mkRow(anthropicPresent ? '✅' : '⚠️', 'ANTHROPIC_API_KEY',
+        !anthropicPresent
+          ? '<button class="tiny" id="ob-add-anthropic">' + escapeHtml(i18n.onboardingActionAddKey) + '</button>'
+          : '');
+      if (!anthropicPresent) {
+        const btn = anthropicRow.querySelector('#ob-add-anthropic');
+        if (btn) btn.onclick = () => openSecretsAddForm('ANTHROPIC_API_KEY');
+      }
+
+      // OPENAI_API_KEY
+      const openaiPresent = env.envVars && env.envVars.OPENAI_API_KEY && env.envVars.OPENAI_API_KEY.present;
+      mkRow(openaiPresent ? '✅' : '◯', 'OPENAI_API_KEY', '');
+
+      // Connected tools (Roo / Cline / Continue)
+      const connectedTools = connections.filter((c) => c.connected).map((c) => c.tool);
+      mkRow(connectedTools.length > 0 ? '✅' : '◯', (connectedTools.length > 0 ? connectedTools.join(', ') : 'Roo / Cline / Continue') + ' connected', '');
+
+      // Check if all items are green for the "Setup looks good" toast
+      const allGreen = ollamaRunning && claudeOnPath && claudeEnabled && anthropicPresent && connectedTools.length > 0;
+      if (allGreen) {
+        const trace = $('onboarding-trace');
+        if (trace && trace.style.display === 'none') {
+          // Show "all green" suggestion
+          const toastEl = document.createElement('div');
+          toastEl.style.cssText = 'font-size:11px;margin-top:6px;color:var(--accent)';
+          toastEl.textContent = 'Setup looks good — try the Chat tab';
+          const chatBtn = document.createElement('button');
+          chatBtn.className = 'tiny';
+          chatBtn.textContent = 'Chat';
+          chatBtn.style.marginLeft = '8px';
+          chatBtn.onclick = () => setActiveTab('chat');
+          toastEl.appendChild(chatBtn);
+          card.appendChild(toastEl);
+        }
+      }
+
+      // Quick test button
+      const testBtn = $('onboarding-test');
+      if (testBtn) {
+        testBtn.onclick = async () => {
+          testBtn.disabled = true;
+          const trace = $('onboarding-trace');
+          if (trace) { trace.style.display = 'block'; trace.textContent = i18n.onboardingTracePrefix + ' …'; }
+          try {
+            const r = await jpost('/v1/route/explain', { task: '프로젝트 전반을 보고 리뷰해줘' });
+            if (trace) {
+              const chain = (r.chain || []).map((c) => escapeHtml(c.profileId || c.id || '?')).join(' → ');
+              const winner = (r.selected && r.selected.profileId) || (r.chain && r.chain[0] && r.chain[0].profileId) || '?';
+              const isGood = winner === 'claudeCode' || (r.selected && r.selected.viable);
+              trace.innerHTML =
+                escapeHtml(i18n.onboardingTracePrefix) + ' ' + (chain || escapeHtml(winner)) +
+                ' <span style="color:' + (isGood ? 'var(--accent)' : 'var(--warn)') + '">' + (isGood ? '✓' : '⚠') + '</span>';
+            }
+          } catch (err) {
+            if (trace) trace.textContent = i18n.onboardingTracePrefix + ' ' + (err.message || String(err));
+          } finally { testBtn.disabled = false; }
+        };
+      }
+
+      // Dismiss button
+      const dismissBtn = $('onboarding-dismiss');
+      if (dismissBtn) {
+        dismissBtn.onclick = async () => {
+          await jpost('/v1/notices', { seenOnboarding: true }).catch(() => { /* best-effort */ });
+          if (card) card.style.display = 'none';
+        };
+      }
+    } catch (e) { /* ignore — non-critical */ }
+  }
+
+  // ── v0.14: Profile inline editor ─────────────────────────────────────────
+  let _knownTaskTypes = [];
+
+  function makeChipInput(containerEl, initialValues, validValues, allowFreeText) {
+    let values = [...(initialValues || [])];
+    let suggestEl = null;
+    let inputEl = null;
+
+    function renderChips() {
+      containerEl.innerHTML = '';
+      for (const v of values) {
+        const isValid = allowFreeText || !validValues.length || validValues.includes(v);
+        const chip = document.createElement('span');
+        chip.className = 'chip' + (isValid ? '' : ' chip-invalid');
+        const txt = document.createElement('span');
+        txt.textContent = v;
+        const x = document.createElement('span');
+        x.className = 'chip-x';
+        x.textContent = '×';
+        x.onclick = () => { values = values.filter((vv) => vv !== v); renderChips(); };
+        chip.appendChild(txt);
+        chip.appendChild(x);
+        containerEl.appendChild(chip);
+      }
+      // Add button
+      const addBtn = document.createElement('button');
+      addBtn.className = 'chip-add-btn';
+      addBtn.textContent = '+';
+      addBtn.type = 'button';
+      addBtn.onclick = (e) => { e.stopPropagation(); showInput(); };
+      containerEl.appendChild(addBtn);
+    }
+
+    function showInput() {
+      if (inputEl) return;
+      const wrap = document.createElement('span');
+      wrap.style.position = 'relative';
+      inputEl = document.createElement('input');
+      inputEl.type = 'text';
+      inputEl.className = 'chip-input-field';
+      inputEl.placeholder = i18n.profileChipAddPlaceholder;
+      wrap.appendChild(inputEl);
+      containerEl.appendChild(wrap);
+      inputEl.focus();
+
+      inputEl.oninput = () => {
+        const q = inputEl.value.toLowerCase();
+        if (!validValues.length) { hideSuggest(); return; }
+        const matches = validValues.filter((v) => v.toLowerCase().startsWith(q) && !values.includes(v));
+        if (matches.length === 0) { hideSuggest(); return; }
+        showSuggest(matches, wrap);
+      };
+
+      inputEl.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === ',') {
+          e.preventDefault();
+          const v = inputEl.value.trim().replace(/,$/, '');
+          if (v) { values.push(v); }
+          hideSuggest();
+          inputEl = null;
+          renderChips();
+        } else if (e.key === 'Escape') {
+          hideSuggest();
+          inputEl = null;
+          renderChips();
+        }
+      };
+
+      inputEl.onblur = () => {
+        setTimeout(() => {
+          const v = inputEl ? inputEl.value.trim() : '';
+          if (v) { values.push(v); }
+          hideSuggest();
+          inputEl = null;
+          renderChips();
+        }, 200);
+      };
+    }
+
+    function showSuggest(matches, anchor) {
+      hideSuggest();
+      suggestEl = document.createElement('div');
+      suggestEl.className = 'chip-suggest';
+      suggestEl.style.top = '100%';
+      suggestEl.style.left = '0';
+      for (const m of matches.slice(0, 12)) {
+        const d = document.createElement('div');
+        d.textContent = m;
+        d.onmousedown = (e) => {
+          e.preventDefault();
+          values.push(m);
+          hideSuggest();
+          if (inputEl) inputEl.value = '';
+          inputEl = null;
+          renderChips();
+        };
+        suggestEl.appendChild(d);
+      }
+      anchor.appendChild(suggestEl);
+    }
+
+    function hideSuggest() {
+      if (suggestEl) { suggestEl.remove(); suggestEl = null; }
+    }
+
+    renderChips();
+    return { getValues: () => [...values] };
+  }
+
+  function openProfileEditor(rowEl, entry, configR) {
+    // Close any other open editor
+    document.querySelectorAll('.profile-editor').forEach((el) => el.remove());
+    const existing = rowEl.querySelector('.profile-editor');
+    if (existing) { existing.remove(); return; } // toggle
+
+    const p = entry.profile || {};
+    const id = entry.id;
+    const isBundled = entry.source === 'bundled';
+    const isWorkspace = entry.source === 'workspace';
+
+    const editor = document.createElement('div');
+    editor.className = 'profile-editor';
+
+    const kindLine = document.createElement('label');
+    kindLine.innerHTML = 'kind: <span class="profile-kind">' + escapeHtml(p.kind || '?') + '</span>';
+    editor.appendChild(kindLine);
+
+    // roles
+    const rolesLabel = document.createElement('label');
+    rolesLabel.textContent = i18n.profileFieldRoles;
+    editor.appendChild(rolesLabel);
+    const rolesWrap = document.createElement('div');
+    rolesWrap.className = 'chip-input';
+    editor.appendChild(rolesWrap);
+    const rolesCtrl = makeChipInput(rolesWrap, p.roles || [], [], true);
+
+    // goodAt
+    const goodAtLabel = document.createElement('label');
+    goodAtLabel.textContent = i18n.profileFieldGoodAt;
+    editor.appendChild(goodAtLabel);
+    const goodAtWrap = document.createElement('div');
+    goodAtWrap.className = 'chip-input';
+    editor.appendChild(goodAtWrap);
+    const goodAtCtrl = makeChipInput(goodAtWrap, p.goodAt || [], _knownTaskTypes, false);
+
+    // notGoodAt
+    const notGoodAtLabel = document.createElement('label');
+    notGoodAtLabel.textContent = i18n.profileFieldNotGoodAt;
+    editor.appendChild(notGoodAtLabel);
+    const notGoodAtWrap = document.createElement('div');
+    notGoodAtWrap.className = 'chip-input';
+    editor.appendChild(notGoodAtWrap);
+    const notGoodAtCtrl = makeChipInput(notGoodAtWrap, p.notGoodAt || [], _knownTaskTypes, false);
+
+    // Actions
+    const actions = document.createElement('div');
+    actions.className = 'profile-editor-actions';
+
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'tiny primary';
+    saveBtn.textContent = i18n.profileSaveBtn;
+    saveBtn.onclick = async () => {
+      saveBtn.disabled = true;
+      try {
+        const scope = isWorkspace ? 'workspace' : 'user';
+        const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id), {
+          method: 'PATCH',
+          body: { roles: rolesCtrl.getValues(), goodAt: goodAtCtrl.getValues(), notGoodAt: notGoodAtCtrl.getValues(), scope },
+        });
+        if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+        toast(id + ' ✓ ' + i18n.profileSaveBtn, 'ok');
+        editor.remove();
+        await refreshModels();
+      } finally { saveBtn.disabled = false; }
+    };
+    actions.appendChild(saveBtn);
+
+    if (isBundled || isWorkspace) {
+      const resetBtn = document.createElement('button');
+      resetBtn.className = 'tiny';
+      resetBtn.textContent = i18n.profileResetBundled;
+      resetBtn.onclick = async () => {
+        if (!safeConfirm(i18n.profileResetConfirm.replace('\${id}', id))) return;
+        resetBtn.disabled = true;
+        try {
+          const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id) + '?scope=workspace', { method: 'DELETE' });
+          if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+          toast(id + ' ✓ ' + i18n.profileResetBundled, 'ok');
+          editor.remove();
+          await refreshModels();
+        } finally { resetBtn.disabled = false; }
+      };
+      actions.appendChild(resetBtn);
+    }
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'tiny';
+    delBtn.textContent = i18n.profileDeleteBtn;
+    delBtn.onclick = async () => {
+      if (!safeConfirm(i18n.profileDeleteConfirm.replace('\${id}', id))) return;
+      delBtn.disabled = true;
+      try {
+        const scope = isWorkspace ? 'workspace' : 'user';
+        const resp = await transport.request('/v1/config/profile/' + encodeURIComponent(id) + '?scope=' + scope, { method: 'DELETE' });
+        if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+        toast(id + ' ✓ ' + i18n.deletedOk, 'ok');
+        editor.remove();
+        await refreshModels();
+      } finally { delBtn.disabled = false; }
+    };
+    actions.appendChild(delBtn);
+
+    editor.appendChild(actions);
+    rowEl.appendChild(editor);
+  }
+
+  // ── v0.14: Secrets card ───────────────────────────────────────────────────
+  const DEFAULT_SECRET_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'GEMINI_API_KEY'];
+
+  function openSecretsAddForm(prefillKey) {
+    const form = $('secrets-add-form');
+    if (!form) return;
+    form.style.display = 'block';
+    form.innerHTML =
+      '<div class="secret-inline-form">' +
+        '<input type="text" id="secrets-add-name" placeholder="KEY_NAME" style="font-family:var(--mono);font-size:12px;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px;width:160px" value="' + escapeHtml(prefillKey || '') + '">' +
+        '<input type="password" id="secrets-add-value" placeholder="sk-… value" style="font-family:var(--mono);font-size:12px;flex:1;min-width:120px;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px">' +
+        '<button class="tiny primary" id="secrets-add-save">' + escapeHtml(i18n.secretSave) + '</button>' +
+        '<button class="tiny" id="secrets-add-cancel">' + escapeHtml(i18n.secretCancel) + '</button>' +
+      '</div>';
+    const nameInput = document.getElementById('secrets-add-name');
+    const valInput = document.getElementById('secrets-add-value');
+    if (prefillKey) { if (valInput) valInput.focus(); } else { if (nameInput) nameInput.focus(); }
+    const saveBtn = document.getElementById('secrets-add-save');
+    const cancelBtn = document.getElementById('secrets-add-cancel');
+    if (cancelBtn) cancelBtn.onclick = () => { form.style.display = 'none'; form.innerHTML = ''; };
+    if (saveBtn) saveBtn.onclick = async () => {
+      const name = (nameInput && nameInput.value.trim()) || '';
+      const value = (valInput && valInput.value.trim()) || '';
+      if (!name) { toast('key name required', 'err'); return; }
+      saveBtn.disabled = true;
+      try {
+        const resp = await jpost('/v1/secrets', { key: name, value });
+        if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+        toast(name + ' ✓ ' + i18n.secretSave, 'ok');
+        form.style.display = 'none'; form.innerHTML = '';
+        await refreshSecretsCard();
+        _envCache = null; // bust env cache so onboarding re-checks
+        await renderOnboardingCard();
+      } finally { saveBtn.disabled = false; }
+    };
+  }
+
+  async function refreshSecretsCard() {
+    const listEl = $('secrets-list');
+    if (!listEl) return;
+    try {
+      const [secretsR, configR] = await Promise.all([
+        jget('/v1/secrets').catch(() => ({ entries: [] })),
+        jget('/v1/config').catch(() => ({ config: {} })),
+      ]);
+      const profiles = (configR && configR.config && configR.config.modelProfiles) || {};
+      const wantedKeys = new Set(DEFAULT_SECRET_KEYS);
+      for (const p of Object.values(profiles)) {
+        const k = p && (p).apiKeyEnv;
+        if (typeof k === 'string' && k) wantedKeys.add(k);
+      }
+      const secretMap = {};
+      for (const e of (secretsR.entries || [])) secretMap[e.key] = e;
+      // Ensure default keys appear even if not in the secrets list
+      for (const k of wantedKeys) {
+        if (!secretMap[k]) secretMap[k] = { key: k, set: false, masked: '' };
+      }
+      const sortedKeys = Array.from(wantedKeys).concat(
+        Object.keys(secretMap).filter((k) => !wantedKeys.has(k)),
+      );
+      listEl.innerHTML = '';
+      for (const k of sortedKeys) {
+        const e = secretMap[k] || { key: k, set: false, masked: '' };
+        const row = document.createElement('div');
+        row.className = 'secret-row';
+        row.dataset.key = k;
+        const keyEl = document.createElement('span');
+        keyEl.className = 'secret-key';
+        keyEl.textContent = k;
+        row.appendChild(keyEl);
+        const valEl = document.createElement('span');
+        valEl.className = e.set ? 'secret-val' : 'secret-notset';
+        valEl.textContent = e.set ? (e.masked || '••••') : i18n.secretNotSet;
+        row.appendChild(valEl);
+        const btnWrap = document.createElement('span');
+        btnWrap.style.marginLeft = 'auto';
+        btnWrap.style.display = 'flex';
+        btnWrap.style.gap = '4px';
+        const editBtn = document.createElement('button');
+        editBtn.className = 'tiny';
+        editBtn.textContent = i18n.secretEditBtn;
+        editBtn.onclick = () => openSecretEditRow(row, k);
+        btnWrap.appendChild(editBtn);
+        if (e.set) {
+          const removeBtn = document.createElement('button');
+          removeBtn.className = 'tiny';
+          removeBtn.textContent = i18n.secretRemoveBtn;
+          removeBtn.onclick = async () => {
+            if (!safeConfirm(k + '?')) return;
+            removeBtn.disabled = true;
+            try {
+              const resp = await transport.request('/v1/secrets/' + encodeURIComponent(k), { method: 'DELETE' });
+              if (!resp.ok) {
+                const msg = resp.data && resp.data.code === 'external' ? i18n.keyExternal : (resp.data && resp.data.message) || i18n.failed;
+                toast(k + ': ' + msg, 'err'); return;
+              }
+              toast(k + ' ✓ ' + i18n.secretRemoveBtn, 'ok');
+              _envCache = null;
+              await refreshSecretsCard();
+              await renderOnboardingCard();
+            } finally { removeBtn.disabled = false; }
+          };
+          btnWrap.appendChild(removeBtn);
+        }
+        row.appendChild(btnWrap);
+        listEl.appendChild(row);
+      }
+    } catch (e) {
+      listEl.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function openSecretEditRow(rowEl, key) {
+    // Replace the row content with an inline edit form
+    const existingForm = rowEl.querySelector('.secret-inline-form');
+    if (existingForm) { existingForm.remove(); return; } // toggle
+    const form = document.createElement('div');
+    form.className = 'secret-inline-form';
+    const inp = document.createElement('input');
+    inp.type = 'password';
+    inp.placeholder = 'new value…';
+    inp.style.cssText = 'font-family:var(--mono);font-size:12px;flex:1;min-width:120px;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px';
+    form.appendChild(inp);
+    const saveBtn = document.createElement('button');
+    saveBtn.className = 'tiny primary';
+    saveBtn.textContent = i18n.secretSave;
+    form.appendChild(saveBtn);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'tiny';
+    cancelBtn.textContent = i18n.secretCancel;
+    cancelBtn.onclick = () => form.remove();
+    form.appendChild(cancelBtn);
+    saveBtn.onclick = async () => {
+      const v = inp.value.trim();
+      if (!v) { toast('value required', 'err'); return; }
+      saveBtn.disabled = true;
+      try {
+        const resp = await jpost('/v1/secrets', { key, value: v });
+        if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
+        toast(key + ' ✓ ' + i18n.secretSave, 'ok');
+        _envCache = null;
+        await refreshSecretsCard();
+        await renderOnboardingCard();
+      } finally { saveBtn.disabled = false; }
+    };
+    rowEl.appendChild(form);
+    inp.focus();
+  }
+
+  // Wire add-secret button
+  const addSecretBtn = $('btn-add-secret');
+  if (addSecretBtn) addSecretBtn.onclick = () => openSecretsAddForm('');
+
+  // ── v0.14: hook into refreshModels to add edit buttons to each profile row ──
+  const _origRefreshModels = refreshModels;
+  refreshModels = async function() {
+    await _origRefreshModels.apply(this, arguments);
+    // After refreshModels populates the list, add [Edit] buttons to each row
+    const modelsListEl = $('models-list');
+    if (!modelsListEl) return;
+    const configR = await jget('/v1/config').catch(() => ({ config: {}, profileSources: {} }));
+    const profileSources = configR.profileSources || {};
+
+    modelsListEl.querySelectorAll('.row.dense').forEach((rowEl) => {
+      // find the id from the delete or toggle button's data-id
+      let id = null;
+      const anyBtn = rowEl.querySelector('button[data-id]');
+      if (anyBtn) id = anyBtn.getAttribute('data-id');
+      if (!id) return;
+      // avoid duplicate edit buttons
+      if (rowEl.querySelector('.profile-edit-btn')) return;
+      const editBtn = document.createElement('button');
+      editBtn.className = 'tiny profile-edit-btn';
+      editBtn.textContent = '⋯';
+      editBtn.title = i18n.profileEditBtn;
+      editBtn.onclick = async () => {
+        const r = await jget('/v1/models').catch(() => ({ entries: [] }));
+        const entry = (r.entries || []).find((e) => e.id === id);
+        if (!entry) return;
+        openProfileEditor(rowEl, entry, configR);
+      };
+      // Insert after the last button in the row
+      rowEl.appendChild(editBtn);
+    });
+    // Also refresh secrets card and onboarding
+    await refreshSecretsCard();
+    await renderOnboardingCard();
+    // Update taskTypes cache from env
+    const envD = await getEnvData();
+    if (envD.taskTypes) _knownTaskTypes = envD.taskTypes;
+  };
+
   refreshAll();
   // Auto-refresh activity + usage every 5s — the user wants to see Roo's calls appear live.
   setInterval(() => { refreshActivity(); refreshUsage(); refreshHealth(); }, 5_000);

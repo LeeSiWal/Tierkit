@@ -170,6 +170,7 @@ export const TierkitConfigSchema = z
     notices: z.object({
       seenPinnedNoFallbackV013: z.boolean().default(false),
       seenModelTestExplained: z.boolean().default(false),
+      seenOnboarding: z.boolean().default(false),
     }).default({}),
   })
   .strict();

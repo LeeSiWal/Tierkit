@@ -107,6 +107,7 @@ function mergeConfigs(
     notices: {
       seenPinnedNoFallbackV013: o.notices.seenPinnedNoFallbackV013 || base.notices.seenPinnedNoFallbackV013,
       seenModelTestExplained: o.notices.seenModelTestExplained || base.notices.seenModelTestExplained,
+      seenOnboarding: o.notices.seenOnboarding || base.notices.seenOnboarding,
     },
   };
 }

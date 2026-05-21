@@ -835,17 +835,123 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       if (method === "PATCH" && url.pathname.startsWith("/v1/config/profile/")) {
         const id = decodeURIComponent(url.pathname.slice("/v1/config/profile/".length));
         if (!id) return sendJson(res, 400, { error: "missing profile id in path" });
-        const body = await readJsonBody<{ enabled?: boolean; scope?: ProfileScope }>(req);
-        if (!body || typeof body.enabled !== "boolean") {
-          return sendJson(res, 400, { error: "request must be { enabled: boolean, scope?: 'workspace'|'user' }" });
+        const body = await readJsonBody<{
+          enabled?: boolean;
+          scope?: ProfileScope;
+          roles?: string[];
+          goodAt?: string[];
+          notGoodAt?: string[];
+        }>(req);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return sendJson(res, 400, { error: "request must be a JSON object" });
         }
         const scope: ProfileScope = body.scope === "user" ? "user" : "workspace";
+        // If body contains enabled (toggle use-case), handle that path.
+        if (typeof body.enabled === "boolean") {
+          try {
+            const r = await updateProfileEnabled({ cwd: opts.cwd, id, scope, enabled: body.enabled });
+            return sendJson(res, 200, r);
+          } catch (err) {
+            if (err instanceof ProfileCrudError) return sendJson(res, 400, { code: err.code, message: err.message });
+            throw err;
+          }
+        }
+        // Otherwise handle profile-fields patch (roles, goodAt, notGoodAt).
+        const hasPatch = "roles" in body || "goodAt" in body || "notGoodAt" in body;
+        if (!hasPatch) {
+          return sendJson(res, 400, { error: "request must include enabled, roles, goodAt, or notGoodAt" });
+        }
         try {
-          const r = await updateProfileEnabled({ cwd: opts.cwd, id, scope, enabled: body.enabled });
+          const { updateProfileFields } = await import("../usecases/profileCrud.js");
+          const r = await updateProfileFields({
+            cwd: opts.cwd,
+            id,
+            scope,
+            ...(body.roles !== undefined ? { roles: body.roles } : {}),
+            ...(body.goodAt !== undefined ? { goodAt: body.goodAt } : {}),
+            ...(body.notGoodAt !== undefined ? { notGoodAt: body.notGoodAt } : {}),
+          });
           return sendJson(res, 200, r);
         } catch (err) {
           if (err instanceof ProfileCrudError) return sendJson(res, 400, { code: err.code, message: err.message });
           throw err;
+        }
+      }
+
+      // ── Environment probe (onboarding checklist data source) ──
+      if (route === "GET /v1/environment") {
+        try {
+          const { TASK_TYPES } = await import("../model/TaskClassifier.js");
+          const cfg = await loadConfig(opts.cwd);
+          const profiles = cfg.config.modelProfiles ?? {};
+
+          // Ollama: probe any local-device ollama profile's baseUrl for /api/tags
+          const ollamaProfile = Object.values(profiles).find(
+            (p) => p && (p as { provider?: string }).provider === "ollama",
+          ) as ({ baseUrl?: string } & Record<string, unknown>) | undefined;
+          const ollamaBaseUrl =
+            (ollamaProfile?.baseUrl as string | undefined) ?? "http://127.0.0.1:11434";
+          let ollamaRunning = false;
+          let ollamaModelCount: number | undefined;
+          try {
+            const r = await fetch(`${ollamaBaseUrl}/api/tags`, {
+              signal: AbortSignal.timeout(1500),
+            });
+            if (r.ok) {
+              const data = (await r.json()) as { models?: unknown[] };
+              ollamaRunning = true;
+              ollamaModelCount = Array.isArray(data.models) ? data.models.length : 0;
+            }
+          } catch {
+            /* unreachable — treat as not running */
+          }
+
+          // claudeCli: check claudeCode profile viability via subprocess transport
+          const env = (opts.env ?? process.env) as Record<string, string | undefined>;
+          const claudeCodeProfile = profiles["claudeCode"] as
+            | (Record<string, unknown> & { transport?: unknown })
+            | undefined;
+          let claudeCliOnPath = false;
+          if (claudeCodeProfile?.transport) {
+            try {
+              const { checkProfileViability } = await import("../model/profileViability.js");
+              const v = await checkProfileViability(
+                claudeCodeProfile as Parameters<typeof checkProfileViability>[0],
+                env,
+              );
+              claudeCliOnPath = v.viable;
+            } catch {
+              claudeCliOnPath = false;
+            }
+          }
+
+          // envVars: check apiKeyEnv of every profile + the three standard defaults
+          const defaultKeys = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY"];
+          const wantedKeys = new Set<string>(defaultKeys);
+          for (const p of Object.values(profiles)) {
+            const k = (p as { apiKeyEnv?: string }).apiKeyEnv;
+            if (typeof k === "string" && k) wantedKeys.add(k);
+          }
+          const envVars: Record<string, { present: boolean; source: "process" | "secrets" | "none" }> = {};
+          for (const k of wantedKeys) {
+            const inProcess = k in env && env[k] !== undefined && env[k] !== "";
+            const inSecrets = opts.secrets
+              ? opts.secrets.list({ knownKeys: [k] }).entries.find((e) => e.key === k)?.set === true
+              : false;
+            envVars[k] = {
+              present: inProcess || inSecrets,
+              source: inProcess ? "process" : inSecrets ? "secrets" : "none",
+            };
+          }
+
+          return sendJson(res, 200, {
+            ollama: { running: ollamaRunning, modelCount: ollamaModelCount, baseUrl: ollamaBaseUrl },
+            claudeCli: { onPath: claudeCliOnPath },
+            envVars,
+            taskTypes: TASK_TYPES,
+          });
+        } catch (err) {
+          return sendJson(res, 500, { code: "environment-probe-failed", message: (err as Error).message });
         }
       }
 
