@@ -657,7 +657,9 @@ values emitted by the v0.15.0 implementation (verified against source + tests):
 | `ignored-path` | propose_patch, read_file | Path is on the bundled denylist or an ignore source (list_files drops silently rather than returning this code) |
 | `delete-not-supported` | propose_patch | File deletion is not supported in v0.15 |
 | `invalid-input` | propose_patch | Missing or malformed input fields |
+| `invalid-query` | codebase_search | Search query is empty or invalid input |
 | `not-found` | apply_patch, read_file, list_files | `patchId` does not exist on disk (apply_patch); file does not exist (read_file, list_files) |
+| `not-a-file` | read_file | Path resolves to a directory or non-regular file |
 | `not-a-directory` | list_files | Target path is a file, not a directory |
 | `invalid-status` | apply_patch, approve/reject helpers | Ticket is in a status that disallows this transition (e.g. already applied) |
 | `stale-patch` | apply_patch | `beforeHash` no longer matches the file (or new-file conflict) |
