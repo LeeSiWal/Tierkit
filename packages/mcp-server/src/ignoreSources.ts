@@ -10,8 +10,11 @@ const BUNDLED_DENYLIST = [
   "id_rsa",
   "id_rsa.*",
   "id_dsa",
+  "id_dsa.*",
   "id_ed25519",
+  "id_ed25519.*",
   "id_ecdsa",
+  "id_ecdsa.*",
   "secrets.json",
   ".tierkit/runtime/",
 ];

@@ -15,6 +15,21 @@ describe("pathDenylist", () => {
     expect(isDenied("home/.ssh/id_ed25519")).toBe(true);
   });
 
+  it("denies id_rsa.pub", () => {
+    expect(isDenied("home/.ssh/id_rsa.pub")).toBe(true);
+  });
+
+  it("denies id_dsa.pub and id_ed25519.pub", () => {
+    expect(isDenied("home/.ssh/id_dsa.pub")).toBe(true);
+    expect(isDenied("home/.ssh/id_ed25519.pub")).toBe(true);
+    expect(isDenied("home/.ssh/id_ecdsa.pub")).toBe(true);
+  });
+
+  it("denies uppercase variants on case-insensitive filesystems", () => {
+    expect(isDenied(".ENV")).toBe(true);
+    expect(isDenied("server.PEM")).toBe(true);
+  });
+
   it("denies secrets.json regardless of directory", () => {
     expect(isDenied("secrets.json")).toBe(true);
     expect(isDenied("config/secrets.json")).toBe(true);

@@ -6,15 +6,15 @@ import path from "node:path";
  * are checked against the relative-to-workspace path.
  */
 export const DENIED_PATTERNS: RegExp[] = [
-  /(^|\/)\.env(\.|$)/,                       // .env, .env.production, etc.
-  /\.pem$/,
-  /\.key$/,
-  /(^|\/)id_rsa(\.|$)/,
-  /(^|\/)id_dsa(\.|$)/,
-  /(^|\/)id_ed25519(\.|$)/,
-  /(^|\/)id_ecdsa(\.|$)/,
-  /(^|\/)secrets\.json$/,
-  /(^|\/)\.tierkit\/runtime\//,
+  /(^|\/)\.env(\.|$)/i,                      // .env, .env.production, etc.
+  /\.pem$/i,
+  /\.key$/i,
+  /(^|\/)id_rsa(\.|$)/i,
+  /(^|\/)id_dsa(\.|$)/i,
+  /(^|\/)id_ed25519(\.|$)/i,
+  /(^|\/)id_ecdsa(\.|$)/i,
+  /(^|\/)secrets\.json$/i,
+  /(^|\/)\.tierkit\/runtime\//i,
 ];
 
 export function isDenied(relPath: string): boolean {
