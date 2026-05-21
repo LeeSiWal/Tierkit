@@ -387,6 +387,8 @@ export {
   type ProbeFail,
 } from "./model/providers/index.js";
 
+export { runChild, mergeEnv, type RunChildOptions } from "./model/providers/runChild.js";
+
 export {
   doctor,
   type DoctorInput,
