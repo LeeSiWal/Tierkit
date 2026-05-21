@@ -95,4 +95,47 @@ describe("workspaceBoundary", () => {
       expect(result).toBe(fs.realpathSync(realDir));
     });
   });
+
+  // v0.17 Task 6.2 — Windows-only junction-point reparse-point tests. Junctions are
+  // a Windows-specific filesystem feature that NTFS resolves the same way as a
+  // symlink at filesystem level; fs.realpathSync handles them transparently.
+  // These tests exercise the same escape-prevention path as the symlink tests
+  // above, but using the 'junction' link type which is only honoured on win32.
+  // Skipped on macOS / Linux (where symlinkSync(..., "junction") falls back to
+  // a normal symlink, which the symlink tests already cover).
+  describe.runIf(process.platform === "win32")("junction-point escape prevention (Windows)", () => {
+    let tmpWorkspace: string;
+    let tmpOutside: string;
+
+    afterEach(() => {
+      for (const dir of [tmpWorkspace, tmpOutside]) {
+        if (dir) {
+          try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
+        }
+      }
+    });
+
+    it("rejects a junction-point inside the workspace that points outside", () => {
+      tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "tierkit-junc-ws-"));
+      tmpOutside = fs.mkdtempSync(path.join(os.tmpdir(), "tierkit-junc-out-"));
+
+      const junctionPath = path.join(tmpWorkspace, "escape-junction");
+      fs.symlinkSync(tmpOutside, junctionPath, "junction");
+
+      expect(() => resolveUnderWorkspace(tmpWorkspace, "escape-junction"))
+        .toThrow(/outside-workspace/);
+    });
+
+    it("accepts a junction-point inside the workspace that points to another workspace path", () => {
+      tmpWorkspace = fs.mkdtempSync(path.join(os.tmpdir(), "tierkit-junc-ws-"));
+      const realDir = path.join(tmpWorkspace, "inner");
+      fs.mkdirSync(realDir);
+
+      const junctionPath = path.join(tmpWorkspace, "junction-to-inner");
+      fs.symlinkSync(realDir, junctionPath, "junction");
+
+      const result = resolveUnderWorkspace(tmpWorkspace, "junction-to-inner");
+      expect(result).toBe(fs.realpathSync(realDir));
+    });
+  });
 });
