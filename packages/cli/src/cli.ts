@@ -40,6 +40,9 @@ import { ConnectCommand } from "./commands/ConnectCommand.js";
 import { PluginSyncCommand } from "./commands/plugin/PluginSyncCommand.js";
 import { PluginNewCommand } from "./commands/plugin/PluginNewCommand.js";
 import { McpServeCommand } from "./commands/mcp/McpServeCommand.js";
+import { McpPatchListCommand } from "./commands/mcp/McpPatchListCommand.js";
+import { McpPatchApproveCommand } from "./commands/mcp/McpPatchApproveCommand.js";
+import { McpPatchRejectCommand } from "./commands/mcp/McpPatchRejectCommand.js";
 
 export function buildCli(): Cli<CliContext> {
   const cli = new Cli<CliContext>({
@@ -93,6 +96,9 @@ export function buildCli(): Cli<CliContext> {
   cli.register(PluginSyncCommand);
   cli.register(PluginNewCommand);
   cli.register(McpServeCommand);
+  cli.register(McpPatchListCommand);
+  cli.register(McpPatchApproveCommand);
+  cli.register(McpPatchRejectCommand);
 
   return cli;
 }
