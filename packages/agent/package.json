@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/agent",
-  "version": "0.12.2",
+  "version": "0.12.3",
   "private": true,
   "description": "Tierkit's built-in coding agent — optional local-first executor that benefits from Tierkit's cost layer (compression / routing / quality / budget) without needing an external CLI.",
   "type": "module",

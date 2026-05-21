@@ -327,6 +327,14 @@ The flow is GUI-only in v0.12.2 — the existing
 `tierkit context build / show / send / compare` CLI commands continue
 to work unchanged.
 
+### Profile state cleanup (v0.12.3)
+
+The Models card no longer shows duplicate rows for the same model, toggles
+persist correctly across refresh, and Delete is hidden for profiles that
+would re-create themselves on next load (bundled samples, auto-discovered
+Ollama). On first load after the upgrade, your `tierkit.config.json`
+gets cleaned up in place.
+
 ## 자연어로 플러그인 만들기 (v0.3.5)
 
 사이드바 → **Active plugins** 카드 → `+ Describe & generate` 버튼:

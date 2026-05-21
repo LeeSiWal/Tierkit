@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.12.3 — 2026-05-20
+
+### Fixed — Model Profile State Unification
+
+- **Toggle enable/disable now persists correctly.** The legacy `profile.enabled`
+  inline field is folded into `disabledProfileIds` on first load (idempotent
+  migration), so the array is the only source of truth. The `PATCH` endpoint
+  already wrote to the array — readers now route through `isProfileDisabled()`
+  which only consults the array.
+- **Delete now sticks.** Auto-discovered Ollama profiles and bundled sample
+  profiles no longer expose a Delete button (the underlying model exists,
+  so Delete would just re-appear on next load). Server returns
+  `400 cannot-delete-non-editable` if the API is called directly. Manually-added
+  profiles (workspace/user scope) still support Delete.
+- **No more duplicate rows.** Profiles sharing `(provider, baseUrl, model)` —
+  e.g. `localCoder` (bundled sample) and `ollama-qwen2-5-coder-7b` (auto-discovered),
+  both pointing to `qwen2.5-coder:7b` — collapse to a single row. Three layers
+  of dedup: Ollama discovery skips already-covered identities, on-load migration
+  rewrites the config to remove duplicates, and the GUI dedups the rendered list
+  as defense in depth.
+
+### Added
+
+- `canonicalIdentity(profile)` and `isProfileDisabled(cfg, id)` helpers in
+  `@tierkit/core`, exported for external consumers (CLI, SDK, plugins).
+- `migrateLegacyEnabledField` and `migrateCanonicalDuplicates` run on every
+  `loadConfig()` call (idempotent; no-op after first run).
+
+### Backward compatibility
+
+- No `ConfigSchema` major-version bump. Existing `tierkit.config.json` files
+  work; the migration cleans them up in place.
+- No `@tierkit/client` SDK API change.
+- HTTP API unchanged except for the new `400 cannot-delete-non-editable`
+  response (replaces a silent no-op delete).
+
+### Non-goals (explicit, deferred)
+
+- Cross-machine sync of disabled state — stays local.
+- Backups of pre-migration configs — `git diff tierkit.config.json` covers it.
+- Schema removal of the deprecated `enabled` field — keeping for forward
+  compat with external editors; readers ignore it.
+
 ## 0.12.2 — 2026-05-19
 
 ### Added — UI Validation Flow
