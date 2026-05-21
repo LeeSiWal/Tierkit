@@ -740,6 +740,9 @@ export const GUI_HTML = `<!doctype html>
   <!-- ── COST ROUTING ───────────────────────────────────────────────── -->
   <h3 class="settings-group" data-i18n="groupCostRouting">Cost routing</h3>
 
+  <!-- v0.13: pinned-no-fallback one-time banner (hidden by default; shown by JS when notices.seenPinnedNoFallbackV013 !== true) -->
+  <div id="v013-pinned-banner" style="display:none;background:rgba(245,176,65,0.1);border:1px solid rgba(245,176,65,0.45);border-radius:6px;padding:10px 12px;margin-bottom:10px;font-size:12px"></div>
+
   <section class="card">
     <h2>
       <span data-i18n="cardLocalModels">Local + private + cloud models</span>
@@ -1142,6 +1145,24 @@ export const GUI_HTML = `<!doctype html>
       labelVerdictEditButton:      'Edit verdict',
       labelCancelButton:           'Cancel',
       labelRetryCompareButton:     'Retry compare',
+      // v0.13 — viability badges + test button + pinned-no-fallback banner
+      statusReady:                 'ready',
+      statusDisabled:              'disabled',
+      statusCliNotFound:           'CLI not found',
+      statusCliHealthcheckFailed:  'CLI healthcheck failed',
+      statusMissingApiKey:         'missing API key',
+      statusOllamaUnreachable:     'Ollama unreachable',
+      statusModelNotInstalled:     'model not installed',
+      actionTest:                  'Test',
+      testConfirmBody:             'Running a test sends a short request via your local CLI session or API key. This may consume subscription quota or API credits.',
+      testDisabledNote:            'This profile is currently disabled. Test will check whether it can run, but it will not be used for routing until enabled.',
+      testRun:                     'Run test',
+      testCancel:                  'Cancel',
+      bannerV013PinnedTitle:       'Tierkit v0.13 changed pinned-model behavior.',
+      bannerV013PinnedBody:        'Pinned profiles now fail with a clear error instead of silently falling back to local. Use model:"auto" if you want fallback routing.',
+      bannerGotIt:                 'Got it',
+      warningStreamDegraded:       'stream degraded',
+      modelTestBadge:              'model-test',
     },
     ko: {
       offline: '오프라인',
@@ -1280,6 +1301,24 @@ export const GUI_HTML = `<!doctype html>
       labelVerdictEditButton:      '판정 수정',
       labelCancelButton:           '취소',
       labelRetryCompareButton:     '비교 재시도',
+      // v0.13 — viability badges + test button + pinned-no-fallback banner
+      statusReady:                 '준비됨',
+      statusDisabled:              '비활성',
+      statusCliNotFound:           'CLI 없음',
+      statusCliHealthcheckFailed:  'CLI 상태 확인 실패',
+      statusMissingApiKey:         'API key 없음',
+      statusOllamaUnreachable:     'Ollama 연결 불가',
+      statusModelNotInstalled:     '모델 미설치',
+      actionTest:                  '테스트',
+      testConfirmBody:             '로컬 CLI 세션 또는 API key로 짧은 요청을 보냅니다. 구독 크레딧 또는 API 사용량이 발생할 수 있습니다.',
+      testDisabledNote:            '현재 비활성 상태입니다. Test로 동작 여부만 확인할 수 있고, 활성화 전에는 라우팅에 사용되지 않습니다.',
+      testRun:                     '실행',
+      testCancel:                  '취소',
+      bannerV013PinnedTitle:       'Tierkit v0.13에서 pinned 모델 동작이 바뀌었습니다.',
+      bannerV013PinnedBody:        'Pinned 프로파일은 이제 조용히 local로 떨어지지 않고 명확한 에러를 반환합니다. fallback 라우팅이 필요하면 model:"auto"를 사용하세요.',
+      bannerGotIt:                 '확인',
+      warningStreamDegraded:       '스트림 강등',
+      modelTestBadge:              '모델 테스트',
     },
   };
   const i18n = RUNTIME[lang] || RUNTIME.en;
@@ -1873,16 +1912,29 @@ export const GUI_HTML = `<!doctype html>
         const statusColor = rec.ok ? 'var(--accent)' : 'var(--err)';
         const profileSpan = '<span style="color:' + statusColor + '">' + escapeHtml(rec.profileId) + '</span>';
         const latency = rec.latencyMs ? rec.latencyMs + 'ms' : '';
+        // v0.13: prepend ≈ to token counts when usageSource === "estimated"
+        const tokenPrefix = rec.usageSource === 'estimated' ? '≈' : '';
         const tokens = (rec.inputTokens || rec.outputTokens)
-          ? (rec.inputTokens || 0) + '↑/' + (rec.outputTokens || 0) + '↓'
+          ? tokenPrefix + (rec.inputTokens || 0) + '↑/' + (rec.outputTokens || 0) + '↓'
           : '';
         const cost = rec.costUsd ? fmtCost(rec.costUsd) : (rec.ok ? 'free' : '');
         const meta = [latency, tokens, cost].filter(Boolean).join(' · ');
+        // v0.13: model-test badge for test calls; ⚠ degraded chip for stream-degraded records.
+        const isModelTest = rec.type === 'model-test';
+        const hasWarning = rec.warning === 'stream-degraded-to-non-stream' || rec.tierkitWarning === 'stream-degraded-to-non-stream';
+        const modelTestBadgeHtml = isModelTest
+          ? ' <span style="font-size:10px;padding:1px 4px;border-radius:3px;background:rgba(100,149,237,0.15);color:cornflowerblue">' + escapeHtml(i18n.modelTestBadge) + '</span>'
+          : '';
+        const degradedChipHtml = hasWarning
+          ? ' <span style="font-size:10px;padding:1px 4px;border-radius:3px;background:rgba(245,176,65,0.12);color:var(--warn)">⚠ ' + escapeHtml(i18n.warningStreamDegraded) + '</span>'
+          : '';
         row.innerHTML =
           '<div class="activity-line1">' +
             '<span class="dim">' + escapeHtml(fmtTime(rec.timestamp)) + '</span>' +
             profileSpan +
             (rec.tier ? ' <span class="dim">(' + escapeHtml(rec.tier) + ')</span>' : '') +
+            modelTestBadgeHtml +
+            degradedChipHtml +
             (rec.ok ? '' : ' <span style="color:var(--err)">✗ ' + escapeHtml(rec.failureCode || 'err') + '</span>') +
           '</div>' +
           (meta ? '<div class="activity-line2">' + escapeHtml(meta) + '</div>' : '');
@@ -2320,6 +2372,30 @@ export const GUI_HTML = `<!doctype html>
       const usageMonthFor = (id) =>
         (profileUsage[id] && profileUsage[id].month) || { inputTokens: 0, costUsd: 0 };
 
+      // v0.13: pinned-no-fallback one-time banner. Show when not yet acknowledged.
+      const notices = (configR && configR.config && configR.config.notices) || {};
+      (function renderV013PinnedBanner() {
+        const bannerEl = $('v013-pinned-banner');
+        if (!bannerEl) return;
+        if (notices.seenPinnedNoFallbackV013 === true) { bannerEl.style.display = 'none'; return; }
+        bannerEl.style.display = 'block';
+        bannerEl.innerHTML =
+          '<div style="font-weight:700;margin-bottom:4px">' + escapeHtml(i18n.bannerV013PinnedTitle) + '</div>' +
+          '<div style="margin-bottom:8px">' + escapeHtml(i18n.bannerV013PinnedBody) + '</div>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+            '<button id="v013-banner-gotit" class="tiny primary">' + escapeHtml(i18n.bannerGotIt) + '</button>' +
+            '<a id="v013-banner-docs" href="/docs/MODEL_ROUTING.md" style="font-size:11px;color:var(--accent);align-self:center;text-decoration:none">docs/MODEL_ROUTING.md</a>' +
+          '</div>';
+        function dismissBanner() {
+          bannerEl.style.display = 'none';
+          jpost('/v1/notices', { seenPinnedNoFallbackV013: true }).catch(() => { /* best-effort */ });
+        }
+        const gotItBtn = document.getElementById('v013-banner-gotit');
+        if (gotItBtn) gotItBtn.onclick = dismissBanner;
+        const docsLink = document.getElementById('v013-banner-docs');
+        if (docsLink) docsLink.onclick = dismissBanner;
+      })();
+
       const root = $('models-list');
       root.innerHTML = '';
       // v0.12: aggregate row + all-capped-blocked banner. Both render BEFORE
@@ -2392,12 +2468,33 @@ export const GUI_HTML = `<!doctype html>
           // and discovered rows re-create themselves on next load, so the button
           // would appear to do nothing.
           const canDelete = e.source === 'workspace' || e.source === 'user';
+          // v0.13: viability badge — green "ready", grey "disabled", amber reason code.
+          const isProfileDisabled = p.enabled === false;
+          const viability = e.viability || null;
+          let viabilityBadgeHtml = '';
+          if (!isDimmedDup) {
+            if (isProfileDisabled) {
+              viabilityBadgeHtml = ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(128,128,128,0.15);color:var(--fg-dim)">' + escapeHtml(i18n.statusDisabled) + '</span>';
+            } else if (viability && viability.ok) {
+              viabilityBadgeHtml = ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(80,200,120,0.15);color:#50c878">' + escapeHtml(i18n.statusReady) + '</span>';
+            } else if (viability && !viability.ok && viability.reason) {
+              const reasonLabel = {
+                'cli-not-found':          i18n.statusCliNotFound,
+                'cli-healthcheck-failed': i18n.statusCliHealthcheckFailed,
+                'missing-api-key':        i18n.statusMissingApiKey,
+                'ollama-unreachable':     i18n.statusOllamaUnreachable,
+                'model-not-installed':    i18n.statusModelNotInstalled,
+              }[viability.reason] || viability.reason;
+              viabilityBadgeHtml = ' <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(245,176,65,0.12);color:var(--warn)">' + escapeHtml(reasonLabel) + '</span>';
+            }
+          }
           row.innerHTML =
             '<div class="col-grow">' +
               '<div><span class="mono" style="color:var(--accent)">' + escapeHtml(e.id) + '</span>' +
                 (isDimmedDup
                   ? ' <span class="dim" style="font-size:10px">↳ duplicate of ' + escapeHtml(namedDup) + '</span>'
                   : '') +
+                viabilityBadgeHtml +
               '</div>' +
               '<div class="dim mono" style="margin-top:2px;font-size:10.5px">' +
                 escapeHtml(p.provider || '') + ' · ' + escapeHtml(p.model || '') +
@@ -2409,7 +2506,7 @@ export const GUI_HTML = `<!doctype html>
             '<button class="tiny" data-action="toggle-enabled" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '" data-enabled="' + (p.enabled === false ? '0' : '1') + '">' +
               (p.enabled === false ? escapeHtml(i18n.enabledOff) : escapeHtml(i18n.enabledOn)) +
             '</button>' +
-            ' <button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '">test</button>' +
+            ' <button class="tiny" data-action="test" data-id="' + escapeHtml(e.id) + '" data-disabled="' + (isProfileDisabled ? '1' : '0') + '" data-displayname="' + escapeHtml(e.id) + '">' + escapeHtml(i18n.actionTest) + '</button>' +
             (canDelete
               ? ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>'
               : '');
@@ -2423,13 +2520,69 @@ export const GUI_HTML = `<!doctype html>
 
       root.querySelectorAll('button[data-action="test"]').forEach((b) => {
         b.onclick = async () => {
-          const id = b.getAttribute('data-id'); b.disabled = true; b.textContent = '...';
+          const id = b.getAttribute('data-id');
+          const isDisabled = b.getAttribute('data-disabled') === '1';
+          const displayName = b.getAttribute('data-displayname') || id;
+
+          // Find or create result panel below the row.
+          const rowEl = b.closest('.row');
+          let resultPanel = rowEl && rowEl.querySelector('.v013-test-result');
+          if (!resultPanel && rowEl) {
+            resultPanel = document.createElement('div');
+            resultPanel.className = 'v013-test-result';
+            resultPanel.style.cssText = 'font-size:11px;margin-top:4px;padding:4px 6px;background:rgba(0,0,0,0.15);border-radius:4px;font-family:var(--mono);color:var(--fg-dim)';
+            rowEl.appendChild(resultPanel);
+          }
+
+          // v0.13: one-time confirm dialog before first test.
+          const needsConfirm = !notices.seenModelTestExplained;
+          if (needsConfirm) {
+            let confirmMsg = i18n.testConfirmBody.replace('{displayName}', displayName);
+            if (isDisabled) confirmMsg += '\\n\\n' + i18n.testDisabledNote;
+            if (!safeConfirm(confirmMsg)) return;
+            // Mark as seen (best-effort; refresh will pick up on next load).
+            jpost('/v1/notices', { seenModelTestExplained: true }).catch(() => { /* ignore */ });
+            notices.seenModelTestExplained = true;
+          }
+
+          b.disabled = true;
+          const origText = b.textContent;
+          b.textContent = '…';
+          if (resultPanel) resultPanel.textContent = '…';
           try {
-            const resp = await jpost('/v1/models/test', { profileId: id });
+            const resp = await jpost('/v1/models/test', { profileId: id, smoke: true, ignoreDisabled: true });
             const d = resp.data || {};
-            if (resp.ok) toast(id + ' ✓ ' + (d.modelAvailable === false ? 'reachable, model missing' : 'reachable'), d.modelAvailable === false ? 'err' : 'ok');
-            else toast(id + ': ' + (d.code || 'err'), 'err');
-          } finally { b.disabled = false; b.textContent = 'test'; }
+            if (resp.ok) {
+              const probe = d.probe || {};
+              const smoke = d.smoke || null;
+              let html = '<div>Probe: <span style="color:' + (probe.viable !== false ? 'var(--accent)' : 'var(--err)') + '">' + (probe.viable !== false ? 'ok' : 'failed') + '</span>' +
+                (probe.latencyMs !== undefined ? ' (' + probe.latencyMs + 'ms)' : '') + '</div>';
+              if (smoke) {
+                if (smoke.ok !== false) {
+                  html += '<div>Smoke chat: <span style="color:var(--accent)">' + escapeHtml(String(smoke.content || '').slice(0, 120)) + '</span>' +
+                    (smoke.latencyMs !== undefined ? ' (' + smoke.latencyMs + 'ms)' : '') + '</div>';
+                  if (smoke.inputTokens !== undefined || smoke.outputTokens !== undefined) {
+                    html += '<div>Usage: ' + (smoke.inputTokens || 0) + ' in / ' + (smoke.outputTokens || 0) + ' out' +
+                      (smoke.usageSource ? ' · ' + escapeHtml(smoke.usageSource) : '') + '</div>';
+                  }
+                } else {
+                  const errCode = (smoke.error && smoke.error.code) || (d.error && d.error.type) || 'err';
+                  const errMsg = ((smoke.error && smoke.error.message) || '').slice(0, 500);
+                  html += '<div>Smoke chat: <span style="color:var(--err)">failed — ' + escapeHtml(errCode) + ': ' + escapeHtml(errMsg) + '</span></div>';
+                }
+              }
+              if (resultPanel) resultPanel.innerHTML = html;
+            } else {
+              const errCode = (d.error && (d.error.type || d.error.code)) || d.code || 'err';
+              const errMsg = (d.error && d.error.message) || d.message || '';
+              if (resultPanel) resultPanel.innerHTML = '<span style="color:var(--err)">' + escapeHtml(errCode + (errMsg ? ': ' + errMsg.slice(0, 500) : '')) + '</span>';
+            }
+          } catch (err) {
+            if (resultPanel) resultPanel.innerHTML = '<span style="color:var(--err)">' + escapeHtml(err.message || String(err)) + '</span>';
+          } finally {
+            b.disabled = false;
+            b.textContent = origText;
+          }
         };
       });
       root.querySelectorAll('button[data-action="delete-profile"]').forEach((b) => {

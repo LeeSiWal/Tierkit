@@ -583,7 +583,33 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
       if (route === "GET /v1/models") {
         const r = await listModels({ cwd: opts.cwd });
-        return sendJson(res, 200, r);
+        // v0.13: include viability for each profile so the GUI can show a badge.
+        const { checkProfileViability } = await import("../model/profileViability.js");
+        const viabilities = await Promise.all(
+          r.entries.map(async (e) => {
+            const v = await checkProfileViability(e.profile, env);
+            return { id: e.id, viability: { ok: v.viable, ...(v.reason ? { reason: v.reason } : {}) } };
+          }),
+        );
+        const viabilityMap: Record<string, { ok: boolean; reason?: string }> = {};
+        for (const v of viabilities) viabilityMap[v.id] = v.viability;
+        const entriesWithViability = r.entries.map((e) => ({ ...e, viability: viabilityMap[e.id] }));
+        return sendJson(res, 200, { ...r, entries: entriesWithViability });
+      }
+
+      if (route === "POST /v1/notices") {
+        const body = await readJsonBody<Record<string, boolean>>(req);
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          return sendJson(res, 400, { error: "request must be an object of boolean flags" });
+        }
+        const file = path.join(opts.cwd, "tierkit.config.json");
+        let raw: Record<string, unknown> = {};
+        try { raw = JSON.parse(await fs.readFile(file, "utf8")) as Record<string, unknown>; } catch { /* fresh */ }
+        raw.notices = { ...(typeof raw.notices === "object" && raw.notices !== null ? raw.notices as Record<string, unknown> : {}), ...body };
+        const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+        await fs.writeFile(tmp, JSON.stringify(raw, null, 2), "utf8");
+        await fs.rename(tmp, file);
+        return sendJson(res, 200, { ok: true });
       }
 
       if (route === "POST /v1/models/discover") {
@@ -594,16 +620,30 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       }
 
       if (route === "POST /v1/models/test") {
-        const body = await readJsonBody<{ profileId: string }>(req);
+        const body = await readJsonBody<{
+          profileId: string;
+          smoke?: boolean;
+          ignoreDisabled?: boolean;
+          testTimeoutMs?: number;
+        }>(req);
         if (!body || typeof body.profileId !== "string") {
-          return sendJson(res, 400, { error: "request must be { profileId: string }" });
+          return sendJson(res, 400, { error: "request must be { profileId: string, smoke?: boolean, ignoreDisabled?: boolean }" });
         }
         try {
-          const r = await testModel({ cwd: opts.cwd, profileId: body.profileId, env });
-          return sendJson(res, 200, r);
+          const r = await testModel({
+            cwd: opts.cwd,
+            profileId: body.profileId,
+            env,
+            ...(body.smoke !== undefined ? { smoke: body.smoke } : {}),
+            ...(body.ignoreDisabled !== undefined ? { ignoreDisabled: body.ignoreDisabled } : {}),
+            ...(body.testTimeoutMs !== undefined ? { testTimeoutMs: body.testTimeoutMs } : {}),
+          });
+          return sendJson(res, 200, { probe: r.result, smoke: r.smoke ?? null });
         } catch (err) {
           if (err instanceof TestModelError) {
-            return sendJson(res, 400, { code: err.code, message: err.message });
+            // profile-disabled → 409, unknown-profile → 404, everything else 400
+            const status = err.code === "profile-disabled" ? 409 : err.code === "unknown-profile" ? 404 : 400;
+            return sendJson(res, status, { error: { type: err.code === "profile-disabled" ? "profile_disabled" : err.code, message: err.message, profileId: body.profileId } });
           }
           throw err;
         }
@@ -1172,9 +1212,23 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   return new Promise<RunningServer>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, opts.host, () => {
+    server.listen(opts.port, opts.host, async () => {
       const addr = server.address() as AddressInfo | null;
       const port = addr?.port ?? opts.port;
+      // v0.13 BREAKING notice. Suppressed once the user dismisses the GUI banner
+      // or sets notices.seenPinnedNoFallbackV013. Skipped under TIERKIT_NO_BUNDLED_DEFAULTS=1
+      // (test runs) to avoid racing migration writes against test temp-dir cleanup.
+      if (process.env.TIERKIT_NO_BUNDLED_DEFAULTS !== "1") {
+        try {
+          const cfg = await loadConfig(opts.cwd);
+          if (cfg.config.notices?.seenPinnedNoFallbackV013 !== true) {
+            // eslint-disable-next-line no-console
+            console.log(`[info] v0.13: pinned profiles no longer fall back to local. Use model:"auto" for fallback routing.`);
+          }
+        } catch {
+          // Config not yet present (first boot before init) — skip the notice silently.
+        }
+      }
       resolve({
         address: opts.host,
         port,

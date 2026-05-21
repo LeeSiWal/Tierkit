@@ -41,7 +41,7 @@ Its job is to spend fewer cloud-model tokens at equal task quality by:
 | What it is | A local-first **cost optimizer and token firewall** for AI coding CLIs. |
 | What it is not | A replacement for Claude / GPT / Gemini. Not a coding agent in its own right. Not a plugin marketplace. |
 | Primary user outcome | Same coding result, fewer premium-cloud tokens. Credible path from Max 20× → Max 5× → Pro on Claude pricing tiers. |
-| Distribution surface | CLI (`tierkit ...`) + VS Code extension + HTTP loopback daemon + OpenAI-compatible gateway + MCP server (from v0.13). |
+| Distribution surface | CLI (`tierkit ...`) + VS Code extension + HTTP loopback daemon + OpenAI-compatible gateway + MCP server (from v0.13, planned). |
 | Strategic filter | *Does this reduce cloud cost, or stretch the same budget further at equal quality?* If no, it's an advanced/secondary feature. |
 
 The plugin runtime, adapter exports, workflow sessions, and policy rules
@@ -83,7 +83,7 @@ Every `ModelProfile` has an optional `paymentModel: free | flat-rate | per-token
 - `flat-rate` — subscription or fixed-cost access (Claude Code Max, ChatGPT Pro on Codex CLI, monthly rented GPU). NOT necessarily unlimited; subscription products typically have usage limits that Tierkit can protect via input-token caps.
 - `per-token` — metered API billing by input/output tokens (direct Anthropic / OpenAI / Google API keys).
 
-This dimension lets future versions route preferentially: free → flat-rate → per-token (v0.13). v0.12 only adds the data and the budget enforcement; the routing reorder lands with subscription-CLI execution in v0.13.
+This dimension lets versions route preferentially: free → flat-rate → per-token. **v0.13: implemented** (Claude Code only; Codex CLI deferred to v0.13.1). v0.12 added the data and budget enforcement; the routing reorder and subscription-CLI execution both landed in v0.13 via `sortProfilesForTier` paymentModel ordering and the `claude-code` subprocess provider.
 
 ### 2.6 Per-profile budgets (v0.12)
 

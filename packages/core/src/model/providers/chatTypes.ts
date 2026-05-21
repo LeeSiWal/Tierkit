@@ -89,6 +89,10 @@ export interface ChatOk {
   ok: true;
   text: string;
   usage: ChatUsage;
+  /** Where the token usage counts came from. "provider-reported" = the upstream
+   * provider returned them; "estimated" = Tierkit computed them locally (subscription-CLI
+   * providers when their CLI does not report usage). */
+  usageSource: "provider-reported" | "estimated";
   latencyMs: number;
   model: string;
   /** Present when the model asked to invoke one or more tools (instead of/along with text). */

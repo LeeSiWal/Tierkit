@@ -15,6 +15,10 @@ export interface UsageRecord {
   ok: boolean;
   /** Stable failure code when ok=false; one of `unreachable`, `unauthorized`, `bad-status`, ... */
   failureCode?: string;
+  /** Where the token usage counts came from. Absent on records before v0.13. */
+  usageSource?: "provider-reported" | "estimated";
+  /** Operation type. `undefined` (back-compat) and `"chat"` both mean a normal chat call. */
+  type?: "chat" | "model-test";
 }
 
 /** Append a usage record as a single JSON line. Creates the directory if needed. */

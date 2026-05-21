@@ -1,4 +1,5 @@
 import type { ModelTier, ModelProfile, ModelProfileMap, ModelPolicy } from "./ModelProfile.js";
+import { effectivePaymentModel, type PaymentModel } from "./ModelProfile.js";
 import {
   DEFAULT_RISK_THRESHOLDS,
   scoreRisk,
@@ -42,6 +43,15 @@ function tierRank(t: ModelTier): number {
   return TIER_ORDER.indexOf(t);
 }
 
+const PAYMENT_RANK: Record<PaymentModel, number> = {
+  "free": 0,
+  "flat-rate": 1,
+  "per-token": 2,
+};
+function paymentRank(p: ModelProfile): number {
+  return PAYMENT_RANK[effectivePaymentModel(p)] ?? 99;
+}
+
 /**
  * goodAt-aware sort + notGoodAt hard filter. Profiles whose `notGoodAt` includes the
  * current taskType are EXCLUDED from the chain entirely (not just demoted). The remaining
@@ -63,14 +73,18 @@ function sortProfilesForTier(
     p.enabled !== false &&
     !(p.notGoodAt && p.notGoodAt.includes(taskType)),
   );
-  const rank = (p: ModelProfile): number => {
+  const goodAtRank = (p: ModelProfile): number => {
     if (!p.goodAt || p.goodAt.length === 0) return 1; // neutral
     if (p.goodAt.includes(taskType)) return 0;          // fit
     return 2;                                            // anti-fit
   };
   return inTier
     .map(([id, p], idx) => ({ id, p, idx }))
-    .sort((a, b) => rank(a.p) - rank(b.p) || a.idx - b.idx)
+    .sort((a, b) =>
+      (paymentRank(a.p) - paymentRank(b.p)) ||
+      (goodAtRank(a.p) - goodAtRank(b.p)) ||
+      (a.idx - b.idx),
+    )
     .map((x) => x.id);
 }
 

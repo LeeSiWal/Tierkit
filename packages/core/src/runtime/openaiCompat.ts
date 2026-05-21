@@ -78,6 +78,34 @@ export async function handleOpenAIChatCompletions(
     }
   } else {
     candidateIds = [req2.model];
+
+    // v0.13: pinned profiles do not silently fall back. Validate up front and emit
+    // a clear error if the profile is missing, disabled, or non-viable.
+    const { loadConfig } = await import("../config/loadConfig.js");
+    const cfg = await loadConfig(context.cwd);
+    const profile = cfg.config.modelProfiles[req2.model];
+    if (!profile) {
+      return sendError(res, 404, `unknown profile: ${req2.model}`, "invalid_request_error", {
+        profileId: req2.model,
+      });
+    }
+    if ((cfg.config.disabledProfileIds ?? []).includes(req2.model)) {
+      return sendError(res, 409, `profile is disabled: ${req2.model}`, "profile_disabled", {
+        profileId: req2.model,
+        reason: "profile-disabled",
+      });
+    }
+    const { checkProfileViability } = await import("../model/profileViability.js");
+    const v = await checkProfileViability(profile, context.env);
+    if (!v.viable) {
+      return sendError(
+        res,
+        502,
+        viabilityMessage(req2.model, v.reason!),
+        "profile_not_viable",
+        { profileId: req2.model, reason: v.reason },
+      );
+    }
   }
   void autoTaskType; // will be used by Phase 2b activity log
 
@@ -101,7 +129,21 @@ export async function handleOpenAIChatCompletions(
   if (req2.stream) {
     // For streaming we only try the first candidate — switching mid-stream is hairy.
     // If auto's first pick fails for streaming clients, they'll get the error in-band.
-    await streamResponse(res, { profileId: candidateIds[0]!, ...baseLlmReq }, context, candidateIds[0]!);
+    const firstId = candidateIds[0]!;
+
+    // Subprocess providers (e.g. claude-code) don't support native streaming in v0.13.
+    // Load config to inspect the first candidate's transport type. loadConfig is cheap
+    // (cached) so re-calling it here doesn't add meaningful latency.
+    const { loadConfig: loadCfgForStream } = await import("../config/loadConfig.js");
+    const cfgForStream = await loadCfgForStream(context.cwd);
+    const firstProfile = cfgForStream.config.modelProfiles[firstId];
+    const isSubprocess = firstProfile?.transport?.type === "subprocess";
+
+    if (isSubprocess) {
+      await streamDegradedResponse(res, { profileId: firstId, ...baseLlmReq }, context, firstId);
+      return;
+    }
+    await streamResponse(res, { profileId: firstId, ...baseLlmReq }, context, firstId);
     return;
   }
 
@@ -137,7 +179,7 @@ export async function handleOpenAIChatCompletions(
     const detail = attempts.length > 0
       ? ` (tried ${attempts.length + 1}: ${attempts.map((a) => `${a.profileId}=${a.code}`).join(", ")}${attempts.length + 1 > attempts.length ? `, last=${final.code !== "no-candidates" ? final.code : "?"}` : ""})`
       : "";
-    return sendError(res, 400, final.message + detail, mapErrorType(final.code), final.code);
+    return sendError(res, 400, final.message + detail, mapErrorType(final.code), { code: final.code });
   }
 
   const completionId = "chatcmpl-" + Math.random().toString(36).slice(2, 12);
@@ -176,6 +218,7 @@ export async function handleOpenAIChatCompletions(
     // that ignore unknown fields. Surfaces routing/redaction info to whoever wants it.
     tierkit: {
       profileId: result.profileId,
+      usageSource: result.usageSource,
       tier: result.model,
       latencyMs: result.latencyMs,
       costUsd: result.costUsd,
@@ -264,6 +307,97 @@ async function streamResponse(
       total_tokens: result.inputTokens + result.outputTokens,
     },
   });
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+/**
+ * Synthesise a valid OpenAI SSE stream from a single buffered `executeLlmCall` result.
+ *
+ * Used when the selected profile uses a subprocess transport (e.g. claude-code). These
+ * providers do not support native token streaming in v0.13, so we collect the full
+ * response and emit it as a three-chunk SSE sequence.  Both the first (role) chunk and
+ * the final (usage + finish) chunk carry a `tierkit.warning: "stream-degraded-to-non-stream"`
+ * field so callers can detect the behaviour and log/surface it as appropriate.
+ */
+async function streamDegradedResponse(
+  res: http.ServerResponse,
+  llmReq: LlmCallRequest,
+  context: OpenAICompatContext,
+  profileId: string,
+): Promise<void> {
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/event-stream");
+  res.setHeader("cache-control", "no-cache");
+  res.setHeader("connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const result = await executeLlmCall(llmReq, { cwd: context.cwd, env: context.env });
+  const created = Math.floor(Date.now() / 1000);
+  const cmplId = `chatcmpl-${Math.random().toString(36).slice(2, 12)}`;
+
+  const tierkitWarning = "stream-degraded-to-non-stream" as const;
+
+  if (!result.ok) {
+    // Emit a single error chunk so the client gets an in-band signal, then DONE.
+    res.write(`data: ${JSON.stringify({
+      id: cmplId,
+      object: "chat.completion.chunk",
+      created,
+      model: profileId,
+      choices: [],
+      tierkit: {
+        profileId,
+        warning: tierkitWarning,
+        error: result.code,
+      },
+    })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
+  const tierkitMeta = {
+    profileId,
+    warning: tierkitWarning,
+  };
+
+  // Chunk 1: role assignment + warning envelope (matches OpenAI's convention of sending
+  // a role-only delta before the first content delta).
+  res.write(`data: ${JSON.stringify({
+    id: cmplId,
+    object: "chat.completion.chunk",
+    created,
+    model: result.model || profileId,
+    choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+    tierkit: tierkitMeta,
+  })}\n\n`);
+
+  // Chunk 2: single content delta (no tierkit envelope — middle chunks stay lean).
+  res.write(`data: ${JSON.stringify({
+    id: cmplId,
+    object: "chat.completion.chunk",
+    created,
+    model: result.model || profileId,
+    choices: [{ index: 0, delta: { content: result.text }, finish_reason: null }],
+  })}\n\n`);
+
+  // Chunk 3: finish + usage + warning envelope (lets callers correlate usage with the
+  // degraded-stream warning without having to inspect chunk 1).
+  res.write(`data: ${JSON.stringify({
+    id: cmplId,
+    object: "chat.completion.chunk",
+    created,
+    model: result.model || profileId,
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage: {
+      prompt_tokens: result.inputTokens,
+      completion_tokens: result.outputTokens,
+      total_tokens: result.inputTokens + result.outputTokens,
+    },
+    tierkit: tierkitMeta,
+  })}\n\n`);
+
   res.write("data: [DONE]\n\n");
   res.end();
 }
@@ -444,7 +578,7 @@ function sendError(
   status: number,
   message: string,
   type: string,
-  code?: string,
+  meta?: { code?: string; profileId?: string; reason?: string },
 ): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
@@ -453,10 +587,29 @@ function sendError(
       error: {
         message,
         type,
-        ...(code ? { code } : {}),
+        ...(meta?.code ? { code: meta.code } : {}),
+        ...(meta?.profileId ? { profileId: meta.profileId } : {}),
+        ...(meta?.reason ? { reason: meta.reason } : {}),
       },
     }),
   );
+}
+
+function viabilityMessage(profileId: string, reason: string): string {
+  switch (reason) {
+    case "cli-not-found":
+      return `${profileId}: CLI not found on PATH. Install the CLI, fix transport.command, or use model:"auto" to allow fallback routing.`;
+    case "cli-healthcheck-failed":
+      return `${profileId}: CLI healthcheck failed. Verify the CLI is logged in and runnable, or use model:"auto".`;
+    case "missing-api-key":
+      return `${profileId}: required API key env var is not set. Set the apiKeyEnv variable or use model:"auto".`;
+    case "ollama-unreachable":
+      return `${profileId}: Ollama is unreachable. Start Ollama or use model:"auto".`;
+    case "model-not-installed":
+      return `${profileId}: configured model is not installed. Pull the model or use model:"auto".`;
+    default:
+      return `${profileId}: not viable (${reason})`;
+  }
 }
 
 function mapErrorType(code: string): string {

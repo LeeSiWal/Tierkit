@@ -11,6 +11,7 @@ import { discoverOllamaProfiles } from "../model/discoverOllamaProfiles.js";
 import type { ModelProfile, ModelProfileMap } from "../model/ModelProfile.js";
 import { migrateLegacyEnabledField } from "./migrateLegacyEnabledField.js";
 import { migrateCanonicalDuplicates } from "./migrateCanonicalDuplicates.js";
+import { migrateSeedDefaultDisabled } from "./migrateSeedDefaultDisabled.js";
 import { canonicalIdentity } from "../model/profileIdentity.js";
 
 /** Where a given config value originated. Surfaced via `/v1/models` so users can see why a profile is visible. */
@@ -94,6 +95,18 @@ function mergeConfigs(
     ...(o.budget !== undefined ? { budget: o.budget } : base.budget !== undefined ? { budget: base.budget } : {}),
     ...(o.modelPolicy !== undefined ? { modelPolicy: o.modelPolicy } : base.modelPolicy !== undefined ? { modelPolicy: base.modelPolicy } : {}),
     runtime: o.runtime ?? base.runtime,
+    migrations: {
+      defaultDisabledSeededProfileIds: [
+        ...new Set([
+          ...base.migrations.defaultDisabledSeededProfileIds,
+          ...o.migrations.defaultDisabledSeededProfileIds,
+        ]),
+      ],
+    },
+    notices: {
+      seenPinnedNoFallbackV013: o.notices.seenPinnedNoFallbackV013 || base.notices.seenPinnedNoFallbackV013,
+      seenModelTestExplained: o.notices.seenModelTestExplained || base.notices.seenModelTestExplained,
+    },
   };
 }
 
@@ -201,6 +214,8 @@ export async function loadConfig(
     userRead: userRead ? { raw: userRead.raw } : undefined,
   });
   if (m2.changed) return loadConfig(projectRoot, options);
+
+  await migrateSeedDefaultDisabled({ cwd: projectRoot, defaultProfiles: DEFAULT_MODEL_PROFILES });
 
   // ── Ollama auto-discovery ─────────────────────────────────────────────────
   // After all explicit configs (bundled/user/workspace) are merged, look at the local
