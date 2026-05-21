@@ -71,6 +71,24 @@ describe("@tierkit/mcp-server — minimal handshake", () => {
     }
   });
 
+  it("advertises TIERKIT_VERSION on initialize handshake", async () => {
+    const { TIERKIT_VERSION } = await import("@tierkit/core");
+    const server: Server = createMcpServer({ workspaceRoot: process.cwd() });
+    const client = new Client({ name: "test-client", version: "0.0.1" }, { capabilities: {} });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    const info = client.getServerVersion();
+    expect(info?.name).toBe("tierkit");
+    expect(info?.version).toBe(TIERKIT_VERSION);
+
+    await client.close();
+    await server.close();
+  });
+
   it("activity log carries envelope.{truncated,hasCursor,remainingLines} for envelope tools", async () => {
     const { readMcpActivity } = await import("@tierkit/core");
     const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-actlog-env-"));

@@ -1,6 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
-import { logMcpActivity } from "@tierkit/core";
+import { logMcpActivity, TIERKIT_VERSION } from "@tierkit/core";
 import { listFilesTool } from "./tools/listFiles.js";
 import { readFileTool } from "./tools/readFile.js";
 import { codebaseSearchTool } from "./tools/codebaseSearch.js";
@@ -244,7 +244,7 @@ async function withActivityLog(
 
 export function createMcpServer(opts: CreateMcpServerOptions): Server {
   const server = new Server(
-    { name: "tierkit", version: "0.15.0" },
+    { name: "tierkit", version: TIERKIT_VERSION },
     { capabilities: { tools: {} } },
   );
 
