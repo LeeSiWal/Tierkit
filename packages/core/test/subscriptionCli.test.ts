@@ -309,6 +309,23 @@ describe("SubscriptionCliProvider.chat — env propagation", () => {
   });
 });
 
+describe("SubscriptionCliProvider.stream — env propagation", () => {
+  it("propagates caller-supplied env to the streaming child", async () => {
+    const provider = new TestProvider();
+    const events: any[] = [];
+    for await (const ev of provider.stream(
+      testProfile(),
+      { messages: [{ role: "user", content: "ignored" }] },
+      { TIERKIT_INJECT_TEST: "stream-ok" },
+    )) {
+      events.push(ev);
+    }
+
+    const deltas = events.filter((e) => e.type === "delta").map((e: any) => e.text).join("");
+    expect(deltas).toContain("stream-ok");
+  });
+});
+
 // ─── ClaudeCodeProvider: streamArgs ────────────────────────────────────────────
 
 describe("ClaudeCodeProvider.streamArgs", () => {
