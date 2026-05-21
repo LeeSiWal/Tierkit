@@ -1,142 +1,198 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import {
+  encodeCursor,
+  decodeCursor,
+  makeSuccessEnvelope,
+  makeFailureEnvelope,
+  cursorInvalidEnvelope,
+  CursorDecodeError,
+  type SearchFilesCursor,
+} from "@tierkit/core";
 import { resolveUnderCwd } from "./safePath.js";
+import { envelopeToString } from "./envelopeUtils.js";
 import type { Tool, ToolResult, AgentContext } from "../types.js";
 
-const MAX_MATCHES = 200;
-const MAX_BYTES_PER_FILE = 1024 * 1024;
-const SKIP_DIRS = new Set(["node_modules", ".git", ".turbo", ".cache", "dist", "build", ".next", "coverage", ".tierkit"]);
+const DEFAULT_MAX_MATCHES = 50;
+const HARD_MAX_MATCHES = 200;
+const DEFAULT_CONTEXT_LINES = 2;
+
+interface SearchFilesArgs {
+  pattern?: string;
+  path?: string;
+  maxMatches?: number;
+  contextLines?: number;
+  cursor?: string;
+}
+
+interface SearchMatch {
+  path: string;
+  line: number;
+  snippet: string;
+  before?: string[];
+  after?: string[];
+}
+
+interface SearchFilesData {
+  pattern: string;
+  path: string;
+  matches: SearchMatch[];
+}
+
+const BROAD_PATTERNS = new Set([".*", ".+", "[^\\n]*", ".*?", ".+?"]);
+
+async function* walkFiles(rootAbs: string): AsyncIterable<string> {
+  let dirents;
+  try { dirents = await fs.readdir(rootAbs, { withFileTypes: true }); }
+  catch { return; }
+  for (const d of dirents) {
+    const full = path.join(rootAbs, d.name);
+    if (d.isDirectory()) {
+      // Skip common large/uninteresting dirs
+      if (["node_modules", ".git", "dist", ".tierkit", ".turbo"].includes(d.name)) continue;
+      yield* walkFiles(full);
+    } else if (d.isFile()) {
+      yield full;
+    }
+  }
+}
+
+async function collectMatches(
+  searchRootAbs: string,
+  workspaceAbs: string,
+  re: RegExp,
+  contextLines: number,
+): Promise<SearchMatch[]> {
+  const out: SearchMatch[] = [];
+  for await (const fileAbs of walkFiles(searchRootAbs)) {
+    let body: string;
+    try { body = await fs.readFile(fileAbs, "utf8"); }
+    catch { continue; }
+    const lines = body.split(/\r?\n/);
+    const relPath = path.relative(workspaceAbs, fileAbs).split(path.sep).join("/");
+    for (let i = 0; i < lines.length; i++) {
+      if (re.test(lines[i]!)) {
+        const before = contextLines > 0 ? lines.slice(Math.max(0, i - contextLines), i) : undefined;
+        const after = contextLines > 0 ? lines.slice(i + 1, Math.min(lines.length, i + 1 + contextLines)) : undefined;
+        out.push({ path: relPath, line: i + 1, snippet: lines[i]!, before, after });
+      }
+    }
+  }
+  return out;
+}
 
 export const searchFilesTool: Tool = {
   name: "search_files",
   description:
-    "Search file contents with a JavaScript regular expression. Use to find a symbol, error message, " +
-    "TODO marker, or any string-matched pattern across the project. " +
-    "Returns up to 200 matching lines with `file:line: matched-line`. " +
-    "Path is workspace-relative; use '.' for the whole workspace.",
+    "Search for a regex pattern across the workspace. Returns a tool-result-envelope.v1 " +
+    "envelope. Default returns up to 50 matches; for very broad patterns prefer narrowing " +
+    "the query rather than paginating with cursor.",
   parameters: [
-    {
-      name: "path",
-      type: "string",
-      description: "Workspace-relative root for the search. Use '.' for the whole workspace.",
-      required: true,
-    },
-    {
-      name: "pattern",
-      type: "string",
-      description: "JavaScript regex pattern. NOT a raw-string — escape backslashes if needed.",
-      required: true,
-    },
-    {
-      name: "filePattern",
-      type: "string",
-      description: "Optional filename glob, e.g. '*.ts' or '*.md'. Default: any file.",
-      required: false,
-    },
+    { name: "pattern",      type: "string",  description: "JavaScript regex pattern. Required (or pass cursor).", required: false },
+    { name: "path",         type: "string",  description: "Workspace-relative root. Default '.'.", required: false },
+    { name: "maxMatches",   type: "number",  description: "Max matches to return. Default 50; clamped to 200.", required: false },
+    { name: "contextLines", type: "number",  description: "Lines of before/after context per match. Default 2.", required: false },
+    { name: "cursor",       type: "string",  description: "Opaque cursor for pagination. Best-effort: workspace changes between calls may shift results.", required: false },
   ],
-  example: [
-    "<search_files>",
-    "<path>src</path>",
-    "<pattern>TODO|FIXME</pattern>",
-    "<filePattern>*.ts</filePattern>",
-    "</search_files>",
-  ].join("\n"),
+  example: ["<search_files>", "<pattern>TODO</pattern>", "</search_files>"].join("\n"),
   approval: "never",
 
   async execute(args: Record<string, unknown>, ctx: AgentContext): Promise<ToolResult> {
-    const relPath = String(args.path ?? ".").trim() || ".";
-    const patternStr = String(args.pattern ?? "").trim();
-    const filePatternStr = String(args.filePattern ?? "").trim();
-    if (!patternStr) return failed("invalid-args", "missing required parameter `pattern`");
+    const input = args as SearchFilesArgs;
+    let pattern: string;
+    let targetPath: string;
+    let maxMatches: number;
+    let contextLines: number;
+    let nextMatchIndex: number;
+    const warnings: string[] = [];
 
-    let regex: RegExp;
-    try {
-      regex = new RegExp(patternStr);
-    } catch (err) {
-      return failed("invalid-regex", (err as Error).message);
-    }
-    const fileMatcher = filePatternStr ? globToRegExp(filePatternStr) : null;
-
-    let rootAbs: string;
-    try {
-      rootAbs = resolveUnderCwd(ctx.cwd, relPath);
-    } catch (err) {
-      return failed("path-escape", (err as Error).message);
-    }
-
-    const matches: string[] = [];
-    let filesScanned = 0;
-    let truncated = false;
-
-    async function walk(dir: string): Promise<void> {
-      if (matches.length >= MAX_MATCHES) {
-        truncated = true;
-        return;
+    if (typeof input.cursor === "string" && input.cursor.length > 0) {
+      let cur: SearchFilesCursor;
+      try { cur = decodeCursor<SearchFilesCursor>(input.cursor); }
+      catch (err) {
+        if (err instanceof CursorDecodeError) {
+          return envelopeToString(cursorInvalidEnvelope("search_files", err.message));
+        }
+        throw err;
       }
-      let dirents;
-      try {
-        dirents = await fs.readdir(dir, { withFileTypes: true });
-      } catch {
-        return;
+      if (cur.tool !== "search_files") {
+        return envelopeToString(cursorInvalidEnvelope("search_files", `cursor.tool was ${cur.tool}`));
       }
-      for (const d of dirents) {
-        if (SKIP_DIRS.has(d.name)) continue;
-        if (matches.length >= MAX_MATCHES) {
-          truncated = true;
-          return;
-        }
-        const full = path.join(dir, d.name);
-        if (d.isDirectory()) {
-          await walk(full);
-          continue;
-        }
-        if (!d.isFile()) continue;
-        if (fileMatcher && !fileMatcher.test(d.name)) continue;
-        const rel = path.relative(ctx.cwd, full);
-        let body: string;
-        try {
-          const stat = await fs.stat(full);
-          if (stat.size > MAX_BYTES_PER_FILE) continue;
-          body = await fs.readFile(full, "utf8");
-        } catch {
-          continue;
-        }
-        filesScanned++;
-        const lines = body.split(/\r?\n/);
-        for (let i = 0; i < lines.length; i++) {
-          if (regex.test(lines[i]!)) {
-            matches.push(`${rel}:${i + 1}: ${lines[i]!.slice(0, 240)}`);
-            if (matches.length >= MAX_MATCHES) {
-              truncated = true;
-              return;
-            }
-          }
-        }
+      pattern = cur.pattern;
+      targetPath = cur.path;
+      maxMatches = cur.maxMatches;
+      contextLines = DEFAULT_CONTEXT_LINES;
+      nextMatchIndex = cur.nextMatchIndex;
+    } else {
+      pattern = String(input.pattern ?? "").trim();
+      if (!pattern) {
+        return envelopeToString(makeFailureEnvelope("search_files", "invalid-query", "missing required parameter `pattern`"));
       }
+      targetPath = String(input.path ?? ".").trim() || ".";
+      const rawMax = Number(input.maxMatches ?? DEFAULT_MAX_MATCHES);
+      if (Number.isFinite(rawMax) && rawMax > HARD_MAX_MATCHES) {
+        maxMatches = HARD_MAX_MATCHES;
+        warnings.push(`maxMatches clamped to ${HARD_MAX_MATCHES}`);
+      } else if (Number.isFinite(rawMax) && rawMax >= 1) {
+        maxMatches = Math.floor(rawMax);
+      } else {
+        maxMatches = DEFAULT_MAX_MATCHES;
+      }
+      contextLines = Math.max(0, Math.min(10, Math.floor(Number(input.contextLines ?? DEFAULT_CONTEXT_LINES))));
+      nextMatchIndex = 0;
     }
 
-    try {
-      await walk(rootAbs);
-    } catch (err) {
-      return failed("search-error", (err as Error).message);
+    if (BROAD_PATTERNS.has(pattern)) {
+      warnings.push("pattern matches every line; prefer read_file with startLine cursor for sequential file reads");
     }
 
-    const banner = [
-      `Search: ${patternStr}`,
-      `Path: ${relPath}${filePatternStr ? `, files: ${filePatternStr}` : ""}`,
-      `${matches.length} matches in ${filesScanned} files${truncated ? " (truncated)" : ""}`,
-    ].join("\n");
-    return { ok: true, content: banner + "\n---\n" + matches.join("\n") };
+    let re: RegExp;
+    try { re = new RegExp(pattern); }
+    catch (err) {
+      return envelopeToString(makeFailureEnvelope("search_files", "invalid-query", `regex compile error: ${(err as Error).message}`));
+    }
+
+    let searchRootAbs: string;
+    try { searchRootAbs = resolveUnderCwd(ctx.cwd, targetPath); }
+    catch (err) {
+      return envelopeToString(makeFailureEnvelope("search_files", "path-escape", (err as Error).message));
+    }
+
+    const allMatches = await collectMatches(searchRootAbs, ctx.cwd, re, contextLines);
+    const slice = allMatches.slice(nextMatchIndex, nextMatchIndex + maxMatches);
+    const truncated = nextMatchIndex + slice.length < allMatches.length;
+
+    if (!truncated) {
+      return envelopeToString(makeSuccessEnvelope<SearchFilesData>(
+        "search_files",
+        { pattern, path: targetPath, matches: slice },
+        {
+          truncated: false,
+          size: { linesReturned: slice.length, totalLines: allMatches.length, remainingLines: 0 },
+          warnings: warnings.length > 0 ? warnings : undefined,
+        },
+      ));
+    }
+
+    const cur: SearchFilesCursor = {
+      tool: "search_files",
+      pattern,
+      path: targetPath,
+      nextMatchIndex: nextMatchIndex + slice.length,
+      maxMatches,
+      createdAt: new Date().toISOString(),
+    };
+    const encoded = encodeCursor(cur);
+
+    return envelopeToString(makeSuccessEnvelope<SearchFilesData>(
+      "search_files",
+      { pattern, path: targetPath, matches: slice },
+      {
+        truncated: true,
+        size: { linesReturned: slice.length, totalLines: allMatches.length, remainingLines: allMatches.length - nextMatchIndex - slice.length },
+        next: { cursor: encoded, suggestedCall: { tool: "search_files", args: { cursor: encoded } } },
+        warnings: warnings.length > 0 ? warnings : undefined,
+      },
+    ));
   },
 };
-
-/** Convert a glob like `*.ts` or `foo-*.md` to a RegExp matching base filenames. */
-function globToRegExp(glob: string): RegExp {
-  // Very minimal — just supports * and ?
-  const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".");
-  return new RegExp(`^${escaped}$`);
-}
-
-function failed(code: string, message: string): ToolResult {
-  return { ok: false, content: `[${code}] ${message}`, error: { code, message } };
-}

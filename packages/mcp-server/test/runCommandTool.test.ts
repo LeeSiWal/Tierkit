@@ -14,15 +14,17 @@ describe("tierkit.run_command", () => {
     const r = await runCommandTool({ workspaceRoot: workspace, command: "ls" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.stdout).toContain("hello.txt");
-    expect(r.exitCode).toBe(0);
+    // v0.16 envelope: stdout lives in data.stdout
+    expect((r as any).data.stdout).toContain("hello.txt");
+    expect((r as any).data.exitCode).toBe(0);
   });
 
   it("blocks dangerous commands", async () => {
     const r = await runCommandTool({ workspaceRoot: workspace, command: "rm -rf /" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("command-blocked");
+    // v0.16 envelope: failure uses error.code
+    expect((r as any).error.code).toBe("command-blocked");
   });
 
   it("returns approval-required for non-safe non-blocked commands WITHOUT executing them", async () => {
@@ -36,8 +38,9 @@ describe("tierkit.run_command", () => {
     });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("approval-required");
-    expect(r.classification).toBeTruthy();
+    expect((r as any).error.code).toBe("approval-required");
+    // classification is surfaced in warnings in v0.16 envelope
+    expect((r as any).warnings?.some((w: string) => w.startsWith("classification:"))).toBe(true);
     // No `approval` envelope on run_command in v0.15.0.
     expect((r as any).approval).toBeUndefined();
     // The command was NOT executed — sentinel must be absent.
@@ -50,7 +53,7 @@ describe("tierkit.run_command", () => {
     const r = await runCommandTool({ workspaceRoot: workspace, command: "pwd" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.stdout.trim()).toBe(await fs.realpath(workspace));
+    expect((r as any).data.stdout.trim()).toBe(await fs.realpath(workspace));
   });
 
   it("does not pass ANTHROPIC_API_KEY through env", async () => {
@@ -59,7 +62,7 @@ describe("tierkit.run_command", () => {
       const r = await runCommandTool({ workspaceRoot: workspace, command: "env" });
       expect(r.ok).toBe(true);
       if (!r.ok) return;
-      expect(r.stdout).not.toContain("sk-ant-secret-test");
+      expect((r as any).data.stdout).not.toContain("sk-ant-secret-test");
     } finally {
       delete process.env.ANTHROPIC_API_KEY;
     }
@@ -72,7 +75,7 @@ describe("tierkit.run_command", () => {
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.stdout).not.toMatch(/sk-ant-api03-[A-Z]/);
+    expect((r as any).data.stdout).not.toMatch(/sk-ant-api03-[A-Z]/);
   });
 
   it("truncates stdout exceeding maxStdoutBytes", async () => {
@@ -83,8 +86,8 @@ describe("tierkit.run_command", () => {
     });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.stdout.length).toBeLessThanOrEqual(1500); // includes truncation marker bytes
-    expect(r.truncated).toBe(true);
+    expect((r as any).data.stdout.length).toBeLessThanOrEqual(1500); // includes truncation marker bytes
+    expect((r as any).truncated).toBe(true);
   });
 
   it("times out a long-running command", async () => {
@@ -95,6 +98,6 @@ describe("tierkit.run_command", () => {
     });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("command-timeout");
+    expect((r as any).error.code).toBe("command-timeout");
   });
 });

@@ -680,3 +680,40 @@ a successful result, NOT as an error code. There is no `command-output-too-large
 Note: `list_files` silently drops entries that match ignore sources / denylist during
 directory walk, rather than returning `ignored-path`. The `ignored-path` code is returned
 only by `read_file` (direct refusal) and `propose_patch` (per-file check).
+
+---
+
+## v0.16 — Tool Result Envelope
+
+Spec: [docs/superpowers/specs/2026-05-21-v0.16-tool-result-envelope-design.md](superpowers/specs/2026-05-21-v0.16-tool-result-envelope-design.md)
+
+Long-output tools (`read_file`, `list_files`, `search_files`, `execute_command`,
+and their MCP equivalents) return `tool-result-envelope.v1`:
+
+```ts
+type ToolResultEnvelope<TData> =
+  | { ok: true; tool: string; version: "tool-result-envelope.v1"; data: TData;
+      truncated: boolean; range?: { startLine: number; endLine: number };
+      size?: { linesReturned: number; totalLines: number; remainingLines: number };
+      next?: { cursor: string; suggestedCall: { tool: string; args: Record<string, unknown> } };
+      warnings?: string[] }
+  | { ok: false; tool: string; version: "tool-result-envelope.v1";
+      error: { code: string; message: string }; warnings?: string[] };
+```
+
+Invariants:
+
+1. `version === "tool-result-envelope.v1"` for all v0.16 envelopes.
+2. `truncated: true` AND deterministic continuation → `next` MUST be present.
+3. `truncated: true` AND continuation not possible (`run_command`) → `next` absent, `warnings` explains.
+4. `cursor` is opaque base64url(JSON), source of truth when present in args.
+5. `read_file` cursor stores `fileHash`; mismatch returns `stale-cursor`.
+6. `run_command` size fields are stream-prefixed (`stdoutBytesReturned`, `stderrBytesReturned`, `stdoutTruncated`, `stderrTruncated`).
+
+### New error codes (additive to v0.15 list)
+
+| Code | Tools | Meaning |
+|---|---|---|
+| `cursor-invalid` | all long-output tools | Cursor failed to decode or shape mismatch |
+| `stale-cursor` | `read_file` | File's `fileHash` differs from cursor's stored hash |
+| `invalid-args` | all | Missing required arg (e.g. `path`) |

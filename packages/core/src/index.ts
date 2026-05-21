@@ -1,3 +1,31 @@
+// v0.16 Tool Result Envelope
+export {
+  TOOL_RESULT_ENVELOPE_VERSION,
+  makeSuccessEnvelope,
+  makeFailureEnvelope,
+  type ToolResultEnvelope,
+  type ToolResultSuccess,
+  type ToolResultFailure,
+  type ToolResultRange,
+  type ToolResultSize,
+  type ToolResultNext,
+  type ToolResultEnvelopeVersion,
+} from "./tools/envelope.js";
+
+// v0.16 Cursor encode/decode + per-tool cursor types
+export {
+  encodeCursor,
+  decodeCursor,
+  CursorDecodeError,
+  type ReadFileCursor,
+  type ListFilesCursor,
+  type SearchFilesCursor,
+  type AnyCursor,
+} from "./tools/cursor.js";
+
+// v0.16 Cursor error envelope helpers
+export { cursorInvalidEnvelope, staleCursorEnvelope } from "./tools/envelopeErrors.js";
+
 // Plugin schema and loader
 export {
   PluginManifestSchema,
@@ -386,6 +414,8 @@ export {
   type ProbeOk,
   type ProbeFail,
 } from "./model/providers/index.js";
+
+export { runChild, mergeEnv, type RunChildOptions } from "./model/providers/runChild.js";
 
 export {
   doctor,

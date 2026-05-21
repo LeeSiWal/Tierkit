@@ -11,7 +11,7 @@ export interface McpActivityInput {
   outputSummary: unknown;  // tool-specific; MUST be sizes / counts only
   /**
    * Envelope metadata extracted from the tool result. Optional — only present
-   * for tools that use tool-result-envelope.v1.
+   * for tools that use tool-result-envelope.v1 (v0.16+).
    */
   envelope?: {
     truncated: boolean;

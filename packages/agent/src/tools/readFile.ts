@@ -1,98 +1,203 @@
+import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
+import {
+  encodeCursor,
+  decodeCursor,
+  makeSuccessEnvelope,
+  makeFailureEnvelope,
+  cursorInvalidEnvelope,
+  staleCursorEnvelope,
+  CursorDecodeError,
+  type ReadFileCursor,
+} from "@tierkit/core";
 import { resolveUnderCwd } from "./safePath.js";
 import { gateSensitivePath } from "./tierkitGates.js";
+import { envelopeToString } from "./envelopeUtils.js";
 import type { Tool, ToolResult, AgentContext } from "../types.js";
 
-const MAX_BYTES = 256 * 1024; // 256KB hard cap — protects context budget from huge files
-const MAX_LINES = 4000; // soft cap by line count
+const DEFAULT_MAX_LINES = 300;
+const HARD_MAX_LINES = 1000;
+const READ_BYTE_CAP = 8 * 1024 * 1024;   // 8MB defensive read cap (was 256KB; envelope handles lines now)
+
+interface ReadFileArgs {
+  path?: string;
+  startLine?: number;
+  maxLines?: number;
+  cursor?: string;
+}
+
+interface ReadFileData {
+  path: string;
+  content: string;
+}
+
+function sha256OfFile(absPath: string): Promise<string> {
+  return fs.readFile(absPath).then((buf) => "sha256:" + crypto.createHash("sha256").update(buf).digest("hex"));
+}
 
 export const readFileTool: Tool = {
   name: "read_file",
   description:
-    "Read the contents of a file. Returns the file body with line numbers prepended (1: ..., 2: ...). " +
-    "Use this BEFORE making any assumptions about what a file contains. " +
-    "Path is relative to the workspace root. Files larger than 256KB or 4000 lines are truncated.",
+    "Read a file from the workspace and return its content as a JSON envelope " +
+    "(tool-result-envelope.v1). For files over 300 lines, returns the first 300 lines " +
+    "plus `next.cursor` to continue. Pass that cursor back to read the next chunk. " +
+    "Files larger than the hard cap of 1000 lines per call still return a cursor for " +
+    "continuation.",
   parameters: [
-    {
-      name: "path",
-      type: "string",
-      description: "Workspace-relative path of the file to read (e.g., 'src/main.ts').",
-      required: true,
-    },
+    { name: "path",      type: "string",  description: "Workspace-relative file path. Ignored when cursor is provided.", required: false },
+    { name: "startLine", type: "number",  description: "1-indexed first line to return. Default 1. Ignored when cursor is provided.", required: false },
+    { name: "maxLines",  type: "number",  description: "Max lines to return. Default 300; clamped to 1000.", required: false },
+    { name: "cursor",    type: "string",  description: "Opaque cursor from a previous envelope's `next.cursor`. When present, overrides path/startLine/maxLines.", required: false },
   ],
   example: ["<read_file>", "<path>src/main.ts</path>", "</read_file>"].join("\n"),
   approval: "never",
 
   async execute(args: Record<string, unknown>, ctx: AgentContext): Promise<ToolResult> {
-    const relPath = String(args.path ?? "").trim();
-    if (!relPath) {
-      return failed("invalid-args", "missing required parameter `path`");
-    }
+    const input = args as ReadFileArgs;
+    let targetPath: string;
+    let startLine: number;
+    let maxLines: number;
+    const warnings: string[] = [];
 
-    // Path traversal guard — never escape cwd.
-    let absPath: string;
-    try {
-      absPath = resolveUnderCwd(ctx.cwd, relPath);
-    } catch (err) {
-      return failed("path-escape", (err as Error).message);
-    }
-
-    // Tierkit policy gate: refuses .env, *.pem, id_rsa, etc.
-    const gate = await gateSensitivePath(ctx.tierkitBaseUrl, relPath);
-    if (gate.blocked) {
-      return failed(
-        "sensitive-file-blocked",
-        `${relPath} is on the sensitive-file blocklist (${gate.reason ?? "policy"}). ` +
-          "Refusing to read.",
-      );
-    }
-
-    let stat;
-    try {
-      stat = await fs.stat(absPath);
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-        return failed("not-found", `file does not exist: ${relPath}`);
+    // ── Cursor source-of-truth ────────────────────────────────────────────
+    if (typeof input.cursor === "string" && input.cursor.length > 0) {
+      let cur: ReadFileCursor;
+      try {
+        cur = decodeCursor<ReadFileCursor>(input.cursor);
+      } catch (err) {
+        if (err instanceof CursorDecodeError) {
+          return envelopeToString(cursorInvalidEnvelope("read_file", err.message));
+        }
+        throw err;
       }
-      return failed("read-error", (err as Error).message);
+      if (cur.tool !== "read_file") {
+        return envelopeToString(cursorInvalidEnvelope("read_file", `cursor.tool was ${cur.tool}`));
+      }
+      targetPath = cur.path;
+      startLine = cur.nextStartLine;
+      maxLines = cur.maxLines;
+
+      // Resolve to abs path, check fileHash
+      let absPath: string;
+      try { absPath = resolveUnderCwd(ctx.cwd, targetPath); }
+      catch (err) { return envelopeToString(makeFailureEnvelope("read_file", "path-escape", (err as Error).message)); }
+      try {
+        const currentHash = await sha256OfFile(absPath);
+        if (currentHash !== cur.fileHash) {
+          return envelopeToString(staleCursorEnvelope("read_file", `${targetPath} fileHash changed`));
+        }
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code === "ENOENT") {
+          return envelopeToString(makeFailureEnvelope("read_file", "not-found", `file does not exist: ${targetPath}`));
+        }
+        return envelopeToString(makeFailureEnvelope("read_file", "read-error", e.message));
+      }
+    } else {
+      // ── Plain (no cursor) path ────────────────────────────────────────────
+      targetPath = String(input.path ?? "").trim();
+      if (!targetPath) {
+        return envelopeToString(makeFailureEnvelope("read_file", "invalid-args", "missing required parameter `path`"));
+      }
+      const startLineRaw = Number(input.startLine ?? 1);
+      startLine = Number.isInteger(startLineRaw) && startLineRaw >= 1 ? startLineRaw : 1;
+
+      const maxLinesRaw = Number(input.maxLines ?? DEFAULT_MAX_LINES);
+      if (Number.isFinite(maxLinesRaw) && maxLinesRaw > HARD_MAX_LINES) {
+        maxLines = HARD_MAX_LINES;
+        warnings.push(`maxLines clamped to ${HARD_MAX_LINES}`);
+      } else if (Number.isFinite(maxLinesRaw) && maxLinesRaw >= 1) {
+        maxLines = Math.floor(maxLinesRaw);
+      } else {
+        maxLines = DEFAULT_MAX_LINES;
+      }
+    }
+
+    // ── Resolve abs path, run gates ──────────────────────────────────────
+    let absPath: string;
+    try { absPath = resolveUnderCwd(ctx.cwd, targetPath); }
+    catch (err) { return envelopeToString(makeFailureEnvelope("read_file", "path-escape", (err as Error).message)); }
+
+    const gate = await gateSensitivePath(ctx.tierkitBaseUrl, targetPath);
+    if (gate.blocked) {
+      return envelopeToString(makeFailureEnvelope(
+        "read_file",
+        "sensitive-file-blocked",
+        `${targetPath} is on the sensitive-file blocklist (${gate.reason ?? "policy"}). Refusing to read.`,
+      ));
+    }
+
+    // ── Stat + read ───────────────────────────────────────────────────────
+    let stat;
+    try { stat = await fs.stat(absPath); }
+    catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "ENOENT") {
+        return envelopeToString(makeFailureEnvelope("read_file", "not-found", `file does not exist: ${targetPath}`));
+      }
+      return envelopeToString(makeFailureEnvelope("read_file", "read-error", e.message));
     }
     if (!stat.isFile()) {
-      return failed("not-a-file", `${relPath} exists but is not a regular file`);
+      return envelopeToString(makeFailureEnvelope("read_file", "not-a-file", `${targetPath} exists but is not a regular file`));
     }
 
-    const truncated = stat.size > MAX_BYTES;
+    // Read full file (capped at 8MB defensively). Splitting + slicing line-wise.
     let body: string;
     try {
-      const fd = await fs.open(absPath, "r");
-      try {
-        const buf = Buffer.alloc(Math.min(stat.size, MAX_BYTES));
-        await fd.read(buf, 0, buf.length, 0);
-        body = buf.toString("utf8");
-      } finally {
-        await fd.close();
-      }
+      const buf = await fs.readFile(absPath, { encoding: "utf8" });
+      body = buf.length > READ_BYTE_CAP ? buf.slice(0, READ_BYTE_CAP) : buf;
     } catch (err) {
-      return failed("read-error", (err as Error).message);
+      return envelopeToString(makeFailureEnvelope("read_file", "read-error", (err as Error).message));
     }
 
-    const lines = body.split(/\r?\n/);
-    const truncatedByLines = lines.length > MAX_LINES;
-    const shown = truncatedByLines ? lines.slice(0, MAX_LINES) : lines;
-    const numbered = shown.map((ln, i) => `${i + 1}: ${ln}`).join("\n");
+    const allLines = body.split(/\r?\n/);
+    const totalLines = allLines.length;
+    const endLine = Math.min(startLine + maxLines - 1, totalLines);
+    const linesReturned = Math.max(0, endLine - startLine + 1);
+    const sliced = allLines.slice(startLine - 1, endLine);
+    const content = sliced.join("\n");
 
-    const banner: string[] = [];
-    banner.push(`File: ${relPath}`);
-    banner.push(`Size: ${stat.size} bytes, ${lines.length} lines`);
-    if (truncated) banner.push(`Note: truncated to first ${MAX_BYTES} bytes`);
-    if (truncatedByLines) banner.push(`Note: showing first ${MAX_LINES} lines`);
-    return {
-      ok: true,
-      content: banner.join("\n") + "\n---\n" + numbered,
+    const truncated = endLine < totalLines;
+    const fileHash = await sha256OfFile(absPath);
+
+    // ── Build envelope ────────────────────────────────────────────────────
+    if (!truncated) {
+      return envelopeToString(makeSuccessEnvelope<ReadFileData>(
+        "read_file",
+        { path: targetPath, content },
+        {
+          truncated: false,
+          range: { startLine, endLine },
+          size: { linesReturned, totalLines, remainingLines: 0 },
+          warnings: warnings.length > 0 ? warnings : undefined,
+        },
+      ));
+    }
+
+    // truncated:true → next is required
+    const nextCursor: ReadFileCursor = {
+      tool: "read_file",
+      path: targetPath,
+      nextStartLine: endLine + 1,
+      maxLines,
+      fileHash,
+      createdAt: new Date().toISOString(),
     };
+    const encoded = encodeCursor(nextCursor);
+
+    return envelopeToString(makeSuccessEnvelope<ReadFileData>(
+      "read_file",
+      { path: targetPath, content },
+      {
+        truncated: true,
+        range: { startLine, endLine },
+        size: { linesReturned, totalLines, remainingLines: totalLines - endLine },
+        next: {
+          cursor: encoded,
+          suggestedCall: { tool: "read_file", args: { cursor: encoded } },
+        },
+        warnings: warnings.length > 0 ? warnings : undefined,
+      },
+    ));
   },
 };
-
-function failed(code: string, message: string): ToolResult {
-  return { ok: false, content: `[${code}] ${message}`, error: { code, message } };
-}

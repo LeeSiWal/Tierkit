@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { runChild } from "./runChild.js";
 import type { ModelProfile } from "../ModelProfile.js";
 import type { ProviderClient, ProbeResult } from "./types.js";
 import type { ChatRequest, ChatResult, ChatMessage, StreamEvent } from "./chatTypes.js";
@@ -26,6 +26,7 @@ interface SpawnOptions {
   maxStdoutBytes: number;
   maxStderrBytes: number;
   stdin?: string;
+  callerEnv?: Record<string, string | undefined>;
 }
 
 function runSubprocess(command: string, args: string[], opts: SpawnOptions): Promise<SpawnOutcome> {
@@ -39,7 +40,10 @@ function runSubprocess(command: string, args: string[], opts: SpawnOptions): Pro
     let timedOut = false;
     let settled = false;
 
-    const child = spawn(command, args, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = runChild(command, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+      callerEnv: opts.callerEnv,
+    });
 
     const timer = setTimeout(() => {
       timedOut = true;
@@ -163,7 +167,7 @@ export abstract class SubscriptionCliProvider implements ProviderClient {
   async chat(
     profile: ModelProfile,
     request: ChatRequest,
-    _env: Record<string, string | undefined>,
+    env: Record<string, string | undefined>,
   ): Promise<ChatResult> {
     const t = profile.transport;
     if (!t || t.type !== "subprocess") {
@@ -176,6 +180,7 @@ export abstract class SubscriptionCliProvider implements ProviderClient {
       maxStdoutBytes: t.maxStdoutBytes,
       maxStderrBytes: t.maxStderrBytes,
       stdin: prompt,
+      callerEnv: env,
     });
     const latencyMs = Date.now() - started;
 
@@ -252,7 +257,10 @@ export abstract class SubscriptionCliProvider implements ProviderClient {
       wakeup?.();
     };
 
-    const child = spawn(t.command, argsResolved, { stdio: ["pipe", "pipe", "pipe"] });
+    const child = runChild(t.command, argsResolved, {
+      stdio: ["pipe", "pipe", "pipe"],
+      callerEnv: env,
+    });
 
     // fullStdout accumulates every byte for the final parseStdout call (usage extraction).
     // lineBuffer holds the current incomplete line as we stream.

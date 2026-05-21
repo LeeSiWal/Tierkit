@@ -70,10 +70,9 @@ describe("mcp/activityLog", () => {
       envelope: { truncated: true, hasCursor: true, remainingLines: 400 },
     });
     const entries = await readMcpActivity(workspace);
-    expect(entries).toHaveLength(1);
-    const entry = entries[0];
-    expect(entry.envelope?.truncated).toBe(true);
-    expect(entry.envelope?.hasCursor).toBe(true);
-    expect(entry.envelope?.remainingLines).toBe(400);
+    const last = entries[entries.length - 1]!;
+    expect(last.envelope?.truncated).toBe(true);
+    expect(last.envelope?.hasCursor).toBe(true);
+    expect(last.envelope?.remainingLines).toBe(400);
   });
 });

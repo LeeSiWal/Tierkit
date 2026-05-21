@@ -1,5 +1,82 @@
 # Changelog
 
+## 0.16.0 — 2026-05-22
+
+### Track A — Windows unlock
+
+- **Fixed `Failed to fetch` on the MCP "Show config snippet" button** in the
+  VS Code sidebar. The handler was using raw `fetch()`, which resolves
+  against the webview's origin in VS Code rather than the daemon loopback.
+  Now uses the same `jget()` transport abstraction as the rest of the GUI.
+- **Subscription CLI + viability probe now resolve `.cmd` shims on Windows.**
+  A new shared `runChild()` helper uses `shell: process.platform === "win32"`
+  so npm-installed CLIs like `claude.cmd` resolve via `PATHEXT`. macOS/Linux
+  preserve the v0.15 direct-spawn behavior to avoid quoting/escaping changes.
+- **Subscription CLI now propagates caller-supplied env to the child.** The
+  `_env` parameter (previously dropped) is now merged onto `process.env` via
+  a `mergeEnv()` helper that strips `undefined` values to avoid the literal
+  `"undefined"` string leaking into the child env.
+
+### Track B — Tool Result Envelope
+
+**BREAKING for direct MCP/tool-result consumers:** Long-output tools now
+return a structured JSON envelope (`tool-result-envelope.v1`) instead of
+ad-hoc JSON/text payloads. Agents should inspect `truncated` and
+`next.suggestedCall` to continue past truncation. Affected tools:
+
+| Layer | Tool |
+|---|---|
+| Tierkit Agent | `read_file`, `list_files`, `search_files`, `execute_command` |
+| MCP Bridge | `tierkit.read_file`, `tierkit.list_files`, `tierkit.codebase_search`, `tierkit.run_command` |
+
+Envelope shape:
+
+```json
+{
+  "ok": true,
+  "tool": "read_file",
+  "version": "tool-result-envelope.v1",
+  "data": { "path": "src/foo.ts", "content": "..." },
+  "truncated": true,
+  "range": { "startLine": 1, "endLine": 300 },
+  "size": { "linesReturned": 300, "totalLines": 900, "remainingLines": 600 },
+  "next": {
+    "cursor": "<opaque base64url>",
+    "suggestedCall": { "tool": "read_file", "args": { "cursor": "<same>" } }
+  }
+}
+```
+
+- **`read_file` gains `startLine`, `maxLines`, `cursor` args.** Default
+  `maxLines: 300`, hard cap 1000. When `cursor` is present, it is the
+  source of truth — other args are ignored. Cursor is base64url-encoded JSON
+  including the issuing-time `fileHash`; if the file changes between issue
+  and use, the tool returns `stale-cursor`.
+- **`run_command` envelope omits `next.cursor`** — command output is not
+  deterministic continuation. Surfaces `warnings` and stream-prefixed
+  `size.stdoutBytesReturned` / `size.stderrBytesReturned` /
+  `size.stdoutTruncated` / `size.stderrTruncated` fields instead.
+- **`search_files` warns on broad patterns** like `.*` with a hint to use
+  `read_file` with a startLine cursor instead.
+
+### Track C — Timeout policy
+
+- **`claudeCode.timeoutMs` default 180_000 → 300_000** (5 min). Windows
+  subprocess startup + Claude Code's first-call auth can exceed 3 min.
+- **`tierkit doctor` surfaces a hint** when `.tierkit/runtime/usage.jsonl`
+  contains recent `cli-timeout` entries, with a pointer to
+  `docs/MODEL_PROFILES.md` for per-profile tuning.
+
+### Out of scope (deferred)
+
+- `read_command_output` tool for paginating subprocess output — v0.16.1.
+- Windows CI runner — v0.17.
+- HMAC-signed cursors — v0.17 if needed.
+- Additional cleanup around subscription CLI process handling beyond
+  v0.16's `runChild()` Windows-unlock helper — v0.16.1 if needed.
+
+---
+
 ## 0.15.0 — 2026-05-21
 
 ### Added — Tierkit MCP Bridge

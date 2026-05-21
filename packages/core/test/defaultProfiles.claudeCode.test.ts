@@ -51,7 +51,11 @@ describe("DEFAULT_MODEL_PROFILES.claudeCode", () => {
     expect(claudeCode.transport.args).toEqual(["-p", "--output-format", "json"]);
   });
 
-  it("transport.timeoutMs is 180_000 (3 min, bumped in v0.14.2)", () => {
-    expect(claudeCode.transport.timeoutMs).toBe(180_000);
+  it("transport.timeoutMs is 300_000 (3 min, bumped in v0.14.2)", () => {
+    expect(claudeCode.transport.timeoutMs).toBe(300_000);
+  });
+
+  it("claudeCode default timeoutMs is 300_000 (5 min)", () => {
+    expect((DEFAULT_MODEL_PROFILES as any).claudeCode.transport?.timeoutMs).toBe(300_000);
   });
 });

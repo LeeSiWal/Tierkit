@@ -17,7 +17,7 @@
  * We use a short timeout (1.5s) so a hung probe doesn't delay routing. If the probe times
  * out, we mark the profile non-viable — same effect as if Ollama were down.
  */
-import { spawn } from "node:child_process";
+import { runChild } from "./providers/runChild.js";
 import type { ModelProfile } from "./ModelProfile.js";
 
 export interface ViabilityResult {
@@ -58,7 +58,7 @@ export async function checkProfileViability(
         clearTimeout(timer);
         resolve(r);
       };
-      const child = spawn(t.command, t.healthCheckArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      const child = runChild(t.command, t.healthCheckArgs, { stdio: ["ignore", "pipe", "pipe"] });
       const timer = setTimeout(() => {
         timed = true;
         try { child.kill("SIGKILL"); } catch { /* */ }
