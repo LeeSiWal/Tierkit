@@ -1,3 +1,17 @@
+// v0.16 Tool Result Envelope
+export {
+  TOOL_RESULT_ENVELOPE_VERSION,
+  makeSuccessEnvelope,
+  makeFailureEnvelope,
+  type ToolResultEnvelope,
+  type ToolResultSuccess,
+  type ToolResultFailure,
+  type ToolResultRange,
+  type ToolResultSize,
+  type ToolResultNext,
+  type ToolResultEnvelopeVersion,
+} from "./tools/envelope.js";
+
 // Plugin schema and loader
 export {
   PluginManifestSchema,
