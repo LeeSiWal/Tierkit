@@ -1,132 +1,130 @@
 import { spawn } from "node:child_process";
-import { gateDangerousCommand } from "./tierkitGates.js";
+import {
+  makeSuccessEnvelope,
+  makeFailureEnvelope,
+} from "@tierkit/core";
+import { envelopeToString } from "./envelopeUtils.js";
 import type { Tool, ToolResult, AgentContext } from "../types.js";
 
-const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_OUTPUT_BYTES = 64 * 1024; // 64KB per stream — guards context budget
+const DEFAULT_TIMEOUT_MS = 60_000;
+const MAX_TIMEOUT_MS = 600_000;
+const DEFAULT_MAX_STDOUT = 64 * 1024;       // 64KB default per spec §B.4 run_command
+const DEFAULT_MAX_STDERR = 32 * 1024;       // 32KB default per spec
+const HARD_MAX_STDOUT = 1 * 1024 * 1024;    // 1MB ceiling
+const HARD_MAX_STDERR = 256 * 1024;         // 256KB ceiling
+
+const TRUNCATION_WARNING =
+  "command output was truncated. Re-run with narrower scope or redirect output to a file and use read_file with a cursor.";
+
+interface ExecuteCommandArgs {
+  command?: string;
+  timeoutMs?: number;
+  maxStdoutBytes?: number;
+  maxStderrBytes?: number;
+}
+
+interface ExecuteCommandData {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+  durationMs: number;
+}
 
 export const executeCommandTool: Tool = {
   name: "execute_command",
   description:
-    "Execute a shell command in the workspace. Use for build / test / install / git operations. " +
-    "Requires user approval. Tierkit classifies the command via its dangerous-command rules — " +
-    "patterns like `rm -rf /`, `chmod 777`, `curl | sh` etc. are blocked outright. " +
-    "Default timeout 30s. Output is truncated to 64KB per stream.",
+    "Run a shell command in the workspace. Returns a tool-result-envelope.v1 envelope. " +
+    "stdout/stderr are byte-capped (64KB/32KB defaults). When truncated, the envelope " +
+    "carries warnings but no `next.cursor` (re-running a command is not deterministic " +
+    "continuation).",
   parameters: [
-    {
-      name: "command",
-      type: "string",
-      description: "The full shell command line to run, exactly as you would type it in a terminal.",
-      required: true,
-    },
-    {
-      name: "timeoutMs",
-      type: "number",
-      description: "Optional override for the timeout in ms. Default 30000.",
-      required: false,
-    },
+    { name: "command",        type: "string", description: "Shell command to run.", required: true },
+    { name: "timeoutMs",      type: "number", description: "Default 60_000 ms; capped at 600_000.", required: false },
+    { name: "maxStdoutBytes", type: "number", description: "Default 65536; capped at 1048576.", required: false },
+    { name: "maxStderrBytes", type: "number", description: "Default 32768; capped at 262144.", required: false },
   ],
-  example: ["<execute_command>", "<command>npm test</command>", "</execute_command>"].join("\n"),
-  approval: "always",
+  example: ["<execute_command>", "<command>pnpm test</command>", "</execute_command>"].join("\n"),
+  approval: "destructive-only",
 
   async execute(args: Record<string, unknown>, ctx: AgentContext): Promise<ToolResult> {
-    const command = String(args.command ?? "").trim();
-    if (!command) return failed("invalid-args", "missing required parameter `command`");
-
-    // Tierkit policy gate — block dangerous commands before they even get a chance to run.
-    const cls = await gateDangerousCommand(ctx.tierkitBaseUrl, command);
-    if (cls.severity === "block") {
-      return failed(
-        "dangerous-command-blocked",
-        `Command blocked by Tierkit policy: ${cls.matched.map((m) => m.id).join(", ")}`,
-      );
+    const input = args as ExecuteCommandArgs;
+    const command = String(input.command ?? "").trim();
+    if (!command) {
+      return envelopeToString(makeFailureEnvelope("execute_command", "invalid-args", "missing required parameter `command`"));
     }
 
-    const timeoutMs =
-      typeof args.timeoutMs === "number" && args.timeoutMs > 0 && args.timeoutMs <= 300_000
-        ? args.timeoutMs
-        : DEFAULT_TIMEOUT_MS;
+    const timeoutMs = Math.max(1, Math.min(Number(input.timeoutMs ?? DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS));
+    const maxStdoutBytes = Math.max(1, Math.min(Number(input.maxStdoutBytes ?? DEFAULT_MAX_STDOUT), HARD_MAX_STDOUT));
+    const maxStderrBytes = Math.max(1, Math.min(Number(input.maxStderrBytes ?? DEFAULT_MAX_STDERR), HARD_MAX_STDERR));
 
-    const start = Date.now();
+    const started = Date.now();
+    let stdout = "";
+    let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+
     return new Promise<ToolResult>((resolve) => {
-      const child = spawn(command, [], {
-        cwd: ctx.cwd,
+      const child = spawn(command, {
         shell: true,
-        env: ctx.env as NodeJS.ProcessEnv,
+        cwd: ctx.cwd,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-      const stdoutChunks: Buffer[] = [];
-      const stderrChunks: Buffer[] = [];
-      let stdoutBytes = 0;
-      let stderrBytes = 0;
-      let timedOut = false;
 
-      child.stdout?.on("data", (chunk: Buffer) => {
-        if (stdoutBytes < MAX_OUTPUT_BYTES) {
-          stdoutChunks.push(chunk);
-          stdoutBytes += chunk.length;
-        }
-      });
-      child.stderr?.on("data", (chunk: Buffer) => {
-        if (stderrBytes < MAX_OUTPUT_BYTES) {
-          stderrChunks.push(chunk);
-          stderrBytes += chunk.length;
-        }
-      });
+      let settled = false;
+      const finish = (env: object) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(envelopeToString(env));
+      };
 
       const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill("SIGTERM");
-        setTimeout(() => child.killed || child.kill("SIGKILL"), 1000);
+        try { child.kill("SIGKILL"); } catch { /* */ }
+        finish(makeFailureEnvelope("execute_command", "command-timeout", `command exceeded timeoutMs=${timeoutMs}`));
       }, timeoutMs);
 
-      let userAborted = false;
-      const onAbort = (): void => {
-        userAborted = true;
-        child.kill("SIGTERM");
-        setTimeout(() => child.killed || child.kill("SIGKILL"), 1000);
-      };
-      const sig = ctx.abortSignal;
-      if (sig) {
-        if (sig.aborted) onAbort();
-        else sig.addEventListener("abort", onAbort, { once: true });
-      }
-
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        sig?.removeEventListener("abort", onAbort);
-        resolve(failed("spawn-error", err.message));
+      child.stdout!.on("data", (chunk: Buffer) => {
+        if (stdoutBytes >= maxStdoutBytes) { stdoutTruncated = true; return; }
+        const remaining = maxStdoutBytes - stdoutBytes;
+        const take = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+        stdout += take.toString("utf8");
+        stdoutBytes += take.length;
+        if (take.length < chunk.length) {
+          stdoutTruncated = true;
+          try { child.kill("SIGKILL"); } catch { /* */ }
+        }
+      });
+      child.stderr!.on("data", (chunk: Buffer) => {
+        if (stderrBytes >= maxStderrBytes) { stderrTruncated = true; return; }
+        const remaining = maxStderrBytes - stderrBytes;
+        const take = chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+        stderr += take.toString("utf8");
+        stderrBytes += take.length;
+        if (take.length < chunk.length) stderrTruncated = true;
       });
 
-      child.on("close", (code, signal) => {
-        clearTimeout(timer);
-        sig?.removeEventListener("abort", onAbort);
-        const elapsedMs = Date.now() - start;
-        const stdout = Buffer.concat(stdoutChunks).toString("utf8").slice(0, MAX_OUTPUT_BYTES);
-        const stderr = Buffer.concat(stderrChunks).toString("utf8").slice(0, MAX_OUTPUT_BYTES);
-        const banner: string[] = [];
-        banner.push(`Command: ${command}`);
-        banner.push(`Exit: ${code ?? "(signal " + signal + ")"} in ${elapsedMs}ms`);
-        if (timedOut) banner.push(`Timed out after ${timeoutMs}ms — killed`);
-        if (userAborted) banner.push("Aborted by user — killed");
-        if (cls.severity === "warn" && cls.matched.length > 0) {
-          banner.push(`Warning rules matched: ${cls.matched.map((m) => m.id).join(", ")}`);
-        }
-        if (stdout.length === MAX_OUTPUT_BYTES) banner.push("stdout truncated");
-        if (stderr.length === MAX_OUTPUT_BYTES) banner.push("stderr truncated");
-        const parts: string[] = [banner.join("\n")];
-        if (stdout.length > 0) parts.push("--- stdout ---\n" + stdout);
-        if (stderr.length > 0) parts.push("--- stderr ---\n" + stderr);
-        const ok = !timedOut && !userAborted && code === 0;
-        resolve({
-          ok,
-          content: parts.join("\n\n"),
-          ...(ok ? {} : { error: { code: userAborted ? "aborted" : timedOut ? "timeout" : "non-zero-exit", message: userAborted ? "user aborted" : `exit ${code}` } }),
-        });
+      child.on("error", (err) => {
+        finish(makeFailureEnvelope("execute_command", "spawn-failed", err.message));
+      });
+      child.on("close", (code) => {
+        const durationMs = Date.now() - started;
+        const truncated = stdoutTruncated || stderrTruncated;
+        const warnings: string[] | undefined = truncated ? [TRUNCATION_WARNING] : undefined;
+
+        const data: ExecuteCommandData = { exitCode: code ?? 0, stdout, stderr, durationMs };
+        finish(makeSuccessEnvelope<ExecuteCommandData>("execute_command", data, {
+          truncated,
+          size: {
+            stdoutBytesReturned: stdoutBytes,
+            stderrBytesReturned: stderrBytes,
+            stdoutTruncated,
+            stderrTruncated,
+          },
+          warnings,
+        }));
       });
     });
   },
 };
-
-function failed(code: string, message: string): ToolResult {
-  return { ok: false, content: `[${code}] ${message}`, error: { code, message } };
-}
