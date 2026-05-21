@@ -44,4 +44,23 @@ describe("MCP tierkit.read_file envelope", () => {
     expect(r.ok).toBe(false);
     expect((r as any).error.code).toBe("ignored-path");
   });
+
+  // v0.17 Task 7.2 — when the file behind a cursor is deleted between issue
+  // and reuse, return stale-cursor (not not-found) so the caller knows to
+  // re-read from the beginning rather than treat the path as permanently
+  // missing. Mirrors the Agent-side change.
+  it("returns stale-cursor (not not-found) when file behind cursor was deleted", async () => {
+    await fs.writeFile(path.join(workspace, "del.ts"), makeBigFile(900));
+    const r1 = await readFileTool({ workspaceRoot: workspace, path: "del.ts" });
+    expect(r1.ok).toBe(true);
+    if (!r1.ok) return;
+    const env1 = r1 as any;
+    expect(env1.next.cursor).toBeDefined();
+
+    await fs.rm(path.join(workspace, "del.ts"));
+
+    const r2 = await readFileTool({ workspaceRoot: workspace, cursor: env1.next.cursor });
+    expect(r2.ok).toBe(false);
+    expect((r2 as any).error.code).toBe("stale-cursor");
+  });
 });

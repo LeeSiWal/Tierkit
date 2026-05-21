@@ -71,7 +71,10 @@ export async function readFileTool(input: ReadFileInput) {
       }
     } catch (err) {
       const e = err as NodeJS.ErrnoException;
-      if (e.code === "ENOENT") return makeFailureEnvelope(TOOL_NAME, "not-found", `${targetPath} does not exist`);
+      // v0.17: on the cursor branch ENOENT means the file was deleted AFTER
+      // the cursor was issued. Surface as stale-cursor (not not-found) so the
+      // caller knows to re-read from the beginning, mirroring Agent.readFile.
+      if (e.code === "ENOENT") return staleCursorEnvelope(TOOL_NAME, `${targetPath} was deleted since cursor was issued`);
       return makeFailureEnvelope(TOOL_NAME, "read-error", e.message);
     }
   } else {

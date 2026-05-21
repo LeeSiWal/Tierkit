@@ -110,6 +110,18 @@ describe("readFileTool envelope", () => {
     expect(r2.error.code).toBe("stale-cursor");
   });
 
+  it("returns stale-cursor (not not-found) when file behind cursor was deleted", async () => {
+    await fs.writeFile(path.join(workspace, "del.ts"), makeBigFile(900));
+    const r1 = JSON.parse((await readFileTool.execute({ path: "del.ts" }, ctx() as any)).content);
+    expect(r1.ok).toBe(true);
+
+    await fs.rm(path.join(workspace, "del.ts"));
+
+    const r2 = JSON.parse((await readFileTool.execute({ cursor: r1.next.cursor }, ctx() as any)).content);
+    expect(r2.ok).toBe(false);
+    expect(r2.error.code).toBe("stale-cursor");
+  });
+
   it("returns cursor-invalid on garbage cursor", async () => {
     await fs.writeFile(path.join(workspace, "x.ts"), "ok");
     const res = await readFileTool.execute({ cursor: "not-a-real-cursor" }, ctx() as any);

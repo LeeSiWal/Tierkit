@@ -88,8 +88,12 @@ export const readFileTool: Tool = {
         }
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
+        // v0.17: on the cursor branch ENOENT means the file was deleted AFTER
+        // the cursor was issued. That's a stale-cursor situation, not a
+        // genuine "file never existed" — the caller should re-read from the
+        // beginning rather than treat the path as missing.
         if (e.code === "ENOENT") {
-          return envelopeToString(makeFailureEnvelope("read_file", "not-found", `file does not exist: ${targetPath}`));
+          return envelopeToString(staleCursorEnvelope("read_file", `${targetPath} was deleted since cursor was issued`));
         }
         return envelopeToString(makeFailureEnvelope("read_file", "read-error", e.message));
       }
