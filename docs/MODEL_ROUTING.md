@@ -176,3 +176,57 @@ Pass `--reveal-env` to unmask (use only when debugging — the output goes to st
 - v0.5 — `tierkit route explain`, `tierkit models list/test`, `tierkit config show`. Provider clients for ollama/openai/openai-compatible/anthropic. Cost display. ✅
 - v0.6 — Budget enforcement; secret-redactor wired into outbound requests; dangerous-command runtime policy.
 - v1.0 — Live routing inside an integrated adapter (auto-route every model call, not just explain).
+
+---
+
+## v0.13 routing changes
+
+### v0.13 paymentModel ordering
+
+Within the same risk tier, `sortProfilesForTier` now sorts by `effectivePaymentModel(profile)`:
+
+| Rank | paymentModel | Typical profiles |
+|------|-------------|-----------------|
+| 0 | `free` | local-device profiles (Ollama, llama.cpp) |
+| 1 | `flat-rate` | subscription CLIs (Claude Code), rented flat endpoints |
+| 2 | `per-token` | API key cloud profiles (Anthropic, OpenAI, Google) |
+
+`goodAt` match becomes the secondary sort key; declaration order in the config is the final tie-break. Tier order itself (local → private-remote → public-cloud) is unchanged in `buildEscalationChain` — paymentModel ordering only applies within a single tier's candidate list.
+
+### v0.13 pinned-profile fail-loud
+
+**BREAKING in v0.13.** Pinned profiles (`model: "claudeCode"`, `model: "claudeSonnet"`, etc.) no longer silently fall back to local. The OpenAI-compatible endpoint runs viability up front and returns:
+
+| HTTP status | `error.type` | Meaning |
+|-------------|-------------|---------|
+| 404 | `invalid_request_error` | Profile id not declared in config |
+| 409 | `profile_disabled` | Profile id present in `disabledProfileIds` |
+| 502 | `profile_not_viable` | `checkProfileViability` returned `viable: false` |
+| 504 | `profile_timeout` | CLI subprocess timed out during viability check |
+
+The 502 error body includes `profileId`, `reason` (`cli-not-found` / `cli-healthcheck-failed` / `missing-api-key` / `ollama-unreachable` / `model-not-installed`), and a human-readable `message`.
+
+`model: "auto"` keeps the existing escalation chain with tail-fallback unchanged.
+
+### v0.13 subprocess viability
+
+For `transport.type === "subprocess"` profiles, viability spawns `command` with `healthCheckArgs` and checks:
+
+- `ENOENT` / `EACCES` → `cli-not-found` (binary not on PATH or not executable)
+- timeout (`min(1500ms, transport.timeoutMs)`) → `cli-healthcheck-failed`
+- non-zero exit code → `cli-healthcheck-failed`
+- exit 0 → viable (stdout content is ignored)
+
+### Worked example
+
+**Workspace:** `claudeCode` enabled, `claude` binary on PATH; `claudeSonnet` (per-token) also enabled.
+
+In **v0.12.3**, a `review` task would start at `localCoder` due to tail-fallback masking the broken-but-pinned path. In **v0.13**, the same workspace routes:
+
+```
+Tier: public-cloud candidates — sorted by paymentModel within tier
+  1. claudeCode  (flat-rate, rank 1) ← wins: claude viability passes (exit 0)
+  2. claudeSonnet (per-token, rank 2)
+```
+
+`claudeCode` is selected because flat-rate sorts before per-token. `localCoder` is never reached for a pinned request; a broken `claudeCode` now returns 502 immediately instead of silently degrading to local.

@@ -40,6 +40,7 @@ export async function doctor(input: DoctorInput = {}): Promise<DoctorResult> {
 
   checks.push(await checkNodeVersion());
   checks.push(await checkConfigFile(projectRoot));
+  checks.push(await checkPinnedNoFallbackNotice(projectRoot));
   checks.push(await checkRegistryFile(projectRoot));
   checks.push(await checkRegistryPluginPaths(projectRoot));
   checks.push(await checkSecurityPolicy(projectRoot));
@@ -89,6 +90,35 @@ async function checkConfigFile(projectRoot: string): Promise<DoctorCheck> {
       label: CONFIG_FILENAME,
       status: "fail",
       detail: (err as Error).message,
+    };
+  }
+}
+
+async function checkPinnedNoFallbackNotice(projectRoot: string): Promise<DoctorCheck> {
+  try {
+    const cfg = await loadConfig(projectRoot);
+    if (cfg.config.notices?.seenPinnedNoFallbackV013 === true) {
+      return {
+        id: "v013-pinned-no-fallback",
+        label: "v0.13 pinned-no-fallback notice acknowledged",
+        status: "ok",
+      };
+    }
+    return {
+      id: "v013-pinned-no-fallback",
+      label: "v0.13 pinned-no-fallback behavior change",
+      status: "warn",
+      detail:
+        `Tierkit v0.13 changed pinned-model behavior. Pinned profiles (model: "<id>") now ` +
+        `fail with a clear error instead of silently falling back to local. Use model: "auto" ` +
+        `for fallback routing. Dismiss this notice by opening the Tierkit GUI or setting ` +
+        `notices.seenPinnedNoFallbackV013: true in tierkit.config.json.`,
+    };
+  } catch {
+    return {
+      id: "v013-pinned-no-fallback",
+      label: "v0.13 pinned-no-fallback behavior change",
+      status: "ok",
     };
   }
 }

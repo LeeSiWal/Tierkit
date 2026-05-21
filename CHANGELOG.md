@@ -1,5 +1,62 @@
 # Changelog
 
+## 0.13.0 — UNRELEASED
+
+### BREAKING
+
+- **Pinned model profiles no longer silently fall back to local profiles.** A
+  pinned profile (`model: "<id>"` — anything other than `"auto"`) that fails
+  viability now returns HTTP 502 with
+  `{ error: { type: "profile_not_viable", profileId, reason, message } }`.
+  Use `model: "auto"` for fallback routing. Status mapping: 404 for unknown
+  profile, 409 for disabled profile, 502 for non-viable, 504 for
+  `cli-timeout`.
+
+### Added — Subscription CLI provider (Claude Code)
+
+- `claude-code` provider invokes the Claude Code CLI as a subprocess
+  (`claude -p --output-format json`). Multi-turn messages are serialized with
+  role-prefixed blocks. text-only completions for v0.13.0; tool-call bridging
+  deferred.
+- Bundled `claudeCode` profile (`defaultDisabled: true`). The new
+  `migrateSeedDefaultDisabled` adds it to `disabledProfileIds` on first
+  workspace load; once seeded, the migration never re-disables.
+- `ModelProfileSchema` additions: `transport` (discriminated-union, currently
+  one variant: subprocess), `displayName`, `defaultDisabled`. New
+  `SUBPROCESS_PROVIDERS` constant gates the schema and registry.
+- Within-tier `paymentModel` ordering (free → flat-rate → per-token) as the
+  primary sort key in `sortProfilesForTier`. Tier order is unchanged.
+- `ChatResult.usageSource: "provider-reported" | "estimated"` so consumers can
+  distinguish real provider counts from local estimates.
+- SSE stream degrade for subprocess providers — `stream: true` still gets a
+  valid OpenAI-compatible SSE response, with
+  `tierkit.warning: "stream-degraded-to-non-stream"` on the first and final
+  chunks. Routing order is NOT changed by `stream: true`.
+- `tierkit.profileId` / `usageSource` / optional `warning` envelope on
+  chat-completion responses (streaming + non-streaming).
+- `/v1/models/test` accepts `smoke: true` (probe + short chat) and
+  `ignoreDisabled: true`. Smoke results are recorded in `usage.jsonl` with
+  `type: "model-test"`.
+- `/v1/notices` endpoint for one-time GUI acknowledgements (PATCH-merge
+  semantics).
+- GUI: viability badge per profile row, Test button with confirm + result
+  panel, one-time v0.13 pinned-no-fallback banner, Recent Activity envelope
+  display (`≈` token prefix when estimated, ⚠ chip when stream-degraded,
+  `model-test` badge).
+- `tierkit doctor` now surfaces the v0.13 pinned-no-fallback behavior change
+  (warn until `notices.seenPinnedNoFallbackV013 === true`).
+- First-start daemon INFO log on the first v0.13.x boot per workspace.
+
+### Internal
+
+- `TierkitConfig.migrations.defaultDisabledSeededProfileIds` and
+  `notices.{seenPinnedNoFallbackV013, seenModelTestExplained}` markers so
+  one-shot behaviors run exactly once per workspace.
+- `LlmCallOk.usageSource` propagates from `ChatOk` through the executor for
+  downstream telemetry.
+
+---
+
 ## 0.12.3 — 2026-05-20
 
 ### Fixed — Model Profile State Unification

@@ -1229,6 +1229,19 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
             });
           }),
       });
+      // v0.13 BREAKING notice. Suppressed once the user dismisses the GUI banner
+      // or runs `tierkit doctor` (both POST `/v1/notices` to set the flag).
+      void (async () => {
+        try {
+          const cfg = await loadConfig(opts.cwd);
+          if (cfg.config.notices?.seenPinnedNoFallbackV013 !== true) {
+            // eslint-disable-next-line no-console
+            console.log(`[info] v0.13: pinned profiles no longer fall back to local. Use model:"auto" for fallback routing.`);
+          }
+        } catch {
+          // Config not yet present (first boot before init) — skip the notice silently.
+        }
+      })();
     });
   });
 }
