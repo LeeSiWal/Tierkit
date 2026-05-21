@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mergeEnv, runChild } from "../src/model/providers/runChild.js";
+import { mergeEnv, runChild, quoteForWindowsShell } from "../src/model/providers/runChild.js";
 
 // ── shell:true platform-gate tests (the core Track A.2 acceptance) ────────
 //
@@ -80,6 +80,62 @@ describe("runChild shell-gate by platform", () => {
     expect("C" in env).toBe(false);
     expect(env.D).toBe("ok");
     for (const v of Object.values(env)) expect(v).not.toBe("undefined");
+  });
+});
+
+describe("quoteForWindowsShell", () => {
+  it("passes through strings with no special chars", () => {
+    expect(quoteForWindowsShell("simple")).toBe("simple");
+    expect(quoteForWindowsShell("path/to/file")).toBe("path/to/file");
+    expect(quoteForWindowsShell("--version")).toBe("--version");
+  });
+
+  it("quotes strings with spaces", () => {
+    expect(quoteForWindowsShell("C:\\Program Files\\Node\\node.exe"))
+      .toBe('"C:\\Program Files\\Node\\node.exe"');
+  });
+
+  it("quotes strings with shell metachars (&, |, <, >, ^)", () => {
+    expect(quoteForWindowsShell("a&b")).toBe('"a&b"');
+    expect(quoteForWindowsShell("a|b")).toBe('"a|b"');
+    expect(quoteForWindowsShell("a^b")).toBe('"a^b"');
+    expect(quoteForWindowsShell("a<b")).toBe('"a<b"');
+    expect(quoteForWindowsShell("a>b")).toBe('"a>b"');
+  });
+
+  it("doubles embedded quotes (cmd.exe convention)", () => {
+    expect(quoteForWindowsShell('say "hi"')).toBe('"say ""hi"""');
+  });
+});
+
+describe("runChild — Windows quoting integration", () => {
+  beforeEach(() => {
+    (spawnMock as any).__active = true;
+    spawnMock.mockClear();
+  });
+  afterEach(() => {
+    (spawnMock as any).__active = false;
+    vi.unstubAllGlobals();
+  });
+
+  it("forwards quoted command + args to spawn on win32 when paths contain spaces", () => {
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    runChild("C:\\Program Files\\Node\\node.exe", ["--script", "C:\\Users\\me\\a b.js"], {});
+    expect(spawnMock).toHaveBeenCalledWith(
+      '"C:\\Program Files\\Node\\node.exe"',
+      ["--script", '"C:\\Users\\me\\a b.js"'],
+      expect.objectContaining({ shell: true }),
+    );
+  });
+
+  it("leaves plain command + args alone on win32 when no metachars are present", () => {
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    runChild("claude", ["--version"], {});
+    expect(spawnMock).toHaveBeenCalledWith(
+      "claude",
+      ["--version"],
+      expect.objectContaining({ shell: true }),
+    );
   });
 });
 

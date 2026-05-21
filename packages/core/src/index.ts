@@ -416,7 +416,7 @@ export {
   type ProbeFail,
 } from "./model/providers/index.js";
 
-export { runChild, mergeEnv, type RunChildOptions } from "./model/providers/runChild.js";
+export { runChild, mergeEnv, quoteForWindowsShell, type RunChildOptions } from "./model/providers/runChild.js";
 
 export {
   doctor,

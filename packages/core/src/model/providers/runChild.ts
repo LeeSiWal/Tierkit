@@ -10,6 +10,21 @@ export interface RunChildOptions extends Omit<SpawnOptions, "shell" | "env"> {
 }
 
 /**
+ * v0.17: cmd.exe-friendly quoting for Windows `shell:true` spawns. Quotes the
+ * string only when it contains a shell-meaningful character; embedded quotes
+ * are doubled per cmd.exe convention. Returns the input unchanged when no
+ * quoting is needed.
+ *
+ * Used internally by runChild() when process.platform === "win32" so paths
+ * like `C:\Program Files\Node\node.exe` survive the cmd.exe parse. macOS/Linux
+ * passthrough is unchanged (shell:false there, so no quoting is needed).
+ */
+export function quoteForWindowsShell(s: string): string {
+  if (!/[\s&|<>^"]/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+/**
  * Cross-platform child-process spawn used by Tierkit's subscription-CLI provider
  * and the model viability health probe.
  *
@@ -20,15 +35,24 @@ export interface RunChildOptions extends Omit<SpawnOptions, "shell" | "env"> {
  * spawn — adding `/bin/sh -c` there would change quoting/escaping for command
  * values we don't fully control (user config), introducing more risk than it
  * solves.
+ *
+ * v0.17: on Windows we additionally apply `quoteForWindowsShell` to the command
+ * and each argument so paths/values containing spaces (e.g.
+ * `C:\Program Files\Node\node.exe`) reach the resolved binary intact. The
+ * helper is a no-op for plain strings, so simple invocations like
+ * `runChild("claude", ["--version"])` are unaffected.
  */
 export function runChild(
   command: string,
   args: string[],
   opts: RunChildOptions = {},
 ): ChildProcess {
-  return spawn(command, args, {
+  const isWin = process.platform === "win32";
+  const cmd = isWin ? quoteForWindowsShell(command) : command;
+  const finalArgs = isWin ? args.map(quoteForWindowsShell) : args;
+  return spawn(cmd, finalArgs, {
     ...opts,
-    shell: process.platform === "win32",
+    shell: isWin,
     env: mergeEnv(process.env, opts.callerEnv),
   });
 }
