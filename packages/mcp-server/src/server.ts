@@ -7,6 +7,7 @@ import { codebaseSearchTool } from "./tools/codebaseSearch.js";
 import { proposePatchTool } from "./tools/proposePatch.js";
 import { applyPatchTool } from "./tools/applyPatch.js";
 import { runCommandTool } from "./tools/runCommand.js";
+import { getPolicyStatusTool } from "./tools/getPolicyStatus.js";
 import { countHits } from "./redactOutput.js";
 
 export interface CreateMcpServerOptions {
@@ -92,8 +93,10 @@ async function dispatchTool(
         command: typeof args.command === "string" ? args.command : "",
         timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
       });
-    case "tierkit.get_policy_status": return notImplemented(name);
-    default:                          return notImplemented(name);
+    case "tierkit.get_policy_status":
+      return getPolicyStatusTool({ workspaceRoot: ctx.workspaceRoot });
+    default:
+      return notImplemented(name);
   }
 }
 
