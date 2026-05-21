@@ -4219,12 +4219,27 @@ export const GUI_HTML = `<!doctype html>
           try {
             const r = await jpost('/v1/route/explain', { task: '프로젝트 전반을 보고 리뷰해줘' });
             if (trace) {
-              const chain = (r.chain || []).map((c) => escapeHtml(c.profileId || c.id || '?')).join(' → ');
-              const winner = (r.selected && r.selected.profileId) || (r.chain && r.chain[0] && r.chain[0].profileId) || '?';
-              const isGood = winner === 'claudeCode' || (r.selected && r.selected.viable);
+              const candidates = Array.isArray(r.candidates) ? r.candidates : [];
+              const winner = candidates.find((c) => c && c.selected);
+              const winnerId = winner ? (winner.id || '?') : '?';
+              // Render the chain with the selected one bolded and unviable ones dimmed.
+              const chainHtml = candidates.map((c) => {
+                const id = escapeHtml(c.id || '?');
+                if (c.selected) return '<strong>' + id + '</strong>';
+                if (!c.viable) return '<span style="opacity:0.5">' + id + '</span>';
+                return id;
+              }).join(' → ');
+              const isGood = !!winner && winner.viable;
+              const tail = winner
+                ? (winner.viable
+                    ? ' <span style="color:var(--accent)">✓</span>'
+                    : ' <span style="color:var(--warn)">⚠ ' + escapeHtml(winner.viabilityReason || 'not viable') + '</span>')
+                : ' <span style="color:var(--warn)">⚠ no viable candidate</span>';
               trace.innerHTML =
-                escapeHtml(i18n.onboardingTracePrefix) + ' ' + (chain || escapeHtml(winner)) +
-                ' <span style="color:' + (isGood ? 'var(--accent)' : 'var(--warn)') + '">' + (isGood ? '✓' : '⚠') + '</span>';
+                escapeHtml(i18n.onboardingTracePrefix) + ' ' +
+                (chainHtml || escapeHtml(winnerId)) +
+                tail;
+              void isGood;
             }
           } catch (err) {
             if (trace) trace.textContent = i18n.onboardingTracePrefix + ' ' + (err.message || String(err));

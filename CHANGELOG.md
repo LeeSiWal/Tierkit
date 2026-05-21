@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.14.1 — 2026-05-21
+
+### Fixed
+
+- **Onboarding "Quick check ▷" now renders the route trace correctly.** The
+  GUI was reading `r.chain` and `r.selected.profileId` from
+  `/v1/route/explain` but the endpoint returns `r.candidates[]` with a
+  `selected: boolean` on each row. Result: every trace rendered as `? ⚠`.
+  The Quick check now bolds the selected candidate, dims unviable ones,
+  and shows the viability reason inline.
+
 ## 0.14.0 — 2026-05-21
 
 ### Added — Zero-CLI onboarding
