@@ -192,3 +192,59 @@ describe("SubscriptionCliProvider.chat", () => {
     expect(r.usageSource).toBe("estimated");
   });
 });
+
+describe("SubscriptionCliProvider — guards", () => {
+  it("chat returns not-implemented when transport is absent", async () => {
+    const p = {
+      kind: "private-remote",
+      provider: "claude-code",
+      model: "auto",
+      paymentModel: "flat-rate",
+      requiresApproval: true,
+      roles: [],
+    } as ModelProfile;
+    const r = await new EchoProvider().chat(p, {
+      messages: [{ role: "user", content: "hi" }],
+    }, {});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.code).toBe("not-implemented");
+  });
+});
+
+describe("SubscriptionCliProvider.stream", () => {
+  it("emits start → delta → usage → end on success", async () => {
+    const f = await writeFake("stream-ok", `
+      let buf=""; process.stdin.on("data", d=>buf+=d);
+      process.stdin.on("end", () => {
+        process.stdout.write(JSON.stringify({ result: "hello", input: 3, output: 2 }));
+      });
+    `);
+    const events: any[] = [];
+    for await (const e of new EchoProvider().stream(profileFor(f), {
+      messages: [{ role: "user", content: "hi" }],
+    }, {})) {
+      events.push(e);
+    }
+    expect(events.map((e) => e.type)).toEqual(["start", "delta", "usage", "end"]);
+    expect(events[1].text).toBe("hello");
+    expect(events[2].inputTokens).toBe(3);
+    expect(events[2].outputTokens).toBe(2);
+  });
+
+  it("emits start → error when chat fails", async () => {
+    const f = await writeFake("stream-fail", `
+      process.stderr.write("nope"); process.exit(1);
+    `);
+    const events: any[] = [];
+    for await (const e of new EchoProvider().stream(profileFor(f), {
+      messages: [{ role: "user", content: "hi" }],
+    }, {})) {
+      events.push(e);
+    }
+    const types = events.map((e) => e.type);
+    expect(types[0]).toBe("start");
+    expect(types[types.length - 1]).toBe("error");
+    const err = events[events.length - 1];
+    expect(err.code).toBe("cli-exit-nonzero");
+  });
+});

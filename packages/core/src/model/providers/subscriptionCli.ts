@@ -32,6 +32,8 @@ function runSubprocess(command: string, args: string[], opts: SpawnOptions): Pro
   return new Promise((resolve) => {
     let stdout = "";
     let stderr = "";
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
     let stdoutTruncated = false;
     let stderrTruncated = false;
     let timedOut = false;
@@ -52,24 +54,28 @@ function runSubprocess(command: string, args: string[], opts: SpawnOptions): Pro
     }
 
     child.stdout!.on("data", (chunk: Buffer) => {
-      if (stdout.length >= opts.maxStdoutBytes) { stdoutTruncated = true; return; }
-      const remaining = opts.maxStdoutBytes - stdout.length;
+      if (stdoutBytes >= opts.maxStdoutBytes) { stdoutTruncated = true; return; }
+      const remaining = opts.maxStdoutBytes - stdoutBytes;
       if (chunk.length > remaining) {
         stdout += chunk.toString("utf8", 0, remaining);
+        stdoutBytes += remaining;
         stdoutTruncated = true;
         try { child.kill("SIGKILL"); } catch { /* */ }
       } else {
         stdout += chunk.toString("utf8");
+        stdoutBytes += chunk.length;
       }
     });
     child.stderr!.on("data", (chunk: Buffer) => {
-      if (stderr.length >= opts.maxStderrBytes) { stderrTruncated = true; return; }
-      const remaining = opts.maxStderrBytes - stderr.length;
+      if (stderrBytes >= opts.maxStderrBytes) { stderrTruncated = true; return; }
+      const remaining = opts.maxStderrBytes - stderrBytes;
       if (chunk.length > remaining) {
         stderr += chunk.toString("utf8", 0, remaining);
+        stderrBytes += remaining;
         stderrTruncated = true;
       } else {
         stderr += chunk.toString("utf8");
+        stderrBytes += chunk.length;
       }
     });
 
