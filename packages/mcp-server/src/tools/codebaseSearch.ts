@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
 import path from "node:path";
 import { resolveUnderWorkspace } from "../workspaceBoundary.js";
 import { loadIgnoreSources, isIgnored } from "../ignoreSources.js";
@@ -26,24 +25,18 @@ export type CodebaseSearchResult =
 const DEFAULT_MAX_MATCHES = 100;
 
 export async function codebaseSearchTool(input: CodebaseSearchInput): Promise<CodebaseSearchResult> {
-  let root: string;
+  // Resolve the workspace root through symlinks (macOS /var→/private/var) so
+  // path.relative() produces clean relative paths. resolveUnderWorkspace(".", .)
+  // returns the resolved root.
+  let resolvedRoot: string;
   try {
-    root = resolveUnderWorkspace(input.workspaceRoot, ".");
+    resolvedRoot = resolveUnderWorkspace(input.workspaceRoot, ".");
   } catch (err) {
     return { ok: false, code: "outside-workspace", message: String((err as Error).message) };
   }
 
   if (!input.query || input.query.length === 0) {
     return { ok: false, code: "invalid-query", message: "query is empty" };
-  }
-
-  // Resolve the workspace root through symlinks (macOS /var→/private/var) so
-  // path.relative() produces clean relative paths.
-  let resolvedRoot: string;
-  try {
-    resolvedRoot = fsSync.realpathSync(input.workspaceRoot);
-  } catch {
-    resolvedRoot = path.resolve(input.workspaceRoot);
   }
 
   const sources = await loadIgnoreSources(input.workspaceRoot);
@@ -81,6 +74,6 @@ export async function codebaseSearchTool(input: CodebaseSearchInput): Promise<Co
     }
   }
 
-  await walk(root);
+  await walk(resolvedRoot);
   return { ok: true, matches, truncated };
 }

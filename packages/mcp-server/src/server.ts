@@ -90,7 +90,7 @@ async function dispatchTool(
 function summarizeInput(name: ToolName, args: Record<string, unknown>): unknown {
   switch (name) {
     case "tierkit.read_file":         return { path: pathBasename(args.path), encoding: args.encoding ?? "utf8" };
-    case "tierkit.list_files":        return { patternLength: stringLen(args.pattern), hasGlob: Boolean(args.pattern) };
+    case "tierkit.list_files":        return { path: pathBasename(args.path), recursive: Boolean(args.recursive) };
     case "tierkit.codebase_search":   return { queryLength: stringLen(args.query) };
     case "tierkit.propose_patch":     return { fileCount: Array.isArray(args.files) ? args.files.length : 0 };
     case "tierkit.apply_patch":       return { patchId: args.patchId };

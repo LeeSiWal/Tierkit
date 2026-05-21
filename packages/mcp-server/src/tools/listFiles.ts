@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
 import path from "node:path";
 import { resolveUnderWorkspace } from "../workspaceBoundary.js";
 import { loadIgnoreSources, isIgnored } from "../ignoreSources.js";
@@ -21,13 +20,14 @@ export type ListFilesResult =
   | { ok: false; code: string; message: string };
 
 export async function listFilesTool(input: ListFilesInput): Promise<ListFilesResult> {
-  // Resolve the workspace root through symlinks (macOS /var→/private/var) so
-  // path.relative() produces clean relative paths from the same base.
+  // Resolve to the workspace root and target path through symlinks.
+  // resolveUnderWorkspace already calls fs.realpathSync, so we can extract
+  // the resolved root from resolving "." to the canonical workspace base.
   let resolvedRoot: string;
   try {
-    resolvedRoot = fsSync.realpathSync(input.workspaceRoot);
-  } catch {
-    resolvedRoot = path.resolve(input.workspaceRoot);
+    resolvedRoot = resolveUnderWorkspace(input.workspaceRoot, ".");
+  } catch (err) {
+    return { ok: false, code: "outside-workspace", message: String((err as Error).message) };
   }
 
   let absPath: string;

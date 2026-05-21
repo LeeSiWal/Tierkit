@@ -1,5 +1,4 @@
 import fs from "node:fs/promises";
-import fsSync from "node:fs";
 import path from "node:path";
 import { resolveUnderWorkspace } from "../workspaceBoundary.js";
 import { isDenied } from "../pathDenylist.js";
@@ -30,9 +29,9 @@ export async function readFileTool(input: ReadFileInput): Promise<ReadFileResult
   // path.relative() produces clean relative paths from the same base.
   let resolvedRoot: string;
   try {
-    resolvedRoot = fsSync.realpathSync(input.workspaceRoot);
-  } catch {
-    resolvedRoot = path.resolve(input.workspaceRoot);
+    resolvedRoot = resolveUnderWorkspace(input.workspaceRoot, ".");
+  } catch (err) {
+    return { ok: false, code: "outside-workspace", message: String((err as Error).message) };
   }
 
   let absPath: string;
