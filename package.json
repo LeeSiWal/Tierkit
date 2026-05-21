@@ -1,7 +1,7 @@
 {
   "name": "tierkit",
   "private": true,
-  "version": "0.12.3",
+  "version": "0.13.0",
   "description": "Local-first cost optimizer and token firewall for AI coding CLIs.",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",
@@ -13,7 +13,8 @@
     "test": "pnpm -r --filter=./packages/* run test",
     "lint": "pnpm -r --filter=./packages/* run lint",
     "typecheck": "pnpm -r --filter=./packages/* run typecheck",
-    "clean": "pnpm -r --filter=./packages/* run clean"
+    "clean": "pnpm -r --filter=./packages/* run clean",
+    "bump": "node scripts/bump-version.mjs"
   },
   "devDependencies": {
     "typescript": "^5.5.4",

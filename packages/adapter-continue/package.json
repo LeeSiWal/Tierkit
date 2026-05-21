@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/adapter-continue",
-  "version": "0.12.3",
+  "version": "0.13.0",
   "description": "Tierkit integration for Continue. Routes Continue's model calls through Tierkit's cost layer or exports policy as `.continue/{config.yaml, rules, prompts}`.",
   "license": "MIT",
   "type": "module",
