@@ -2239,8 +2239,101 @@ export const GUI_HTML = `<!doctype html>
       '</div>',
     ].join('\\n');
   }
-  function renderListFilesEnvelope(env)    { return renderEnvelopeSuccessGeneric(env); }
-  function renderSearchFilesEnvelope(env)  { return renderEnvelopeSuccessGeneric(env); }
+  function renderListFilesEnvelope(env) {
+    const icon = iconForTool(env.tool);
+    const data = env.data || {};
+    const size = env.size || {};
+    const entries = Array.isArray(data.entries) ? data.entries : [];
+
+    const headerBadges = [];
+    if (env.truncated) {
+      const total = (size.totalLines != null) ? size.totalLines : '?';
+      headerBadges.push('<span class="env-badge badge-truncated">' + entries.length + ' of ' + escapeHtml(String(total)) + ' entries</span>');
+    } else {
+      headerBadges.push('<span class="env-badge badge-ok">' + entries.length + ' entries</span>');
+    }
+
+    const treeHtml = entries.map((e) => {
+      const isDir = e.kind === 'dir';
+      const ico = isDir ? '📁' : '📄';
+      const name = e.relPath != null ? e.relPath : (e.name != null ? e.name : '?');
+      return ico + ' ' + escapeHtml(String(name)) + (isDir ? '/' : '');
+    }).join('\\n');
+
+    const footer = (env.next && env.next.cursor)
+      ? '<div class="env-footer">Next: list_files(cursor=' + escapeHtml(String(env.next.cursor).slice(0, 8)) + '…) ' +
+        '<button class="copy-cursor-btn" data-cursor="' + escapeHtml(env.next.cursor) + '">Copy cursor</button></div>'
+      : '';
+
+    return [
+      '<div class="env-card">',
+      '  <div class="env-header">' + icon + ' <strong>list_files</strong>' +
+        ' · <span class="env-key-arg">' + escapeHtml(String(data.path == null ? '?' : data.path)) + '</span> ' +
+        headerBadges.join(' ') +
+      '</div>',
+      '  <pre class="env-body env-tree">' + treeHtml + '</pre>',
+      footer,
+      '</div>',
+    ].join('\\n');
+  }
+
+  function renderSearchFilesEnvelope(env) {
+    const icon = iconForTool(env.tool);
+    const data = env.data || {};
+    const matches = Array.isArray(data.matches) ? data.matches : [];
+
+    const headerBadges = [];
+    if (env.truncated) {
+      const total = (env.size && env.size.totalLines != null) ? env.size.totalLines : '?';
+      headerBadges.push('<span class="env-badge badge-truncated">' + matches.length + ' of ' + escapeHtml(String(total)) + ' matches</span>');
+    } else {
+      headerBadges.push('<span class="env-badge badge-ok">' + matches.length + ' matches</span>');
+    }
+    if (env.warnings && env.warnings.length > 0) {
+      headerBadges.push('<span class="env-badge badge-warn">⚠</span>');
+    }
+
+    const query = String(data.pattern == null ? (data.query == null ? '' : data.query) : data.pattern);
+    let queryRe = null;
+    try {
+      if (query) queryRe = new RegExp(escapeRegex(query), 'gi');
+    } catch { queryRe = null; }
+    const highlight = (text) => {
+      const escaped = escapeHtml(text);
+      return queryRe ? escaped.replace(queryRe, (m) => '<mark>' + m + '</mark>') : escaped;
+    };
+
+    const matchesHtml = matches.map((m) => {
+      const lineNo = String(m.line == null ? '?' : m.line).padStart(4, ' ');
+      return [
+        '<div class="env-match">',
+        '  <div class="env-match-path">' + escapeHtml(String(m.path == null ? '?' : m.path)) + ':' + escapeHtml(String(m.line == null ? '?' : m.line)) + '</div>',
+        '  <pre class="env-code">' + lineNo + '  ' + highlight(String(m.snippet == null ? '' : m.snippet)) + '</pre>',
+        '</div>',
+      ].join('\\n');
+    }).join('\\n');
+
+    const footer = (env.next && env.next.cursor)
+      ? '<div class="env-footer">Next: search_files(cursor=' + escapeHtml(String(env.next.cursor).slice(0, 8)) + '…) ' +
+        '<button class="copy-cursor-btn" data-cursor="' + escapeHtml(env.next.cursor) + '">Copy cursor</button></div>'
+      : '';
+
+    const warnings = env.warnings
+      ? env.warnings.map((w) => '<div class="env-warning">⚠ ' + escapeHtml(String(w)) + '</div>').join('\\n')
+      : '';
+
+    return [
+      '<div class="env-card">',
+      '  <div class="env-header">' + icon + ' <strong>' + escapeHtml(String(env.tool || '?')) + '</strong>' +
+        ' · <span class="env-key-arg">"' + escapeHtml(query) + '"</span> ' +
+        headerBadges.join(' ') +
+      '</div>',
+      '  <div class="env-body">' + matchesHtml + '</div>',
+      warnings,
+      footer,
+      '</div>',
+    ].join('\\n');
+  }
 
   function renderRunCommandEnvelope(env) {
     const icon = iconForTool(env.tool);
