@@ -38,7 +38,7 @@ const SubprocessTransportSchema = z.object({
   healthCheckArgs: z.array(z.string()).default(["--version"]),
   timeoutMs: z.number().int().positive().default(120_000),
   maxStdoutBytes: z.number().int().positive().default(2_000_000),
-  maxStderrBytes: z.number().int().positive().default(524_288),
+  maxStderrBytes: z.number().int().positive().default(524_288),  // 512 KiB
 }).strict();
 
 export const TransportSchema = z.discriminatedUnion("type", [SubprocessTransportSchema]);

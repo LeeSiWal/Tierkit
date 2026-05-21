@@ -36,6 +36,29 @@ describe("ModelProfileSchema — transport", () => {
     expect(r.success).toBe(false);
   });
 
+  it("accepts a valid subprocess transport with codex-cli provider", () => {
+    const r = ModelProfileSchema.safeParse({
+      kind: "private-remote",
+      provider: "codex-cli",
+      model: "auto",
+      paymentModel: "flat-rate",
+      requiresApproval: true,
+      transport: { type: "subprocess", command: "codex" },
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects provider=codex-cli without transport", () => {
+    const r = ModelProfileSchema.safeParse({
+      kind: "private-remote",
+      provider: "codex-cli",
+      model: "auto",
+      paymentModel: "flat-rate",
+      requiresApproval: true,
+    });
+    expect(r.success).toBe(false);
+  });
+
   it("exposes SUBPROCESS_PROVIDERS as a readonly tuple", () => {
     expect(SUBPROCESS_PROVIDERS).toContain("claude-code");
     expect(SUBPROCESS_PROVIDERS).toContain("codex-cli");
