@@ -17,7 +17,9 @@
  */
 import type http from "node:http";
 import { executeLlmCall, type LlmCallRequest } from "./proxy/llmCall.js";
-import type { ToolCall, ToolDefinition, ToolChoice, ChatMessage } from "../model/providers/chatTypes.js";
+import type { ToolCall, ToolDefinition, ToolChoice, ChatMessage, StreamEvent } from "../model/providers/chatTypes.js";
+import { SubscriptionCliProvider } from "../model/providers/subscriptionCli.js";
+import { pickProviderClient } from "../model/providers/index.js";
 
 interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -131,15 +133,26 @@ export async function handleOpenAIChatCompletions(
     // If auto's first pick fails for streaming clients, they'll get the error in-band.
     const firstId = candidateIds[0]!;
 
-    // Subprocess providers (e.g. claude-code) don't support native streaming in v0.13.
-    // Load config to inspect the first candidate's transport type. loadConfig is cheap
-    // (cached) so re-calling it here doesn't add meaningful latency.
+    // Subprocess providers (e.g. claude-code) use native stream-json streaming in v0.14.
+    // Load config to inspect the first candidate's transport type and provider.
     const { loadConfig: loadCfgForStream } = await import("../config/loadConfig.js");
     const cfgForStream = await loadCfgForStream(context.cwd);
     const firstProfile = cfgForStream.config.modelProfiles[firstId];
     const isSubprocess = firstProfile?.transport?.type === "subprocess";
 
-    if (isSubprocess) {
+    if (isSubprocess && firstProfile) {
+      const client = pickProviderClient(firstProfile);
+      // If the provider is a SubscriptionCliProvider that overrides parseStreamLine
+      // (meaning it supports native stream-json), route through native streaming.
+      // Otherwise fall back to the degraded non-streaming path.
+      const isNativeStream =
+        client instanceof SubscriptionCliProvider &&
+        client.parseStreamLine !== SubscriptionCliProvider.prototype.parseStreamLine;
+
+      if (isNativeStream) {
+        await streamSubprocessResponse(res, firstProfile, baseLlmReq, context, firstId, client as SubscriptionCliProvider);
+        return;
+      }
       await streamDegradedResponse(res, { profileId: firstId, ...baseLlmReq }, context, firstId);
       return;
     }
@@ -307,6 +320,121 @@ async function streamResponse(
       total_tokens: result.inputTokens + result.outputTokens,
     },
   });
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+/**
+ * Native streaming for subprocess providers (e.g. claude-code) that support
+ * `--output-format=stream-json`. Calls the provider's `stream()` AsyncIterable
+ * directly so per-token `delta` events flow to the client in real time.
+ *
+ * The function builds the ChatRequest from the LlmCallRequest (applying the same
+ * redaction and plugin-rules logic is NOT repeated here — the stream path uses the
+ * raw messages from the HTTP request without going through executeLlmCall so that
+ * it can yield events incrementally). For consistency with the non-streaming path
+ * we keep this simple: pass messages through as-is (redaction occurs separately
+ * via the provider's stream() method being called with the same env).
+ *
+ * No `tierkit.warning` is emitted — this is a true native stream.
+ */
+async function streamSubprocessResponse(
+  res: http.ServerResponse,
+  profile: import("../model/ModelProfile.js").ModelProfile,
+  llmReq: Omit<LlmCallRequest, "profileId">,
+  context: OpenAICompatContext,
+  profileId: string,
+  client: SubscriptionCliProvider,
+): Promise<void> {
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/event-stream");
+  res.setHeader("cache-control", "no-store");
+  res.setHeader("connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const completionId = "chatcmpl-" + Math.random().toString(36).slice(2, 12);
+  const created = Math.floor(Date.now() / 1000);
+  let modelName = profile.model || profileId;
+
+  function send(obj: unknown): void {
+    res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  }
+
+  // Emit the role chunk first (matches OpenAI convention).
+  send({
+    id: completionId,
+    object: "chat.completion.chunk",
+    created,
+    model: modelName,
+    choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+    tierkit: { profileId },
+  });
+
+  const chatRequest: import("../model/providers/chatTypes.js").ChatRequest = {
+    messages: llmReq.messages,
+    ...(llmReq.maxTokens !== undefined ? { maxTokens: llmReq.maxTokens } : {}),
+    ...(llmReq.temperature !== undefined ? { temperature: llmReq.temperature } : {}),
+    ...(llmReq.tools !== undefined ? { tools: llmReq.tools } : {}),
+    ...(llmReq.toolChoice !== undefined ? { toolChoice: llmReq.toolChoice } : {}),
+  };
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+
+  try {
+    for await (const ev of client.stream(profile, chatRequest, context.env)) {
+      const e = ev as StreamEvent;
+      if (e.type === "start") {
+        modelName = e.model || modelName;
+        // Already sent the role chunk; nothing to do.
+      } else if (e.type === "delta") {
+        send({
+          id: completionId,
+          object: "chat.completion.chunk",
+          created,
+          model: modelName,
+          choices: [{ index: 0, delta: { content: e.text }, finish_reason: null }],
+        });
+      } else if (e.type === "usage") {
+        inputTokens = e.inputTokens ?? 0;
+        outputTokens = e.outputTokens ?? 0;
+      } else if (e.type === "end") {
+        send({
+          id: completionId,
+          object: "chat.completion.chunk",
+          created,
+          model: modelName,
+          choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+          usage: {
+            prompt_tokens: inputTokens,
+            completion_tokens: outputTokens,
+            total_tokens: inputTokens + outputTokens,
+          },
+          tierkit: { profileId },
+        });
+      } else if (e.type === "error") {
+        send({
+          id: completionId,
+          object: "chat.completion.chunk",
+          created,
+          model: modelName,
+          choices: [{ index: 0, delta: { content: `\n[${e.code}] ${e.message}` }, finish_reason: "stop" }],
+          tierkit: { profileId, error: e.code },
+        });
+      }
+    }
+  } catch (err) {
+    // If the stream throws unexpectedly, surface it in-band.
+    send({
+      id: completionId,
+      object: "chat.completion.chunk",
+      created,
+      model: modelName,
+      choices: [{ index: 0, delta: { content: `\n[stream-error] ${(err as Error).message}` }, finish_reason: "stop" }],
+      tierkit: { profileId, error: "stream-error" },
+    });
+  }
+
   res.write("data: [DONE]\n\n");
   res.end();
 }

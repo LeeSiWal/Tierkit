@@ -1,3 +1,15 @@
+/**
+ * v0.14 stream-subprocess tests.
+ *
+ * Before v0.14: subprocess providers (claude-code) were always routed through
+ * streamDegradedResponse(), which collected the full response and emitted it
+ * with a `tierkit.warning: "stream-degraded-to-non-stream"` field.
+ *
+ * v0.14: ClaudeCodeProvider overrides parseStreamLine() so it now routes through
+ * streamSubprocessResponse() — real per-token SSE with NO warning.
+ * The degrade path is still available for future SubscriptionCliProvider subclasses
+ * that do NOT override parseStreamLine().
+ */
 import { describe, it, expect, afterEach, beforeAll } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -36,7 +48,7 @@ async function readSse(body: ReadableStream<Uint8Array>): Promise<any[]> {
   return events;
 }
 
-describe("openaiCompat — subprocess stream degrade", () => {
+describe("openaiCompat — subprocess native stream (v0.14)", () => {
   let root: string;
   let server: RunningServer | undefined;
 
@@ -46,18 +58,20 @@ describe("openaiCompat — subprocess stream degrade", () => {
     if (root) await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("emits SSE with tierkit.warning when the selected profile is subprocess", async () => {
-    const script = await fakeClaude("ok", `
+  it("emits SSE with NO tierkit.warning when ClaudeCodeProvider uses stream-json format", async () => {
+    // Fake CLI emits stream-json lines (what claude --output-format=stream-json produces)
+    const script = await fakeClaude("stream-native", `
       let buf=""; process.stdin.on("data", d=>buf+=d);
       process.stdin.on("end", () => {
-        process.stdout.write(JSON.stringify({
-          type:"result", result:"hello from fake claude",
-          usage:{input_tokens:5, output_tokens:5}
-        }));
+        process.stdout.write(JSON.stringify({type:"system", subtype:"init"}) + "\\n");
+        process.stdout.write(JSON.stringify({type:"assistant", message:{content:[{type:"text", text:"hello"}]}}) + "\\n");
+        process.stdout.write(JSON.stringify({type:"assistant", message:{content:[{type:"text", text:" world"}]}}) + "\\n");
+        process.stdout.write(JSON.stringify({type:"result", subtype:"success", result:"hello world",
+          usage:{input_tokens:5, output_tokens:5}}) + "\\n");
       });
     `);
 
-    root = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-streamdeg-"));
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-native-stream-"));
     await fs.mkdir(path.join(root, ".tierkit"), { recursive: true });
     await fs.writeFile(path.join(root, ".tierkit", "plugins.json"),
       JSON.stringify({ version: "0.1", plugins: [] }));
@@ -70,7 +84,8 @@ describe("openaiCompat — subprocess stream degrade", () => {
           transport: {
             type: "subprocess",
             command: process.execPath,
-            args: [script],
+            // streamArgs() will replace --output-format json with stream-json --verbose
+            args: [script, "--output-format", "json"],
             healthCheckArgs: ["-e", "process.exit(0)"],
             timeoutMs: 5_000, maxStdoutBytes: 100_000, maxStderrBytes: 50_000,
           },
@@ -92,11 +107,73 @@ describe("openaiCompat — subprocess stream degrade", () => {
     const events = await readSse(res.body!);
     expect(events.length).toBeGreaterThan(0);
 
-    const first = events[0];
-    const last = events[events.length - 1];
-    expect(first.tierkit?.warning).toBe("stream-degraded-to-non-stream");
-    expect(first.tierkit?.profileId).toBe("claudeCode");
-    expect(last.tierkit?.warning).toBe("stream-degraded-to-non-stream");
+    // NO warning should be present — this is native streaming
+    for (const ev of events) {
+      expect(ev.tierkit?.warning).not.toBe("stream-degraded-to-non-stream");
+    }
+
+    // Should have multiple delta events with text content
+    const textChunks = events.map((e) => e.choices?.[0]?.delta?.content ?? "").filter(Boolean);
+    expect(textChunks.length).toBeGreaterThanOrEqual(2);
+
+    const fullText = events.map((e) => e.choices?.[0]?.delta?.content ?? "").join("");
+    expect(fullText).toContain("hello");
+    expect(fullText).toContain("world");
+  });
+
+  it("emits SSE with NO warning even when script outputs non-streaming JSON (graceful degrade)", async () => {
+    // Script outputs plain JSON (as with --output-format=json). parseStreamLine returns
+    // undefined for all lines (they're not stream-json events). The stream() impl falls
+    // back to emitting the full parsed content as a single delta — still NO warning.
+    const script = await fakeClaude("non-stream-json", `
+      let buf=""; process.stdin.on("data", d=>buf+=d);
+      process.stdin.on("end", () => {
+        process.stdout.write(JSON.stringify({
+          type:"result", result:"hello from fake claude",
+          usage:{input_tokens:5, output_tokens:5}
+        }));
+      });
+    `);
+
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-nostream-cwd-"));
+    await fs.mkdir(path.join(root, ".tierkit"), { recursive: true });
+    await fs.writeFile(path.join(root, ".tierkit", "plugins.json"),
+      JSON.stringify({ version: "0.1", plugins: [] }));
+    await fs.writeFile(path.join(root, "tierkit.config.json"), JSON.stringify({
+      version: "0.1",
+      modelProfiles: {
+        claudeCode: {
+          kind: "private-remote", provider: "claude-code", model: "auto", paymentModel: "flat-rate",
+          requiresApproval: true,
+          transport: {
+            type: "subprocess",
+            command: process.execPath,
+            args: [script, "--output-format", "json"],
+            healthCheckArgs: ["-e", "process.exit(0)"],
+            timeoutMs: 5_000, maxStdoutBytes: 100_000, maxStderrBytes: 50_000,
+          },
+        },
+      },
+    }));
+    server = await startServer({ cwd: root, host: "127.0.0.1", port: 0, env: {} });
+
+    const res = await fetch(`http://127.0.0.1:${server.port}/v1/openai/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "claudeCode",
+        stream: true,
+        messages: [{ role: "user", content: "hi" }],
+      }),
+    });
+    expect(res.headers.get("content-type")).toMatch(/text\/event-stream/);
+    const events = await readSse(res.body!);
+    expect(events.length).toBeGreaterThan(0);
+
+    // Still NO warning — ClaudeCodeProvider handles this via graceful fallback in stream()
+    for (const ev of events) {
+      expect(ev.tierkit?.warning).not.toBe("stream-degraded-to-non-stream");
+    }
 
     const text = events.map((e) => e.choices?.[0]?.delta?.content ?? "").join("");
     expect(text).toContain("hello from fake claude");
