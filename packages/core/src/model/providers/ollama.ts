@@ -282,6 +282,7 @@ export class OllamaClient implements ProviderClient {
           inputTokens: parsed.prompt_eval_count ?? 0,
           outputTokens: parsed.eval_count ?? 0,
         },
+        usageSource: "provider-reported",
         latencyMs,
         model: profile.model,
         ...(toolCalls ? { toolCalls, finishReason: "tool_calls" as const } : {}),

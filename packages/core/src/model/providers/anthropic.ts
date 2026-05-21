@@ -306,6 +306,7 @@ export class AnthropicClient implements ProviderClient {
           inputTokens: parsed.usage?.input_tokens ?? 0,
           outputTokens: parsed.usage?.output_tokens ?? 0,
         },
+        usageSource: "provider-reported",
         latencyMs,
         model: profile.model,
         ...(toolCalls.length > 0 ? { toolCalls } : {}),

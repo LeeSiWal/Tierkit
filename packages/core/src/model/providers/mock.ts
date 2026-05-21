@@ -79,6 +79,7 @@ export class MockModelClient implements ProviderClient {
         inputTokens: this.opts.inputTokens ?? 0,
         outputTokens: this.opts.outputTokens ?? text.length,
       },
+      usageSource: "provider-reported",
       latencyMs: this.opts.latencyMs ?? 0,
       model: profile.model,
       ...(toolCalls.length > 0 ? { toolCalls, finishReason: "tool_calls" as const } : {}),

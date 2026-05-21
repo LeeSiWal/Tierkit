@@ -239,6 +239,7 @@ export class OpenAICompatibleClient implements ProviderClient {
           inputTokens: parsed.usage?.prompt_tokens ?? 0,
           outputTokens: parsed.usage?.completion_tokens ?? 0,
         },
+        usageSource: "provider-reported",
         latencyMs,
         model: profile.model,
         ...(toolCalls && toolCalls.length > 0 ? { toolCalls } : {}),
