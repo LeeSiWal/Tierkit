@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.14.0 — 2026-05-21
+
+### Added — Zero-CLI onboarding
+
+- **Onboarding checklist card** (top of Settings tab, dismissable). Detects
+  Ollama running + model count, `claude` CLI on PATH, `claudeCode` enable
+  state, API keys (env vars + secrets store), Roo/Cline/Continue install
+  state. Each row has an actionable button: enable claudeCode in one click,
+  open the secrets form pre-filled with the missing key name, run a "Quick
+  check ▷" that calls `/v1/route/explain` and shows the resulting trace
+  inline. Dismissed via `notices.seenOnboarding`.
+- **Inline profile editor.** Each row in the Model Profiles card gets a
+  `[⋯]` expand button that reveals a chip-based editor for `roles`,
+  `goodAt`, `notGoodAt`. `goodAt`/`notGoodAt` chips autocomplete from the
+  `TASK_TYPES` set returned by `GET /v1/environment`. Saves via the
+  extended `PATCH /v1/config/profile/:id`. Workspace-scope rows get a
+  "Reset to bundled" button (calls `DELETE /v1/config/profile/:id?scope=workspace`).
+  No more jq surgery to add `notGoodAt` or swap kinds.
+- **Secrets form** (new Settings card). Add / edit / remove API keys for
+  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY (and any custom name).
+  Persists to `.tierkit/secrets.json` via the existing
+  `GET/POST/DELETE /v1/secrets` endpoints. Values are masked end-to-end —
+  the GET endpoint already returns `{ masked, set }` only, never the
+  plaintext.
+- **Chat tab promoted** as the default on first activation per workspace.
+  Once onboarding is dismissed, the previously-active tab is respected as
+  before.
+- **`GET /v1/environment`** HTTP endpoint. Returns `{ ollama, claudeCli,
+  envVars, taskTypes }` for any GUI / external diagnostic to read
+  environment readiness without probing each provider individually.
+
+### Added — Native streaming for subscription CLIs
+
+- **`SubscriptionCliProvider.stream()` now streams token-by-token natively
+  when the subclass overrides `streamArgs()` + `parseStreamLine()`.** Replaces
+  the v0.13.x degrade-to-single-delta behavior. The base class still falls
+  back to single-delta + `tierkit.warning: "stream-degraded-to-non-stream"`
+  for subclasses that don't override (forward compat for Codex CLI etc.).
+- **`ClaudeCodeProvider`** overrides both new methods. `streamArgs()`
+  rewrites the profile's args to `--output-format stream-json --verbose`.
+  `parseStreamLine()` parses Claude Code's NDJSON shapes (`type:"assistant"`
+  with `content[].text`, `type:"content_block_delta"`) — permissive, skips
+  unrecognized lines, falls back to full-buffer parse for final usage
+  extraction.
+- **`openaiCompat`** routes subscription-CLI requests through a new
+  `streamSubprocessResponse()` that drains the provider's native stream and
+  emits OpenAI-format SSE chunks per delta. **The
+  `stream-degraded-to-non-stream` warning is no longer emitted for
+  `claudeCode`** — Roo / Cline / the Tierkit chat tab now see Claude's
+  responses appear word-by-word.
+- `tierkit.profileId` / `usageSource` envelope is preserved on every chunk,
+  same as v0.13.
+
+### Internal
+
+- `PATCH /v1/config/profile/:id` accepts `roles`, `goodAt`, `notGoodAt` in
+  addition to `enabled` (new `updateProfileFields()` in `profileCrud.ts`).
+- `notices.seenOnboarding` schema marker.
+
 ## 0.13.2 — 2026-05-21
 
 ### Fixed

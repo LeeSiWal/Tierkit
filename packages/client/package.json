@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/client",
-  "version": "0.13.2",
+  "version": "0.14.0",
   "description": "Typed HTTP client for the Tierkit cost-layer daemon. Used by VS Code extensions, web UIs, and any tool integrating with a running `tierkit runtime`.",
   "license": "MIT",
   "type": "module",
