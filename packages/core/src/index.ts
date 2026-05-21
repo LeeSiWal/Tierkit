@@ -23,6 +23,9 @@ export {
   type AnyCursor,
 } from "./tools/cursor.js";
 
+// v0.16 Cursor error envelope helpers
+export { cursorInvalidEnvelope, staleCursorEnvelope } from "./tools/envelopeErrors.js";
+
 // Plugin schema and loader
 export {
   PluginManifestSchema,
