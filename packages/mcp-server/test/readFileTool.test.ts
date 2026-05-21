@@ -39,6 +39,17 @@ describe("tierkit.read_file", () => {
     expect(r.code).toBe("ignored-path");
   });
 
+  it("refuses paths matched by .tierkit/ignore", async () => {
+    await fs.writeFile(path.join(workspace, "private.md"), "secret content");
+    await fs.mkdir(path.join(workspace, ".tierkit"), { recursive: true });
+    await fs.writeFile(path.join(workspace, ".tierkit", "ignore"), "private.md\n");
+
+    const r = await readFileTool({ workspaceRoot: workspace, path: "private.md" });
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.code).toBe("ignored-path");
+  });
+
   it("refuses paths outside workspace", async () => {
     const r = await readFileTool({ workspaceRoot: workspace, path: "/etc/passwd" });
     expect(r.ok).toBe(false);

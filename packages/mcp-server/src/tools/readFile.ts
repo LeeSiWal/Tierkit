@@ -1,7 +1,9 @@
 import fs from "node:fs/promises";
+import fsSync from "node:fs";
 import path from "node:path";
 import { resolveUnderWorkspace } from "../workspaceBoundary.js";
 import { isDenied } from "../pathDenylist.js";
+import { loadIgnoreSources, isIgnored } from "../ignoreSources.js";
 import { redactOutput, type RedactHit } from "../redactOutput.js";
 
 export interface ReadFileInput {
@@ -24,6 +26,15 @@ export type ReadFileResult =
 const DEFAULT_MAX_BYTES = 1 * 1024 * 1024;
 
 export async function readFileTool(input: ReadFileInput): Promise<ReadFileResult> {
+  // Resolve the workspace root through symlinks (macOS /var→/private/var) so
+  // path.relative() produces clean relative paths from the same base.
+  let resolvedRoot: string;
+  try {
+    resolvedRoot = fsSync.realpathSync(input.workspaceRoot);
+  } catch {
+    resolvedRoot = path.resolve(input.workspaceRoot);
+  }
+
   let absPath: string;
   try {
     absPath = resolveUnderWorkspace(input.workspaceRoot, input.path);
@@ -31,9 +42,14 @@ export async function readFileTool(input: ReadFileInput): Promise<ReadFileResult
     return { ok: false, code: "outside-workspace", message: String((err as Error).message) };
   }
 
-  const relToWs = path.relative(input.workspaceRoot, absPath).split(path.sep).join("/");
-  if (isDenied(relToWs)) {
+  const relToWs = path.relative(resolvedRoot, absPath);
+  if (isDenied(relToWs.split(path.sep).join("/"))) {
     return { ok: false, code: "ignored-path", message: `${input.path} is in the path denylist` };
+  }
+
+  const sources = await loadIgnoreSources(input.workspaceRoot);
+  if (isIgnored(sources, relToWs)) {
+    return { ok: false, code: "ignored-path", message: `${input.path} is in the ignore list` };
   }
 
   const maxBytes = input.maxBytes ?? DEFAULT_MAX_BYTES;
