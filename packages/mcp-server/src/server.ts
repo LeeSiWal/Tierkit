@@ -57,8 +57,10 @@ async function dispatchTool(
     case "tierkit.list_files":
       return listFilesTool({
         workspaceRoot: ctx.workspaceRoot,
-        path: typeof args.path === "string" ? args.path : ".",
+        path: typeof args.path === "string" ? args.path : undefined,
         recursive: args.recursive === true,
+        maxEntries: typeof args.maxEntries === "number" ? args.maxEntries : undefined,
+        cursor: typeof args.cursor === "string" ? args.cursor : undefined,
       });
     case "tierkit.read_file":
       return readFileTool({

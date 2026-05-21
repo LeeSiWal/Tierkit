@@ -18,7 +18,8 @@ describe("tierkit.list_files", () => {
     const r = await listFilesTool({ workspaceRoot: workspace, path: "." });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.entries.map((e) => e.name).sort()).toEqual(["a.ts", "b.md"]);
+    // v0.16 envelope: entries live in data.entries
+    expect((r as any).data.entries.map((e: any) => e.name).sort()).toEqual(["a.ts", "b.md"]);
   });
 
   it("filters paths from bundled denylist", async () => {
@@ -27,7 +28,7 @@ describe("tierkit.list_files", () => {
     const r = await listFilesTool({ workspaceRoot: workspace, path: "." });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.entries.map((e) => e.name)).not.toContain(".env");
+    expect((r as any).data.entries.map((e: any) => e.name)).not.toContain(".env");
   });
 
   it("respects .tierkit/ignore", async () => {
@@ -38,13 +39,14 @@ describe("tierkit.list_files", () => {
     const r = await listFilesTool({ workspaceRoot: workspace, path: "." });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.entries.map((e) => e.name)).toEqual(["a.ts"]);
+    expect((r as any).data.entries.map((e: any) => e.name)).toEqual(["a.ts"]);
   });
 
   it("refuses paths outside workspace", async () => {
     const r = await listFilesTool({ workspaceRoot: workspace, path: "/etc" });
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.code).toBe("outside-workspace");
+    // v0.16 envelope: failure uses error.code
+    expect((r as any).error.code).toBe("outside-workspace");
   });
 });
