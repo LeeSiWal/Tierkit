@@ -1,6 +1,5 @@
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import path from "node:path";
 import {
   encodeCursor,
   decodeCursor,
@@ -13,6 +12,7 @@ import {
 } from "@tierkit/core";
 import { resolveUnderCwd } from "./safePath.js";
 import { gateSensitivePath } from "./tierkitGates.js";
+import { envelopeToString } from "./envelopeUtils.js";
 import type { Tool, ToolResult, AgentContext } from "../types.js";
 
 const DEFAULT_MAX_LINES = 300;
@@ -33,10 +33,6 @@ interface ReadFileData {
 
 function sha256OfFile(absPath: string): Promise<string> {
   return fs.readFile(absPath).then((buf) => "sha256:" + crypto.createHash("sha256").update(buf).digest("hex"));
-}
-
-function envelopeToString(env: object): ToolResult {
-  return { ok: (env as { ok: boolean }).ok, content: JSON.stringify(env) };
 }
 
 export const readFileTool: Tool = {
