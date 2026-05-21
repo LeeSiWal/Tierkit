@@ -57,4 +57,22 @@ describe("mcp/activityLog", () => {
     // Malformed line is skipped, valid line is returned.
     expect(entries.map((e: McpActivityEntry) => e.tool)).toEqual(["tierkit.list_files"]);
   });
+
+  it("preserves envelope.truncated/hasCursor/remainingLines when provided", async () => {
+    await logMcpActivity(workspace, {
+      tool: "tierkit.read_file",
+      ok: true,
+      code: null,
+      durationMs: 5,
+      redactionHits: 0,
+      inputSummary: null,
+      outputSummary: null,
+      envelope: { truncated: true, hasCursor: true, remainingLines: 400 },
+    });
+    const entries = await readMcpActivity(workspace);
+    const last = entries[entries.length - 1]!;
+    expect(last.envelope?.truncated).toBe(true);
+    expect(last.envelope?.hasCursor).toBe(true);
+    expect(last.envelope?.remainingLines).toBe(400);
+  });
 });
