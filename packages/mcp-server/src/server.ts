@@ -1,5 +1,6 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { logMcpActivity } from "@tierkit/core";
 
 export interface CreateMcpServerOptions {
   workspaceRoot: string;
@@ -16,6 +17,136 @@ const TOOL_NAMES = [
   "tierkit.get_policy_status",
 ] as const;
 
+type ToolName = (typeof TOOL_NAMES)[number];
+
+interface ToolCallContext {
+  workspaceRoot: string;
+}
+
+interface ToolEnvelope {
+  // Per-tool functions return JSON-serializable results. ok/code/redactionHits
+  // are conventions used to derive activity-log fields.
+  ok?: boolean;
+  code?: string;
+  redactionHits?: number;
+  [k: string]: unknown;
+}
+
+function notImplemented(name: string): ToolEnvelope {
+  return { ok: false, code: "not-implemented", message: `${name} not wired yet` };
+}
+
+// ---- dispatch ----
+//
+// Later phases add branches here. Do NOT wrap individual branches in try/catch
+// or write to the activity log directly — that's withActivityLog's job.
+async function dispatchTool(
+  name: ToolName,
+  args: Record<string, unknown>,
+  ctx: ToolCallContext,
+): Promise<ToolEnvelope> {
+  void args; void ctx; // consumed once real tool handlers are wired in later phases
+  switch (name) {
+    // Phase 3 fills these in:
+    case "tierkit.list_files":        return notImplemented(name);
+    case "tierkit.read_file":         return notImplemented(name);
+    case "tierkit.codebase_search":   return notImplemented(name);
+    // Phase 4-5 fill these in:
+    case "tierkit.propose_patch":     return notImplemented(name);
+    case "tierkit.apply_patch":       return notImplemented(name);
+    // Phase 6 fills these in:
+    case "tierkit.run_command":       return notImplemented(name);
+    case "tierkit.get_policy_status": return notImplemented(name);
+    default:                          return notImplemented(name);
+  }
+}
+
+// ---- per-tool summarizers ----
+//
+// Each summarizer returns ONLY safe-to-log fields (basenames, counts, sizes).
+// NEVER include file bodies, env values, full command lines, or redacted text.
+// Later phases extend these as new tools land.
+function summarizeInput(name: ToolName, args: Record<string, unknown>): unknown {
+  switch (name) {
+    case "tierkit.read_file":         return { path: pathBasename(args.path), encoding: args.encoding ?? "utf8" };
+    case "tierkit.list_files":        return { pattern: args.pattern, hasGlob: Boolean(args.pattern) };
+    case "tierkit.codebase_search":   return { queryLength: stringLen(args.query) };
+    case "tierkit.propose_patch":     return { fileCount: Array.isArray(args.files) ? args.files.length : 0 };
+    case "tierkit.apply_patch":       return { patchId: args.patchId };
+    case "tierkit.run_command":       return { commandLength: stringLen(args.command), hasTimeout: typeof args.timeoutMs === "number" };
+    case "tierkit.get_policy_status": return null;
+    default:                          return null;
+  }
+}
+
+function summarizeOutput(name: ToolName, result: ToolEnvelope): unknown {
+  // Sizes and counts only. Never the actual content.
+  if (!result || result.ok === false) return null;
+  switch (name) {
+    case "tierkit.read_file":         return { bytes: stringLen(result.content), truncated: Boolean(result.truncated) };
+    case "tierkit.list_files":        return { count: Array.isArray(result.files) ? result.files.length : 0 };
+    case "tierkit.codebase_search":   return { hits: Array.isArray(result.matches) ? result.matches.length : 0 };
+    case "tierkit.propose_patch":     return { patchId: result.patchId, riskLevel: (result.risk as any)?.level };
+    case "tierkit.apply_patch":       return { fileCount: Array.isArray(result.files) ? result.files.length : 0 };
+    case "tierkit.run_command":       return { exitCode: result.exitCode, truncated: Boolean(result.truncated) };
+    case "tierkit.get_policy_status": return { pendingPatches: result.pendingPatches };
+    default:                          return null;
+  }
+}
+
+function pathBasename(p: unknown): string | null {
+  if (typeof p !== "string") return null;
+  const i = p.lastIndexOf("/");
+  return i === -1 ? p : p.slice(i + 1);
+}
+
+function stringLen(s: unknown): number {
+  return typeof s === "string" ? s.length : 0;
+}
+
+// ---- the activity-log wrapper ----
+//
+// Runs the dispatcher, captures success/failure shape, logs exactly once,
+// and translates the envelope to the MCP response shape. Logging failures
+// MUST NOT propagate — a broken disk should never poison the tool call.
+async function withActivityLog(
+  name: ToolName,
+  args: Record<string, unknown>,
+  ctx: ToolCallContext,
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError: boolean }> {
+  const startedAt = Date.now();
+  let result: ToolEnvelope;
+  let ok = true;
+  let code: string | null = null;
+  try {
+    result = await dispatchTool(name, args, ctx);
+    if (result && result.ok === false) {
+      ok = false;
+      code = (result.code as string) ?? "unknown";
+    }
+  } catch (err: any) {
+    ok = false;
+    code = "thrown";
+    result = { ok: false, code: "thrown", message: String(err?.message ?? err) };
+  }
+  const redactionHits = typeof result.redactionHits === "number" ? result.redactionHits : 0;
+
+  await logMcpActivity(ctx.workspaceRoot, {
+    tool: name,
+    ok,
+    code,
+    durationMs: Date.now() - startedAt,
+    redactionHits,
+    inputSummary: summarizeInput(name, args),
+    outputSummary: summarizeOutput(name, result),
+  }).catch(() => { /* swallow — never fail a tool call because logging failed */ });
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(result) }],
+    isError: !ok,
+  };
+}
+
 export function createMcpServer(opts: CreateMcpServerOptions): Server {
   const server = new Server(
     { name: "tierkit", version: "0.15.0" },
@@ -25,16 +156,16 @@ export function createMcpServer(opts: CreateMcpServerOptions): Server {
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: TOOL_NAMES.map((name) => ({
       name,
-      description: `Tierkit-gated ${name.replace("tierkit.", "")} (placeholder; see v0.15 spec)`,
+      description: `Tierkit-gated ${name.replace("tierkit.", "")}`,
       inputSchema: { type: "object", additionalProperties: true },
     })),
   }));
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => ({
-    content: [{ type: "text", text: `not-implemented: ${req.params.name}` }],
-    isError: true,
-  }));
+  server.setRequestHandler(CallToolRequestSchema, async (req) => {
+    const name = req.params.name as ToolName;
+    const args = (req.params.arguments ?? {}) as Record<string, unknown>;
+    return withActivityLog(name, args, { workspaceRoot: opts.workspaceRoot });
+  });
 
-  void opts; // workspace + env consumed once tool handlers are wired in later phases
   return server;
 }
