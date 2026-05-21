@@ -18,7 +18,8 @@ describe("tierkit.codebase_search", () => {
     const r = await codebaseSearchTool({ workspaceRoot: workspace, query: "foo" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const files = r.matches.map((m) => m.path).sort();
+    // v0.16 envelope: matches live in data.matches
+    const files = (r as any).data.matches.map((m: any) => m.path).sort();
     expect(files).toEqual(["a.ts", "b.ts"]);
   });
 
@@ -26,7 +27,7 @@ describe("tierkit.codebase_search", () => {
     const r = await codebaseSearchTool({ workspaceRoot: workspace, query: "ANTHROPIC" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.matches.length).toBe(0);
+    expect((r as any).data.matches.length).toBe(0);
   });
 
   it("redacts secret-looking content in surviving snippets", async () => {
@@ -37,7 +38,7 @@ describe("tierkit.codebase_search", () => {
     const r = await codebaseSearchTool({ workspaceRoot: workspace, query: "ANTHROPIC" });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const md = r.matches.find((m) => m.path === "test.md");
+    const md = (r as any).data.matches.find((m: any) => m.path === "test.md");
     expect(md).toBeDefined();
     expect(md!.snippet).not.toMatch(/sk-ant-api03-[A-Z]/);
   });

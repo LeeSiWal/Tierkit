@@ -73,9 +73,11 @@ async function dispatchTool(
     case "tierkit.codebase_search":
       return codebaseSearchTool({
         workspaceRoot: ctx.workspaceRoot,
-        query: typeof args.query === "string" ? args.query : "",
+        query: typeof args.query === "string" ? args.query : undefined,
+        path: typeof args.path === "string" ? args.path : undefined,
         maxMatches: typeof args.maxMatches === "number" ? args.maxMatches : undefined,
         contextLines: typeof args.contextLines === "number" ? args.contextLines : undefined,
+        cursor: typeof args.cursor === "string" ? args.cursor : undefined,
       });
     // Phase 4-5 fill these in:
     case "tierkit.propose_patch":
