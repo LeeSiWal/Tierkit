@@ -2427,8 +2427,9 @@ export const GUI_HTML = `<!doctype html>
           try {
             const resp = await jpost('/v1/models/test', { profileId: id });
             const d = resp.data || {};
-            if (resp.ok) toast(id + ' ✓ ' + (d.modelAvailable === false ? 'reachable, model missing' : 'reachable'), d.modelAvailable === false ? 'err' : 'ok');
-            else toast(id + ': ' + (d.code || 'err'), 'err');
+            const probe = d.probe || d; // handle both new {probe,smoke} shape and legacy shape
+            if (resp.ok) toast(id + ' ✓ ' + (probe.modelAvailable === false ? 'reachable, model missing' : 'reachable'), probe.modelAvailable === false ? 'err' : 'ok');
+            else toast(id + ': ' + (d.error?.type || d.code || 'err'), 'err');
           } finally { b.disabled = false; b.textContent = 'test'; }
         };
       });

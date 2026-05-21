@@ -594,16 +594,30 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       }
 
       if (route === "POST /v1/models/test") {
-        const body = await readJsonBody<{ profileId: string }>(req);
+        const body = await readJsonBody<{
+          profileId: string;
+          smoke?: boolean;
+          ignoreDisabled?: boolean;
+          testTimeoutMs?: number;
+        }>(req);
         if (!body || typeof body.profileId !== "string") {
-          return sendJson(res, 400, { error: "request must be { profileId: string }" });
+          return sendJson(res, 400, { error: "request must be { profileId: string, smoke?: boolean, ignoreDisabled?: boolean }" });
         }
         try {
-          const r = await testModel({ cwd: opts.cwd, profileId: body.profileId, env });
-          return sendJson(res, 200, r);
+          const r = await testModel({
+            cwd: opts.cwd,
+            profileId: body.profileId,
+            env,
+            ...(body.smoke !== undefined ? { smoke: body.smoke } : {}),
+            ...(body.ignoreDisabled !== undefined ? { ignoreDisabled: body.ignoreDisabled } : {}),
+            ...(body.testTimeoutMs !== undefined ? { testTimeoutMs: body.testTimeoutMs } : {}),
+          });
+          return sendJson(res, 200, { probe: r.result, smoke: r.smoke ?? null });
         } catch (err) {
           if (err instanceof TestModelError) {
-            return sendJson(res, 400, { code: err.code, message: err.message });
+            // profile-disabled → 409, unknown-profile → 404, everything else 400
+            const status = err.code === "profile-disabled" ? 409 : err.code === "unknown-profile" ? 404 : 400;
+            return sendJson(res, status, { error: { type: err.code === "profile-disabled" ? "profile_disabled" : err.code, message: err.message, profileId: body.profileId } });
           }
           throw err;
         }
