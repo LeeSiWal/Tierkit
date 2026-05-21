@@ -45,5 +45,6 @@ describe("MCP SDK import paths actually resolve at the installed version", () =>
     // the SDK at this version may not ship an in-memory transport, in which
     // case Task 1.2 will use subprocess transport only and skip the in-memory test.
     console.log("[spike] InMemoryTransport found at:", found);
+    expect(found.length).toBeGreaterThan(0);
   });
 });
