@@ -4,6 +4,7 @@ import { logMcpActivity } from "@tierkit/core";
 import { listFilesTool } from "./tools/listFiles.js";
 import { readFileTool } from "./tools/readFile.js";
 import { codebaseSearchTool } from "./tools/codebaseSearch.js";
+import { proposePatchTool } from "./tools/proposePatch.js";
 import { countHits } from "./redactOutput.js";
 
 export interface CreateMcpServerOptions {
@@ -73,7 +74,13 @@ async function dispatchTool(
         contextLines: typeof args.contextLines === "number" ? args.contextLines : undefined,
       });
     // Phase 4-5 fill these in:
-    case "tierkit.propose_patch":     return notImplemented(name);
+    case "tierkit.propose_patch":
+      return proposePatchTool({
+        workspaceRoot: ctx.workspaceRoot,
+        files: Array.isArray(args.files) ? args.files as any : [],
+        note: typeof args.note === "string" ? args.note : undefined,
+        proposedBy: typeof args.proposedBy === "string" ? args.proposedBy : undefined,
+      });
     case "tierkit.apply_patch":       return notImplemented(name);
     // Phase 6 fills these in:
     case "tierkit.run_command":       return notImplemented(name);
