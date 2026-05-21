@@ -117,6 +117,9 @@ importers:
       '@tierkit/core':
         specifier: workspace:*
         version: link:../core
+      '@tierkit/mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
       clipanion:
         specifier: ^4.0.0-rc.4
         version: 4.0.0-rc.4(typanion@3.14.0)

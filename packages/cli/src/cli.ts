@@ -39,6 +39,7 @@ import { ProfileRemoveCommand } from "./commands/profile/ProfileRemoveCommand.js
 import { ConnectCommand } from "./commands/ConnectCommand.js";
 import { PluginSyncCommand } from "./commands/plugin/PluginSyncCommand.js";
 import { PluginNewCommand } from "./commands/plugin/PluginNewCommand.js";
+import { McpServeCommand } from "./commands/mcp/McpServeCommand.js";
 
 export function buildCli(): Cli<CliContext> {
   const cli = new Cli<CliContext>({
@@ -91,6 +92,7 @@ export function buildCli(): Cli<CliContext> {
   cli.register(ConnectCommand);
   cli.register(PluginSyncCommand);
   cli.register(PluginNewCommand);
+  cli.register(McpServeCommand);
 
   return cli;
 }

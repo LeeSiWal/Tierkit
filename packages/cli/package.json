@@ -26,6 +26,7 @@
     "@tierkit/adapter-continue": "workspace:*",
     "@tierkit/adapter-roo": "workspace:*",
     "@tierkit/core": "workspace:*",
+    "@tierkit/mcp-server": "workspace:*",
     "clipanion": "^4.0.0-rc.4",
     "typanion": "^3.14.0"
   },
