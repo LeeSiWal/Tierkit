@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "private": true,
   "description": "%description%",
   "license": "MIT",
@@ -61,16 +61,46 @@
       ]
     },
     "commands": [
-      { "command": "tierkit.focusSidebar",  "title": "%commands.focusSidebar%" },
-      { "command": "tierkit.health",        "title": "%commands.health%" },
-      { "command": "tierkit.routeExplain",  "title": "%commands.routeExplain%" },
-      { "command": "tierkit.routeRun",      "title": "%commands.routeRun%" },
-      { "command": "tierkit.checkCommand",  "title": "%commands.checkCommand%" },
-      { "command": "tierkit.usage",         "title": "%commands.usage%" },
-      { "command": "tierkit.sessionStatus", "title": "%commands.sessionStatus%" },
-      { "command": "tierkit.restartDaemon",   "title": "%commands.restartDaemon%" },
-      { "command": "tierkit.showOutput",      "title": "%commands.showOutput%" },
-      { "command": "tierkit.addModelProfile", "title": "%commands.addModelProfile%" }
+      {
+        "command": "tierkit.focusSidebar",
+        "title": "%commands.focusSidebar%"
+      },
+      {
+        "command": "tierkit.health",
+        "title": "%commands.health%"
+      },
+      {
+        "command": "tierkit.routeExplain",
+        "title": "%commands.routeExplain%"
+      },
+      {
+        "command": "tierkit.routeRun",
+        "title": "%commands.routeRun%"
+      },
+      {
+        "command": "tierkit.checkCommand",
+        "title": "%commands.checkCommand%"
+      },
+      {
+        "command": "tierkit.usage",
+        "title": "%commands.usage%"
+      },
+      {
+        "command": "tierkit.sessionStatus",
+        "title": "%commands.sessionStatus%"
+      },
+      {
+        "command": "tierkit.restartDaemon",
+        "title": "%commands.restartDaemon%"
+      },
+      {
+        "command": "tierkit.showOutput",
+        "title": "%commands.showOutput%"
+      },
+      {
+        "command": "tierkit.addModelProfile",
+        "title": "%commands.addModelProfile%"
+      }
     ],
     "configuration": {
       "title": "%configuration.title%",

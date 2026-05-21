@@ -1,6 +1,30 @@
 # Changelog
 
-## 0.13.0 — UNRELEASED
+## 0.13.1 — 2026-05-21
+
+### Fixed — Routing now escalates past weak local models for review/plan/refactor
+
+- **`localCoder` (qwen2.5-coder:7b) and `localFast` (llama3.2:3b) now declare
+  `notGoodAt: ["code-review", "plan", "refactor"]`.** Tasks classified into
+  these types are hard-filtered out of the local-device tier; the escalation
+  chain naturally moves to the next tier (`claudeCode` if enabled + viable,
+  then API-key cloud profiles). This stops Roo / Cline-style `"review this
+  project"` requests from landing on a 7B model that hallucinates tool calls
+  and file contents.
+- **`RiskScorer.scoreRisk` now accepts a `taskType` and adds +20 for
+  `code-review`, +15 for `plan` / `refactor`.** The classifier's output now
+  contributes to the risk score, not just HIGH/MEDIUM keywords. Bare "리뷰
+  해줘" / "review this" requests escalate to private-remote tier instead of
+  staying local at score 10.
+- A `model: "auto"` request that hits an empty escalation chain (e.g.,
+  `localCoder` filtered out + `claudeCode` disabled + no API keys) now
+  returns a clear error instead of silently delivering bad local output.
+
+If you preferred the v0.12.x behavior (qwen handles everything locally),
+override the bundled profile in your `tierkit.config.json` with a profile
+that omits `notGoodAt`.
+
+## 0.13.0 — 2026-05-21
 
 ### BREAKING
 
