@@ -649,6 +649,55 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         }
       }
 
+      if (route === "POST /v1/route/explain") {
+        const body = await readJsonBody<{ task: string; mode?: "execute" | "review-only" }>(req);
+        if (!body || typeof body.task !== "string" || body.task.length === 0) {
+          return sendJson(res, 400, { error: "request must be { task: string, mode?: 'execute'|'review-only' }" });
+        }
+
+        const { decideRoute } = await import("../model/ModelRouter.js");
+        const { classifyTask } = await import("../model/TaskClassifier.js");
+        const { checkProfileViability } = await import("../model/profileViability.js");
+
+        const cfg = await loadConfig(opts.cwd);
+        const policy = cfg.config.routingPolicy;
+        const taskType = classifyTask(body.task);
+        const decision = decideRoute({
+          task: { task: body.task, taskType },
+          profiles: cfg.config.modelProfiles,
+          ...(cfg.config.modelPolicy ? { policy: cfg.config.modelPolicy } : {}),
+          thresholds: policy.riskThresholds,
+          ceiling: policy.autoEscalationCeiling,
+          taskType,
+        });
+
+        // Per-candidate viability probe (parallel)
+        const candidates = await Promise.all(decision.escalationChain.map(async (c) => {
+          const profile = cfg.config.modelProfiles[c.id]!;
+          const v = await checkProfileViability(profile, env);
+          return {
+            id: c.id,
+            tier: c.tier,
+            isEscalation: c.isEscalation,
+            viable: v.viable,
+            ...(v.reason ? { viabilityReason: v.reason } : {}),
+            selected: false,
+          };
+        }));
+        // Mark the first viable candidate as selected (mirrors actual routing behavior)
+        const firstViable = candidates.find((c) => c.viable);
+        if (firstViable) firstViable.selected = true;
+
+        return sendJson(res, 200, {
+          taskType,
+          score: decision.score,
+          reasons: decision.reasons,
+          tier: decision.tier,
+          ceiling: policy.autoEscalationCeiling,
+          candidates,
+        });
+      }
+
       if (route === "GET /v1/plugins") {
         const r = await listPlugins({ cwd: opts.cwd });
         return sendJson(res, 200, r);

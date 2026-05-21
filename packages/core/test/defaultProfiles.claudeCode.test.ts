@@ -21,8 +21,8 @@ describe("DEFAULT_MODEL_PROFILES.claudeCode", () => {
     expect(claudeCode).toBeDefined();
   });
 
-  it("is private-remote / flat-rate / subprocess", () => {
-    expect(claudeCode.kind).toBe("private-remote");
+  it("is public-cloud / flat-rate / subprocess", () => {
+    expect(claudeCode.kind).toBe("public-cloud");
     expect(claudeCode.paymentModel).toBe("flat-rate");
     expect(claudeCode.provider).toBe("claude-code");
     expect(claudeCode.transport.type).toBe("subprocess");
@@ -39,8 +39,8 @@ describe("DEFAULT_MODEL_PROFILES.claudeCode", () => {
     expect(r.success).toBe(true);
   });
 
-  it("does not declare defaultMode (private-remote does not enforce it)", () => {
-    expect(claudeCode.defaultMode).toBeUndefined();
+  it("declares defaultMode: 'review-only' (public-cloud data flows to Anthropic cloud)", () => {
+    expect(claudeCode.defaultMode).toBe("review-only");
   });
 
   it("omits cost (subscription paid out of band)", () => {

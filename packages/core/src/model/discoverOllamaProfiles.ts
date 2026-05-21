@@ -182,6 +182,18 @@ function inferCapabilities(name: string): { good: Set<string>; bad: Set<string> 
   } else if (isLarge && !isCoder) {
     // 70B-class generic — strong on plan, not specifically coder-tuned but capable.
     good.add("plan");
+  } else if (!isCoder && !isSmall && !isLarge) {
+    // 7B-13B non-coder generic models (gemma, mistral 7b, llama3 8b,
+    // command-r 35b, exaone, etc.). Capable for summarization and translation
+    // but NOT reliable for coding work without explicit user opt-in. Users who
+    // want one of these for code-review can override `notGoodAt` in their
+    // workspace config.
+    good.add("summarize");
+    good.add("translate");
+    bad.add("code-generation");
+    bad.add("refactor");
+    bad.add("code-review");
+    bad.add("plan");
   }
 
   if (isSmall) {

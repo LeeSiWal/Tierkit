@@ -66,11 +66,18 @@ describe("discoverOllamaProfiles + inferGoodAt", () => {
     expect(p.goodAt).toContain("plan");
   });
 
-  it("leaves unknown families with empty/no goodAt (neutral)", async () => {
+  it("non-coder mid-size models (7B-13B generic) get summarize/translate + notGoodAt coding (v0.13.2)", async () => {
+    // mystery-model:8b is non-coder, non-small, non-large → falls into the
+    // generic-mid bucket added in v0.13.2. We protect coding chains from
+    // unknown mid-size generic models by default; users opt in via workspace
+    // config.
     const r = await discoverWithModels(["mystery-model:8b"]);
     const p = r["ollama-mystery-model-8b"];
     expect(p).toBeDefined();
-    expect(p.goodAt).toBeUndefined();
+    expect(p.goodAt).toEqual(expect.arrayContaining(["summarize", "translate"]));
+    expect(p.notGoodAt).toEqual(expect.arrayContaining([
+      "code-generation", "refactor", "code-review", "plan",
+    ]));
   });
 
   it("codestral / starcoder / granite-code also get coder tags", async () => {

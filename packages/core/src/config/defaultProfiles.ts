@@ -74,13 +74,15 @@ export const DEFAULT_MODEL_PROFILES: ModelProfileMap = {
     cost: { type: "per-token", inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 },
   },
 
-  // ── private-remote subscription CLI (v0.13) ───────────────────────────────────
+  // ── public-cloud subscription CLI (v0.13) ────────────────────────────────────
   // Disabled by default — `migrateSeedDefaultDisabled` adds this id to
   // `disabledProfileIds` on first workspace load. Once seeded, user-driven enable
   // is respected and never re-undone.
   // No `cost` declared: the subscription is paid out of band, so per-call costUsd = 0.
+  // kind: "public-cloud" because data flows to Anthropic's cloud — same trust
+  // boundary as gpt4o. defaultMode: "review-only" matches that trust classification.
   claudeCode: {
-    kind: "private-remote",
+    kind: "public-cloud",
     paymentModel: "flat-rate",
     provider: "claude-code",
     model: "auto",
@@ -88,6 +90,7 @@ export const DEFAULT_MODEL_PROFILES: ModelProfileMap = {
     roles: ["code", "review", "plan"],
     goodAt: ["code-review", "planning", "debugging", "large-refactor"],
     requiresApproval: true,
+    defaultMode: "review-only",
     defaultDisabled: true,
     transport: {
       type: "subprocess",

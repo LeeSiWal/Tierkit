@@ -12,6 +12,7 @@ import type { ModelProfile, ModelProfileMap } from "../model/ModelProfile.js";
 import { migrateLegacyEnabledField } from "./migrateLegacyEnabledField.js";
 import { migrateCanonicalDuplicates } from "./migrateCanonicalDuplicates.js";
 import { migrateSeedDefaultDisabled } from "./migrateSeedDefaultDisabled.js";
+import { migrateAddMissingRouterMetaFields } from "./migrateAddMissingRouterMetaFields.js";
 import { canonicalIdentity } from "../model/profileIdentity.js";
 
 /** Where a given config value originated. Surfaced via `/v1/models` so users can see why a profile is visible. */
@@ -216,6 +217,8 @@ export async function loadConfig(
   if (m2.changed) return loadConfig(projectRoot, options);
 
   await migrateSeedDefaultDisabled({ cwd: projectRoot, defaultProfiles: DEFAULT_MODEL_PROFILES });
+
+  await migrateAddMissingRouterMetaFields({ cwd: projectRoot, defaultProfiles: DEFAULT_MODEL_PROFILES });
 
   // ── Ollama auto-discovery ─────────────────────────────────────────────────
   // After all explicit configs (bundled/user/workspace) are merged, look at the local

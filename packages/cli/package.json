@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/cli",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "The `tierkit` CLI — measure token savings, build compressed contexts, route work across local / private / cloud models, and audit cost.",
   "license": "MIT",
   "type": "module",

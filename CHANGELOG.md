@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.13.2 — 2026-05-21
+
+### Fixed
+
+- **Auto-discovered Ollama profiles for non-coder mid-size models (gemma,
+  mistral 7b, llama3 8b, command-r, etc.) now declare
+  `notGoodAt: ["code-generation","refactor","code-review","plan"]`** and
+  `goodAt: ["summarize","translate"]`. Previously the heuristic only covered
+  coder + small + large families and left mid-size generic models neutral,
+  which let them claim coding tasks at the local-device tier and shadow
+  escalation to `claudeCode`. Users who want a specific mid-size non-coder
+  model for coding work can override `notGoodAt: []` per-profile in their
+  `tierkit.config.json`.
+- **`migrateAddMissingRouterMetaFields`** runs on every config load. It
+  backfills missing `notGoodAt` / `goodAt` / `displayName` fields on workspace
+  profiles that share `provider` + `model` with a bundled default. v0.12.x
+  workspaces that copy-pasted `localCoder` / `localFast` automatically pick up
+  v0.13's routing-classification fields without manual edits.
+  **User-set values (anything not `undefined`) are never overwritten** — an
+  explicit `notGoodAt: []` is preserved as an opt-in to use that model
+  everywhere.
+- **`claudeCode.kind` is now `"public-cloud"`** (was `"private-remote"`).
+  Data flows to Anthropic's cloud — same trust boundary as `gpt4o`. The
+  bundled profile now also declares `defaultMode: "review-only"` explicitly,
+  matching the public-cloud convention. `claudeSonnet` / `claudeHaiku`
+  classification revisit is deferred to v0.14 to avoid disrupting v0.12 users
+  who rely on the current approval / mode behavior.
+
+### Added
+
+- **`POST /v1/route/explain`** HTTP endpoint mirroring `tierkit route explain`.
+  Returns `{taskType, score, reasons, tier, ceiling, candidates[]}` with
+  per-candidate viability. Lets GUI / curl users diagnose routing decisions
+  without installing the CLI:
+
+  ```bash
+  curl -s -X POST http://127.0.0.1:4101/v1/route/explain \
+    -H 'content-type: application/json' \
+    -d '{"task":"리뷰해줘"}' | jq
+  ```
+
 ## 0.13.1 — 2026-05-21
 
 ### Fixed — Routing now escalates past weak local models for review/plan/refactor
