@@ -264,6 +264,51 @@ describe("SubscriptionCliProvider.stream", () => {
   });
 });
 
+// ─── SubscriptionCliProvider: env propagation (Task 1.3) ─────────────────────
+
+class TestProvider extends SubscriptionCliProvider {
+  buildArgs(_profile: ModelProfile): string[] {
+    // Echo the value of TIERKIT_INJECT_TEST so the test can detect env propagation.
+    return ["-e", "process.stdout.write(process.env.TIERKIT_INJECT_TEST ?? 'absent')"];
+  }
+  parseStdout(stdout: string): SubscriptionCliParsedResult {
+    return { content: stdout, raw: stdout };
+  }
+}
+
+function testProfile(): ModelProfile {
+  return {
+    kind: "public-cloud",
+    provider: "test",
+    model: "test",
+    roles: [],
+    displayName: "test",
+    transport: {
+      type: "subprocess" as const,
+      command: process.execPath,
+      args: [],
+      healthCheckArgs: ["--version"],
+      timeoutMs: 10_000,
+      maxStdoutBytes: 10_000,
+      maxStderrBytes: 10_000,
+    },
+  } as unknown as ModelProfile;
+}
+
+describe("SubscriptionCliProvider.chat — env propagation", () => {
+  it("propagates caller-supplied env to the child", async () => {
+    const provider = new TestProvider();
+    const result = await provider.chat(
+      testProfile(),
+      { messages: [{ role: "user", content: "ignored" }] },
+      { TIERKIT_INJECT_TEST: "injected" },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.text).toBe("injected");
+  });
+});
+
 // ─── ClaudeCodeProvider: streamArgs ────────────────────────────────────────────
 
 describe("ClaudeCodeProvider.streamArgs", () => {
