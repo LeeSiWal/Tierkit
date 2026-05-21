@@ -2188,9 +2188,57 @@ export const GUI_HTML = `<!doctype html>
     ].join('\\n');
   }
 
-  // Placeholder definitions — concrete renderers are added in Tasks 3.2/3.3/4.1/4.2.
-  // Each returns an HTML string.
-  function renderReadFileEnvelope(env)     { return renderEnvelopeSuccessGeneric(env); }
+  function renderReadFileEnvelope(env) {
+    const icon = iconForTool(env.tool);
+    const data = env.data || {};
+    const range = env.range || {};
+    const size = env.size || {};
+
+    const headerBadges = [];
+    if (env.truncated) {
+      const moreLines = (size.remainingLines != null) ? size.remainingLines : '?';
+      headerBadges.push('<span class="env-badge badge-truncated">truncated · ' + escapeHtml(String(moreLines)) + ' more</span>');
+    } else {
+      const total = (size.totalLines != null) ? size.totalLines : (size.linesReturned != null ? size.linesReturned : '?');
+      headerBadges.push('<span class="env-badge badge-ok">ok · ' + escapeHtml(String(total)) + ' lines</span>');
+    }
+    if (env.warnings && env.warnings.length > 0) {
+      headerBadges.push('<span class="env-badge badge-warn">⚠ warning</span>');
+    }
+
+    const startLine = (range.startLine != null) ? range.startLine : 1;
+    const lines = String(data.content == null ? '' : data.content).split('\\n');
+    const numbered = lines.map((line, i) => {
+      const lno = String(startLine + i).padStart(4, ' ');
+      return lno + '  ' + escapeHtml(line);
+    }).join('\\n');
+
+    const footerParts = [];
+    if (env.next && env.next.cursor) {
+      footerParts.push(
+        '<div class="env-footer">' +
+          'Next: read_file(cursor=' + escapeHtml(String(env.next.cursor).slice(0, 8)) + '…)' +
+          ' <button class="copy-cursor-btn" data-cursor="' + escapeHtml(env.next.cursor) + '">Copy cursor</button>' +
+        '</div>'
+      );
+    }
+    if (env.warnings) {
+      for (const w of env.warnings) {
+        footerParts.push('<div class="env-warning">⚠ ' + escapeHtml(String(w)) + '</div>');
+      }
+    }
+
+    return [
+      '<div class="env-card">',
+      '  <div class="env-header">' + icon + ' <strong>read_file</strong>' +
+        ' · <span class="env-key-arg">' + escapeHtml(String(data.path == null ? '?' : data.path)) + '</span> ' +
+        headerBadges.join(' ') +
+      '</div>',
+      '  <pre class="env-body env-code">' + numbered + '</pre>',
+      footerParts.join('\\n'),
+      '</div>',
+    ].join('\\n');
+  }
   function renderListFilesEnvelope(env)    { return renderEnvelopeSuccessGeneric(env); }
   function renderSearchFilesEnvelope(env)  { return renderEnvelopeSuccessGeneric(env); }
   function renderRunCommandEnvelope(env)   { return renderEnvelopeSuccessGeneric(env); }
