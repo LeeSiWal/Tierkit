@@ -28,6 +28,22 @@ export type ModelCost = z.infer<typeof ModelCostSchema>;
 export const PAYMENT_MODELS = ["free", "flat-rate", "per-token"] as const;
 export type PaymentModel = (typeof PAYMENT_MODELS)[number];
 
+export const SUBPROCESS_PROVIDERS = ["claude-code", "codex-cli"] as const;
+export type SubprocessProvider = (typeof SUBPROCESS_PROVIDERS)[number];
+
+const SubprocessTransportSchema = z.object({
+  type: z.literal("subprocess"),
+  command: z.string().min(1),
+  args: z.array(z.string()).default([]),
+  healthCheckArgs: z.array(z.string()).default(["--version"]),
+  timeoutMs: z.number().int().positive().default(120_000),
+  maxStdoutBytes: z.number().int().positive().default(2_000_000),
+  maxStderrBytes: z.number().int().positive().default(524_288),
+}).strict();
+
+export const TransportSchema = z.discriminatedUnion("type", [SubprocessTransportSchema]);
+export type Transport = z.infer<typeof TransportSchema>;
+
 export const ModelProfileSchema = z
   .object({
     kind: z.enum(MODEL_TIERS),
@@ -63,6 +79,9 @@ export const ModelProfileSchema = z
     notGoodAt: z.array(z.string().min(1)).optional(),
     enabled: z.boolean().optional(),
     cost: ModelCostSchema.optional(),
+    displayName: z.string().min(1).optional(),
+    defaultDisabled: z.boolean().optional(),
+    transport: TransportSchema.optional(),
   })
   .strict()
   .superRefine((profile, ctx) => {
@@ -72,6 +91,21 @@ export const ModelProfileSchema = z
         path: ["requiresApproval"],
         message:
           "public-cloud model profiles must require approval; Tierkit defaults to review-only for public-cloud.",
+      });
+    }
+    const isSubprocessProvider = (SUBPROCESS_PROVIDERS as readonly string[]).includes(profile.provider);
+    if (isSubprocessProvider && profile.transport?.type !== "subprocess") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transport"],
+        message: `${profile.provider} profiles require transport.type === "subprocess"`,
+      });
+    }
+    if (profile.transport?.type === "subprocess" && !isSubprocessProvider) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["provider"],
+        message: `transport.type=subprocess requires provider in SUBPROCESS_PROVIDERS (got ${profile.provider})`,
       });
     }
   });
