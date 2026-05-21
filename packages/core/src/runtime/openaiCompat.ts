@@ -16,10 +16,12 @@
  * UIs render them in their native error path.
  */
 import type http from "node:http";
+import path from "node:path";
 import { executeLlmCall, type LlmCallRequest } from "./proxy/llmCall.js";
 import type { ToolCall, ToolDefinition, ToolChoice, ChatMessage, StreamEvent } from "../model/providers/chatTypes.js";
 import { SubscriptionCliProvider } from "../model/providers/subscriptionCli.js";
 import { pickProviderClient } from "../model/providers/index.js";
+import { appendUsage, estimateCost, type UsageRecord } from "./usageLog.js";
 
 interface OpenAIChatMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -380,6 +382,17 @@ async function streamSubprocessResponse(
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let errorEventCode: string | undefined;
+  const streamStartedAt = Date.now();
+
+  // v0.17: load config once up-front so we know where to append the usage record.
+  // Failing to load it must not break the stream — we just skip logging.
+  const { loadConfig: loadCfgForUsage } = await import("../config/loadConfig.js");
+  let usageLogPath: string | undefined;
+  try {
+    const cfgForUsage = await loadCfgForUsage(context.cwd);
+    usageLogPath = path.join(context.cwd, cfgForUsage.config.runtime.dataDir, "usage.jsonl");
+  } catch { /* swallow — telemetry must never break the response */ }
 
   try {
     for await (const ev of client.stream(profile, chatRequest, context.env)) {
@@ -413,6 +426,7 @@ async function streamSubprocessResponse(
           tierkit: { profileId },
         });
       } else if (e.type === "error") {
+        errorEventCode = e.code;
         send({
           id: completionId,
           object: "chat.completion.chunk",
@@ -422,6 +436,27 @@ async function streamSubprocessResponse(
           tierkit: { profileId, error: e.code },
         });
       }
+    }
+
+    // v0.17: append a UsageRecord so the call shows up in the activity panel.
+    // claudeCode (and every other subscription-CLI subprocess provider) routes through
+    // here for streaming — pre-v0.17 this path silently dropped usage telemetry.
+    if (usageLogPath) {
+      const record: UsageRecord = {
+        timestamp: new Date().toISOString(),
+        profileId,
+        provider: profile.provider,
+        model: profile.model,
+        tier: profile.kind,
+        inputTokens,
+        outputTokens,
+        costUsd: estimateCost(profile, inputTokens, outputTokens),
+        latencyMs: Date.now() - streamStartedAt,
+        ok: errorEventCode === undefined,
+        ...(errorEventCode !== undefined ? { failureCode: errorEventCode } : {}),
+        usageSource: "provider-reported",
+      };
+      await appendUsage(usageLogPath, record).catch(() => { /* swallow */ });
     }
   } catch (err) {
     // If the stream throws unexpectedly, surface it in-band.
@@ -433,6 +468,23 @@ async function streamSubprocessResponse(
       choices: [{ index: 0, delta: { content: `\n[stream-error] ${(err as Error).message}` }, finish_reason: "stop" }],
       tierkit: { profileId, error: "stream-error" },
     });
+
+    if (usageLogPath) {
+      const record: UsageRecord = {
+        timestamp: new Date().toISOString(),
+        profileId,
+        provider: profile.provider,
+        model: profile.model,
+        tier: profile.kind,
+        inputTokens,
+        outputTokens,
+        costUsd: estimateCost(profile, inputTokens, outputTokens),
+        latencyMs: Date.now() - streamStartedAt,
+        ok: false,
+        failureCode: "stream-aborted",
+      };
+      await appendUsage(usageLogPath, record).catch(() => { /* swallow */ });
+    }
   }
 
   res.write("data: [DONE]\n\n");
