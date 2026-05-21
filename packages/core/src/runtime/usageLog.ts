@@ -2,6 +2,9 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import type { ModelProfile, ModelTier } from "../model/ModelProfile.js";
 
+const TRIM_TRIGGER_BYTES = 10 * 1024 * 1024;  // trim once file exceeds 10 MB
+const TRIM_TARGET_BYTES = 5 * 1024 * 1024;    // keep most-recent ~5 MB after trim
+
 export interface UsageRecord {
   timestamp: string;
   profileId: string;
@@ -21,9 +24,46 @@ export interface UsageRecord {
   type?: "chat" | "model-test";
 }
 
+/**
+ * v0.17: in-place trim of a usage log file. Keep only the most recent
+ * `targetBytes` worth of complete JSON lines, discard older ones. Atomic via
+ * tmp + rename. Called from appendUsage when file size exceeds
+ * TRIM_TRIGGER_BYTES (10 MB), bringing it back under TRIM_TARGET_BYTES (5 MB),
+ * so the next ~5 MB of appends accumulate before the next trim.
+ *
+ * The log file is heterogeneous-shape safe: LLM-call records and MCP-tool
+ * records (`type: "mcp-tool"`) coexist; the trim doesn't distinguish — it
+ * keeps complete lines from the end regardless of shape.
+ */
+async function trimUsageLog(filePath: string, targetBytes: number): Promise<void> {
+  const raw = await fs.readFile(filePath, "utf8");
+  const lines = raw.split("\n").filter((l) => l.length > 0);
+  const kept: string[] = [];
+  let keptBytes = 0;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const lineSize = Buffer.byteLength(lines[i]!, "utf8") + 1;
+    if (keptBytes + lineSize > targetBytes && kept.length > 0) break;
+    kept.unshift(lines[i]!);
+    keptBytes += lineSize;
+  }
+  const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(tmp, kept.join("\n") + (kept.length > 0 ? "\n" : ""));
+  await fs.rename(tmp, filePath);
+}
+
 /** Append a usage record as a single JSON line. Creates the directory if needed. */
 export async function appendUsage(filePath: string, record: UsageRecord): Promise<void> {
   await fs.mkdir(path.dirname(filePath), { recursive: true });
+  // v0.17: cheap stat() before append; if over 10 MB, trim down to ~5 MB.
+  // Trim is rare (every ~5 MB of appends) so the stat is effectively free.
+  try {
+    const stat = await fs.stat(filePath);
+    if (stat.size > TRIM_TRIGGER_BYTES) {
+      await trimUsageLog(filePath, TRIM_TARGET_BYTES);
+    }
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+  }
   await fs.appendFile(filePath, JSON.stringify(record) + "\n", "utf8");
 }
 
