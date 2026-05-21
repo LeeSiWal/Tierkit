@@ -1288,6 +1288,22 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, r);
       }
 
+      // ── MCP Bridge: config snippet + patch ticket admin ──
+      if (route === "GET /v1/mcp/config") {
+        const realRoot = await fs.realpath(opts.cwd);
+        // format param ignored in v0.15.0 — all formats currently return the same shape
+        const config = {
+          mcpServers: {
+            tierkit: {
+              type: "stdio",
+              command: "tierkit",
+              args: ["mcp", "serve", "--workspace", realRoot],
+            },
+          },
+        };
+        return sendJson(res, 200, config);
+      }
+
       // ── GUI ──
       if (route === "GET /v1/ui" || route === "GET /" || route === "GET /ui") {
         res.statusCode = 200;
