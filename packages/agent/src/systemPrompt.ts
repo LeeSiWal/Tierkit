@@ -79,6 +79,11 @@ export function buildSystemPrompt(input: BuildSystemPromptInput): string {
       "</read_file>",
       "```",
       "",
+      "Tool results return a JSON envelope (tool-result-envelope.v1). When `truncated: true` " +
+        "and `next.suggestedCall` is present, copy that call verbatim instead of re-issuing the " +
+        "original. If `warnings[]` is present, read it before deciding next action — a warning " +
+        "may indicate that a different tool is more efficient.",
+      "",
       "Stop and emit `<ask_followup_question>` ONLY when the task is genuinely ambiguous and you " +
         "cannot make progress without user input. Prefer reading files and trying things over asking.",
     ].join("\n"),
