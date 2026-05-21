@@ -4,6 +4,7 @@ import {
   makeFailureEnvelope,
 } from "@tierkit/core";
 import { envelopeToString } from "./envelopeUtils.js";
+import { gateDangerousCommand } from "./tierkitGates.js";
 import type { Tool, ToolResult, AgentContext } from "../types.js";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -53,6 +54,16 @@ export const executeCommandTool: Tool = {
       return envelopeToString(makeFailureEnvelope("execute_command", "invalid-args", "missing required parameter `command`"));
     }
 
+    // Tierkit policy gate — block dangerous commands before they even get a chance to run.
+    const cls = await gateDangerousCommand(ctx.tierkitBaseUrl, command);
+    if (cls.severity === "block") {
+      return envelopeToString(makeFailureEnvelope(
+        "execute_command",
+        "dangerous-command-blocked",
+        `Command blocked by Tierkit policy: ${cls.matched.map((m: any) => m.id).join(", ")}`,
+      ));
+    }
+
     const timeoutMs = Math.max(1, Math.min(Number(input.timeoutMs ?? DEFAULT_TIMEOUT_MS), MAX_TIMEOUT_MS));
     const maxStdoutBytes = Math.max(1, Math.min(Number(input.maxStdoutBytes ?? DEFAULT_MAX_STDOUT), HARD_MAX_STDOUT));
     const maxStderrBytes = Math.max(1, Math.min(Number(input.maxStderrBytes ?? DEFAULT_MAX_STDERR), HARD_MAX_STDERR));
@@ -73,10 +84,20 @@ export const executeCommandTool: Tool = {
       });
 
       let settled = false;
+      let userAborted = false;
+      const sig = ctx.abortSignal;
+
+      const onAbort = (): void => {
+        userAborted = true;
+        try { child.kill("SIGTERM"); } catch { /* */ }
+        setTimeout(() => { if (!child.killed) try { child.kill("SIGKILL"); } catch { /* */ } }, 1000);
+      };
+
       const finish = (env: object) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        sig?.removeEventListener("abort", onAbort);
         resolve(envelopeToString(env));
       };
 
@@ -84,6 +105,11 @@ export const executeCommandTool: Tool = {
         try { child.kill("SIGKILL"); } catch { /* */ }
         finish(makeFailureEnvelope("execute_command", "command-timeout", `command exceeded timeoutMs=${timeoutMs}`));
       }, timeoutMs);
+
+      if (sig) {
+        if (sig.aborted) onAbort();
+        else sig.addEventListener("abort", onAbort, { once: true });
+      }
 
       child.stdout!.on("data", (chunk: Buffer) => {
         if (stdoutBytes >= maxStdoutBytes) { stdoutTruncated = true; return; }
@@ -109,6 +135,10 @@ export const executeCommandTool: Tool = {
         finish(makeFailureEnvelope("execute_command", "spawn-failed", err.message));
       });
       child.on("close", (code) => {
+        if (userAborted) {
+          finish(makeFailureEnvelope("execute_command", "user-aborted", "user aborted"));
+          return;
+        }
         const durationMs = Date.now() - started;
         const truncated = stdoutTruncated || stderrTruncated;
         const warnings: string[] | undefined = truncated ? [TRUNCATION_WARNING] : undefined;

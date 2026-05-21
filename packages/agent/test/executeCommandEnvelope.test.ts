@@ -1,8 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { executeCommandTool } from "../src/tools/executeCommand.js";
+
+// Default mock: gate returns ok so existing tests are unaffected.
+vi.mock("../src/tools/tierkitGates.js", () => ({
+  gateDangerousCommand: vi.fn(async () => ({ severity: "ok", matched: [] })),
+}));
 
 let workspace: string;
 beforeEach(async () => { workspace = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-ec-env-")); });
@@ -37,5 +42,19 @@ describe("executeCommandTool envelope", () => {
     );
     expect(env.size.stdoutBytesReturned).toBeGreaterThan(0);
     expect(env.size.stdoutTruncated).toBe(true);
+  });
+
+  it("blocks dangerous commands via gateDangerousCommand (regression from v0.15)", async () => {
+    // Mock the gate to force a block
+    const gate = await import("../src/tools/tierkitGates.js");
+    const spy = vi.spyOn(gate, "gateDangerousCommand").mockResolvedValueOnce({
+      severity: "block",
+      matched: [{ id: "rm-rf-root", reason: "destructive" }],
+    } as any);
+    const res = await executeCommandTool.execute({ command: "rm -rf /" }, ctx() as any);
+    const env = JSON.parse(res.content);
+    expect(env.ok).toBe(false);
+    expect(env.error.code).toBe("dangerous-command-blocked");
+    spy.mockRestore();
   });
 });
