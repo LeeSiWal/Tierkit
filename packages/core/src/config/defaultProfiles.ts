@@ -97,7 +97,7 @@ export const DEFAULT_MODEL_PROFILES: ModelProfileMap = {
       command: "claude",
       args: ["-p", "--output-format", "json"],
       healthCheckArgs: ["--version"],
-      timeoutMs: 180_000,
+      timeoutMs: 300_000,
       maxStdoutBytes: 2_000_000,
       maxStderrBytes: 524_288,
     },
