@@ -536,6 +536,33 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, result);
       }
 
+      // v0.17: today's routing-savings summary, used by the GUI Savings card.
+      // Resolves baselineProfileId from config.routingBaseline (defaulting to
+      // "claudeCode"). Returns `baselineConfigured:false` with a reason when
+      // the resolved profile is missing or has no cost data.
+      if (route === "GET /v1/savings/today") {
+        const { computeRoutingSavings } = await import("./routingSavings.js");
+        const cfg = await loadConfig(opts.cwd);
+        const baselineId = cfg.config.routingBaseline ?? "claudeCode";
+        const profile = cfg.config.modelProfiles?.[baselineId];
+        const windowStart = new Date();
+        windowStart.setUTCHours(0, 0, 0, 0);
+
+        if (!profile || !profile.cost) {
+          return sendJson(res, 200, {
+            baselineConfigured: false,
+            baselineProfileId: baselineId,
+            reason: profile ? "no-cost-data" : "profile-missing",
+            windowStart: windowStart.toISOString(),
+          });
+        }
+
+        const usagePath = path.join(opts.cwd, cfg.config.runtime.dataDir, "usage.jsonl");
+        const records = await readUsage(usagePath);
+        const summary = computeRoutingSavings(records, profile, windowStart);
+        return sendJson(res, 200, { baselineConfigured: true, ...summary });
+      }
+
       // ── v1.5: session + models/plugins read endpoints (used by the GUI + SDK) ──
       if (route === "GET /v1/session") {
         const r = await getCurrentSession({ cwd: opts.cwd });
