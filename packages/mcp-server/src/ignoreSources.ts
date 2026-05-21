@@ -16,7 +16,8 @@ const BUNDLED_DENYLIST = [
   "id_ecdsa",
   "id_ecdsa.*",
   "secrets.json",
-  ".tierkit/runtime/",
+  ".tierkit",
+  ".tierkit/",
 ];
 
 export interface IgnoreSources {

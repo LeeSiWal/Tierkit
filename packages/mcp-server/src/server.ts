@@ -1,6 +1,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { logMcpActivity } from "@tierkit/core";
+import { listFilesTool } from "./tools/listFiles.js";
 
 export interface CreateMcpServerOptions {
   workspaceRoot: string;
@@ -45,10 +46,14 @@ async function dispatchTool(
   args: Record<string, unknown>,
   ctx: ToolCallContext,
 ): Promise<ToolEnvelope> {
-  void args; void ctx; // consumed once real tool handlers are wired in later phases
   switch (name) {
     // Phase 3 fills these in:
-    case "tierkit.list_files":        return notImplemented(name);
+    case "tierkit.list_files":
+      return listFilesTool({
+        workspaceRoot: ctx.workspaceRoot,
+        path: typeof args.path === "string" ? args.path : ".",
+        recursive: args.recursive === true,
+      });
     case "tierkit.read_file":         return notImplemented(name);
     case "tierkit.codebase_search":   return notImplemented(name);
     // Phase 4-5 fill these in:
@@ -90,7 +95,7 @@ function summarizeOutput(name: ToolName, result: ToolEnvelope): unknown {
   if (result.ok === false) return null;
   switch (name) {
     case "tierkit.read_file":         return { bytes: stringLen(result.content), truncated: Boolean(result.truncated) };
-    case "tierkit.list_files":        return { count: Array.isArray(result.files) ? result.files.length : 0 };
+    case "tierkit.list_files":        return { count: Array.isArray(result.entries) ? result.entries.length : 0 };
     case "tierkit.codebase_search":   return { hits: Array.isArray(result.matches) ? result.matches.length : 0 };
     case "tierkit.propose_patch":     return { patchId: result.patchId, riskLevel: (result.risk as any)?.level };
     case "tierkit.apply_patch":       return { fileCount: Array.isArray(result.files) ? result.files.length : 0 };
