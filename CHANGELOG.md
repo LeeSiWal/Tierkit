@@ -1,5 +1,84 @@
 # Changelog
 
+## 0.17.0 — 2026-05-22
+
+### Track A — Telemetry completion
+
+- **Fixed: streaming chat (`/v1/openai/chat/completions` with `stream: true`)
+  now appends a `UsageRecord` to `usage.jsonl` on stream end.** This was the
+  root cause of `claudeCode` never appearing in the activity panel — every
+  GUI chat call streams, and the streaming path silently skipped logging.
+  Aborted streams write `ok: false, failureCode: "stream-aborted"` so users
+  see the call happened even if it didn't complete. Provider error events
+  (e.g. `cli-exit-nonzero`) write the event's code as `failureCode`.
+- **New: Savings card switches from compression-only to routing-based.**
+  Today's local-device calls × baseline-profile cost = "Cloud tokens saved"
+  and "Estimated cost saved", polled every 5s. The baseline is configurable
+  via the new optional `routingBaseline` field in `tierkit.config.json`
+  (default `"claudeCode"`). When the baseline can't be priced (profile
+  missing or no `cost` block), the card shows `—` values plus a hint
+  pointing at the config key.
+- **New: `usage.jsonl` auto in-place trim.** When the file exceeds 10 MB,
+  the next `appendUsage` call trims it down to ~5 MB, keeping the most
+  recent entries. Heterogeneous-shape safe: MCP-tool records (`type: "mcp-tool"`)
+  and LLM-call records can coexist; the trim doesn't distinguish.
+
+### Track B — GUI per-tool envelope rendering
+
+- **Replaced raw JSON dumps with per-tool views.** `read_file` shows a
+  line-numbered code block plus truncation banner; `list_files` shows a
+  file/dir icon tree; `search_files` / `codebase_search` shows match
+  snippets with the query `<mark>`-highlighted; `run_command` shows
+  terminal-style stdout/stderr with an exit-code badge.
+- **Generic failure card with hint table.** Every envelope failure now
+  renders with a red error-code badge and a hint pulled from a 16-entry
+  table covering all v0.17 error codes (`stale-cursor`, `payload-corrupt`,
+  `approval-required`, `command-blocked`, etc.).
+- **`[Copy cursor]` button** on truncated results copies the opaque cursor
+  to clipboard. (`[▶ Continue]` one-click pagination deferred to v0.17.1 —
+  Tierkit core has no general-purpose `POST /v1/tool-call` endpoint.)
+- **No syntax highlighting library** in v0.17; code blocks use simple
+  monospace + line numbers. v0.17.1 candidate if users ask.
+- **Dispatch covers both naming schemes.** The same renderer handles
+  Agent-side names (`read_file`, `search_files`, ...) and the MCP-bridge
+  names (`tierkit.read_file`, `tierkit.codebase_search`, ...) so MCP tool
+  results coming through the agent loop render identically.
+
+### Track C — Windows hardening + cross-OS CI
+
+- **New: `.github/workflows/ci.yml`** runs `pnpm build` + `pnpm test`
+  on `ubuntu-latest`, `macos-latest`, AND `windows-latest` for every PR
+  and push to `main`. `fail-fast: false` so a Windows-only failure
+  doesn't mask Linux feedback.
+- **`runChild()` Windows quoting.** New `quoteForWindowsShell()` helper
+  wraps `transport.command` and args in cmd.exe-friendly form when
+  `shell: true` on Windows. Handles spaces in paths (e.g.,
+  `C:\Program Files\Node\node.exe`), pipes, ampersands, and embedded
+  quotes. macOS/Linux passthrough unchanged.
+- **Junction-point test fixture** verifies `fs.realpathSync` resolves
+  Windows reparse points so `workspaceBoundary` catches escapes via
+  junctions. Test runs only on Windows; skipped on macOS/Linux.
+- **`tierkit doctor`** emits a `warn` check when any subscription-CLI
+  profile's `transport.command` contains spaces.
+
+### Track D — Tidy
+
+- **MCP server advertises `TIERKIT_VERSION`** instead of literal `"0.15.0"`,
+  so `initialize.serverInfo.version` agrees with `package.json` on every
+  release.
+- **`docs/MCP_BRIDGE.md` rewritten** for the v0.16 envelope shape with
+  a concrete example per tool and a v0.17 error-code table.
+- **`read_file` returns `stale-cursor`** (not `not-found`) when the file
+  behind a cursor was deleted between issue and reuse. More informative
+  for both Agent and MCP callers — `not-found` is now reserved for paths
+  that never existed.
+
+### Pre-existing known issue (not introduced by v0.17)
+
+- `@tierkit/client/openaiCompat.test.ts:75` expects HTTP 400 but receives
+  404 for unknown profile id. Present at the v0.15.0 baseline before
+  any v0.16/v0.17 work. Tracked as a separate followup.
+
 ## 0.16.0 — 2026-05-22
 
 ### Track A — Windows unlock
