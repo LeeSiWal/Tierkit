@@ -328,6 +328,30 @@ export const GUI_HTML = `<!doctype html>
     overflow-y: auto;
   }
   .agent-tool-result.expanded { max-height: none; }
+  /* v0.17: per-tool envelope cards rendered inside .agent-tool-result. */
+  .env-card { border: 1px solid var(--border, #ddd); border-radius: 6px; margin: 4px 0; padding: 6px 8px; font-size: 11px; color: var(--fg); }
+  .env-card.env-failure { border-color: var(--err, #c00); background: rgba(245, 80, 80, 0.06); }
+  .env-header { display: flex; gap: 6px; align-items: center; padding-bottom: 4px; border-bottom: 1px solid var(--border-light, rgba(255,255,255,0.06)); }
+  .env-body { padding-top: 6px; font-family: 'SF Mono', Menlo, Consolas, monospace; font-size: 10.5px; white-space: pre; overflow-x: auto; max-height: 220px; overflow-y: auto; }
+  .env-body.env-error-message { font-family: inherit; white-space: normal; color: var(--err, #c00); padding-top: 6px; }
+  .env-hint { padding-top: 6px; font-size: 10.5px; color: var(--fg-dim); }
+  .env-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; }
+  .env-badge.badge-ok { background: rgba(158, 206, 106, 0.15); color: var(--ok, #058); }
+  .env-badge.badge-fail { background: rgba(245, 80, 80, 0.15); color: var(--err, #c00); }
+  .env-badge.badge-warn { background: rgba(245, 176, 65, 0.15); color: var(--warn, #a64); }
+  .env-badge.badge-truncated { background: rgba(245, 176, 65, 0.15); color: var(--warn, #a64); }
+  .env-code { background: rgba(255,255,255,0.04); padding: 6px 8px; border-radius: 3px; }
+  .env-key-arg { font-family: monospace; color: var(--accent, #058); }
+  .env-footer { padding-top: 6px; font-size: 10.5px; color: var(--fg-dim); }
+  .copy-cursor-btn { font-size: 10px; padding: 1px 6px; margin-left: 6px; cursor: pointer; }
+  .env-warning { padding-top: 4px; font-size: 10.5px; color: var(--warn, #a64); }
+  .env-stream-label { font-size: 10px; color: var(--fg-dim); padding: 4px 0; }
+  .env-stream { max-height: 180px; overflow-y: auto; }
+  .env-stream.env-stderr { color: var(--err, #c00); }
+  .env-tree { max-height: 220px; overflow-y: auto; }
+  .env-match { margin: 4px 0; }
+  .env-match-path { font-size: 10.5px; color: var(--accent, #058); font-family: monospace; padding-bottom: 2px; }
+  mark { background: rgba(245, 217, 47, 0.35); color: inherit; padding: 0 2px; border-radius: 2px; }
   .agent-tool-toggle {
     color: var(--fg-dim);
     cursor: pointer;
@@ -2069,6 +2093,137 @@ export const GUI_HTML = `<!doctype html>
     } finally { btn.disabled = false; }
   };
 
+  // ── v0.17: Tool-result envelope rendering ────────────────────────────────
+  // Every long-output tool returns tool-result-envelope.v1 JSON. The agent's
+  // tool_result handler used to dump the raw JSON into the card body; now it
+  // routes through ENVELOPE_RENDERERS based on env.tool, falling back to a
+  // generic success card and ultimately to a raw <pre> for non-envelope
+  // results. Failure envelopes (ok:false) share a single failure card with a
+  // hint table keyed by error.code (16 codes, plus unknown).
+
+  // Dispatch table maps both Agent-side names (read_file, ...) and MCP-side
+  // (tierkit.codebase_search, ...) to the same renderer.
+  function envelopeRenderers() {
+    return {
+      'read_file':                renderReadFileEnvelope,
+      'tierkit.read_file':        renderReadFileEnvelope,
+      'list_files':               renderListFilesEnvelope,
+      'tierkit.list_files':       renderListFilesEnvelope,
+      'search_files':             renderSearchFilesEnvelope,
+      'codebase_search':          renderSearchFilesEnvelope,
+      'tierkit.codebase_search':  renderSearchFilesEnvelope,
+      'execute_command':          renderRunCommandEnvelope,
+      'tierkit.run_command':      renderRunCommandEnvelope,
+    };
+  }
+
+  function isEnvelopeV1(payload) {
+    return payload && typeof payload === 'object' && payload.version === 'tool-result-envelope.v1';
+  }
+
+  // 16-code hint table — covers every v0.17 envelope error code that has a
+  // user-actionable hint. Unknown codes show the badge but no hint row.
+  const FAILURE_HINTS = {
+    'not-a-file':              'Pass a regular file path, not a directory',
+    'not-a-directory':         'Pass a directory path, not a file',
+    'path-escape':             'Path must stay within the workspace',
+    'outside-workspace':       'Path must stay within the workspace',
+    'ignored-path':            'This path is on the ignore/denylist',
+    'sensitive-file-blocked':  'This path matches a sensitive-file pattern',
+    'invalid-args':            'Check the required arguments',
+    'invalid-query':           'Pattern is empty or invalid regex',
+    'cursor-invalid':          'Re-issue the read without cursor',
+    'stale-cursor':            'File changed; re-read from beginning (no cursor)',
+    'payload-corrupt':         'Patch payload sha256 mismatch — re-propose the patch',
+    'payload-missing':         'Patch payload sidecar missing — re-propose the patch',
+    'approval-required':       'Run the command yourself in your shell',
+    'command-timeout':         'Increase transport.timeoutMs or narrow the command',
+    'spawn-failed':            'Verify the CLI binary is on PATH and executable',
+    'dangerous-command-blocked': 'Tierkit policy blocked: review and run manually if intended',
+  };
+
+  function iconForTool(tool) {
+    if (!tool) return '🔧';
+    if (tool.endsWith('read_file')) return '📄';
+    if (tool.endsWith('list_files')) return '📁';
+    if (tool.endsWith('search_files') || tool.endsWith('codebase_search')) return '🔍';
+    if (tool.endsWith('execute_command') || tool.endsWith('run_command')) return '⚡';
+    return '🔧';
+  }
+
+  function escapeRegex(s) {
+    return s.replace(/[.*+?^\${}()|[\]\\]/g, '\\\\$&');
+  }
+
+  function fmtBytes(n) {
+    if (n == null || !Number.isFinite(n)) return '0 B';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function renderEnvelopeFailure(env) {
+    const icon = iconForTool(env.tool);
+    const code = (env.error && env.error.code) || 'unknown-error';
+    const message = (env.error && env.error.message) || '(no message)';
+    const hint = FAILURE_HINTS[code];
+    return [
+      '<div class="env-card env-failure">',
+      '  <div class="env-header">' + icon + ' <strong>' + escapeHtml(env.tool || '?') + '</strong>' +
+        ' <span class="env-badge badge-fail">❌ ' + escapeHtml(code) + '</span></div>',
+      '  <div class="env-body env-error-message">' + escapeHtml(message) + '</div>',
+      hint ? '  <div class="env-hint">Hint: ' + escapeHtml(hint) + '</div>' : '',
+      '</div>',
+    ].join('\\n');
+  }
+
+  function renderEnvelopeSuccessGeneric(env) {
+    const icon = iconForTool(env.tool);
+    return [
+      '<div class="env-card">',
+      '  <div class="env-header">' + icon + ' <strong>' + escapeHtml(env.tool || '?') + '</strong>' +
+        ' <span class="env-badge badge-ok">ok</span></div>',
+      '  <pre class="env-body env-code">' + escapeHtml(JSON.stringify(env.data, null, 2)) + '</pre>',
+      '</div>',
+    ].join('\\n');
+  }
+
+  // Placeholder definitions — concrete renderers are added in Tasks 3.2/3.3/4.1/4.2.
+  // Each returns an HTML string.
+  function renderReadFileEnvelope(env)     { return renderEnvelopeSuccessGeneric(env); }
+  function renderListFilesEnvelope(env)    { return renderEnvelopeSuccessGeneric(env); }
+  function renderSearchFilesEnvelope(env)  { return renderEnvelopeSuccessGeneric(env); }
+  function renderRunCommandEnvelope(env)   { return renderEnvelopeSuccessGeneric(env); }
+
+  function renderToolResultEnvelope(toolResultContent) {
+    let env;
+    try { env = JSON.parse(toolResultContent); } catch { env = null; }
+    if (!isEnvelopeV1(env)) return null;
+    if (env.ok === false) return renderEnvelopeFailure(env);
+    const renderer = envelopeRenderers()[env.tool];
+    return renderer ? renderer(env) : renderEnvelopeSuccessGeneric(env);
+  }
+
+  // Delegated click handler for [Copy cursor] buttons (added once at init).
+  // Guarded so the JSDOM-free unit test sandbox (which has no document.body.addEventListener)
+  // doesn't blow up evaluating the IIFE.
+  if (!window.__tierkitEnvelopeClickHandlerInstalled && document.body && typeof document.body.addEventListener === 'function') {
+    document.body.addEventListener('click', (ev) => {
+      const target = ev.target;
+      if (target && target.classList && target.classList.contains('copy-cursor-btn')) {
+        const cursor = target.getAttribute('data-cursor') || '';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(cursor).then(() => {
+            const old = target.textContent;
+            target.textContent = '✓ Copied';
+            setTimeout(() => { target.textContent = old; }, 1500);
+          }).catch(() => {});
+        }
+      }
+    });
+    window.__tierkitEnvelopeClickHandlerInstalled = true;
+  }
+
   // ── Card: Recent activity ──────────────────────────────────────────────────
   async function refreshActivity() {
     try {
@@ -3293,19 +3448,28 @@ export const GUI_HTML = `<!doctype html>
       const body = el.querySelector('.agent-tool-result');
       if (!body) return;
       const content = String(evt.result.content || '');
-      const preview = content.length > 800 ? content.slice(0, 800) + '\\n... (' + (content.length - 800) + ' more bytes)' : content;
       body.removeAttribute('data-pending');
-      body.textContent = preview;
-      if (content.length > 800) {
-        const toggle = document.createElement('div');
-        toggle.className = 'agent-tool-toggle';
-        toggle.textContent = lang === 'ko' ? '전체 보기' : 'show full output';
-        toggle.onclick = () => {
-          body.textContent = content;
-          body.classList.add('expanded');
-          toggle.remove();
-        };
-        el.appendChild(toggle);
+
+      // v0.17: if the content is a tool-result-envelope.v1 JSON, render via
+      // per-tool dispatch instead of dumping raw JSON. Falls back to the
+      // pre-v0.17 truncate-and-toggle path for non-envelope content.
+      const envHtml = renderToolResultEnvelope(content);
+      if (envHtml) {
+        body.innerHTML = envHtml;
+      } else {
+        const preview = content.length > 800 ? content.slice(0, 800) + '\\n... (' + (content.length - 800) + ' more bytes)' : content;
+        body.textContent = preview;
+        if (content.length > 800) {
+          const toggle = document.createElement('div');
+          toggle.className = 'agent-tool-toggle';
+          toggle.textContent = lang === 'ko' ? '전체 보기' : 'show full output';
+          toggle.onclick = () => {
+            body.textContent = content;
+            body.classList.add('expanded');
+            toggle.remove();
+          };
+          el.appendChild(toggle);
+        }
       }
       scrollAgentBottom();
       return;
