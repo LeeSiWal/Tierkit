@@ -4755,7 +4755,7 @@ export const GUI_HTML = `<!doctype html>
       wrap.innerHTML = patches.map((p) =>
         '<div class="mcp-patch-row">' +
           '<span class="mcp-patch-id">' + escapeHtml(p.patchId) + '</span>' +
-          '<span class="mcp-patch-risk risk-' + escapeHtml(p.risk.level) + '">' + escapeHtml(p.risk.level === 'high' ? i18n.mcpPatchRiskHigh : i18n.mcpPatchRiskMedium) + '</span>' +
+          '<span class="mcp-patch-risk risk-' + (['high', 'medium', 'low'].includes(p.risk.level) ? p.risk.level : 'unknown') + '">' + escapeHtml(p.risk.level === 'high' ? i18n.mcpPatchRiskHigh : i18n.mcpPatchRiskMedium) + '</span>' +
           '<span class="mcp-patch-files">' + escapeHtml(p.files.map((f) => f.path).join(', ')) + '</span>' +
           '<button data-action="approve" data-id="' + escapeHtml(p.patchId) + '">' + escapeHtml(i18n.mcpPatchApprove) + '</button>' +
           '<button data-action="reject"  data-id="' + escapeHtml(p.patchId) + '">' + escapeHtml(i18n.mcpPatchReject) + '</button>' +

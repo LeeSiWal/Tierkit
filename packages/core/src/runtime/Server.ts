@@ -1316,8 +1316,9 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, { patches });
       }
 
-      if (method === "POST" && url.pathname.match(/^\/v1\/mcp\/patches\/[^/]+\/approve$/)) {
-        const id = url.pathname.split("/")[4]!;
+      const approveMatch = method === "POST" && url.pathname.match(/^\/v1\/mcp\/patches\/([^/]+)\/approve$/);
+      if (approveMatch) {
+        const id = approveMatch[1]!;
         try { await readPatchTicket(opts.cwd, id); }
         catch (err: unknown) {
           if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
@@ -1337,8 +1338,9 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         return sendJson(res, 200, { ok: true });
       }
 
-      if (method === "POST" && url.pathname.match(/^\/v1\/mcp\/patches\/[^/]+\/reject$/)) {
-        const id = url.pathname.split("/")[4]!;
+      const rejectMatch = method === "POST" && url.pathname.match(/^\/v1\/mcp\/patches\/([^/]+)\/reject$/);
+      if (rejectMatch) {
+        const id = rejectMatch[1]!;
         try { await readPatchTicket(opts.cwd, id); }
         catch (err: unknown) {
           if (err && (err as NodeJS.ErrnoException).code === "ENOENT") {
