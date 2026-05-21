@@ -1,1 +1,1 @@
-export const PACKAGE_NAME = "@tierkit/mcp-server";
+export { createMcpServer, type CreateMcpServerOptions } from "./server.js";
