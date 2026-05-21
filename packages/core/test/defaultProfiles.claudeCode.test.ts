@@ -2,6 +2,18 @@ import { describe, it, expect } from "vitest";
 import { DEFAULT_MODEL_PROFILES } from "../src/config/defaultProfiles.js";
 import { ModelProfileSchema } from "../src/model/ModelProfile.js";
 
+describe("DEFAULT_MODEL_PROFILES — local profiles notGoodAt", () => {
+  it("localCoder declares notGoodAt for review/plan/refactor", () => {
+    const local = (DEFAULT_MODEL_PROFILES as any).localCoder;
+    expect(local.notGoodAt).toEqual(expect.arrayContaining(["code-review", "plan", "refactor"]));
+  });
+
+  it("localFast declares notGoodAt for review/plan/refactor", () => {
+    const local = (DEFAULT_MODEL_PROFILES as any).localFast;
+    expect(local.notGoodAt).toEqual(expect.arrayContaining(["code-review", "plan", "refactor"]));
+  });
+});
+
 describe("DEFAULT_MODEL_PROFILES.claudeCode", () => {
   const claudeCode = (DEFAULT_MODEL_PROFILES as any).claudeCode;
 

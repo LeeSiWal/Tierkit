@@ -1,10 +1,14 @@
 import type { ModelTier } from "./ModelProfile.js";
+import type { TaskType } from "./TaskClassifier.js";
 
 export interface RiskInput {
   task: string;
   filesTouchedEstimate?: number;
   involvesSecrets?: boolean;
   involvesProductionInfra?: boolean;
+  /** Optional classifier output. When set, contributes to the risk score so
+   *  code-review / plan / refactor tasks escalate even without HIGH/MEDIUM keyword matches. */
+  taskType?: TaskType;
 }
 
 export interface RiskScore {
@@ -51,6 +55,20 @@ export function scoreRisk(input: RiskInput): RiskScore {
       score += 15;
       reasons.push(`task mentions medium-risk keyword "${kw}"`);
       break;
+    }
+  }
+
+  if (input.taskType) {
+    const taskTypeWeight: Partial<Record<TaskType, number>> = {
+      "code-review": 20,
+      "plan": 15,
+      "refactor": 15,
+      // code-generation/summarize/translate/general → 0
+    };
+    const bump = taskTypeWeight[input.taskType] ?? 0;
+    if (bump > 0) {
+      score += bump;
+      reasons.push(`task classified as "${input.taskType}" (+${bump})`);
     }
   }
 

@@ -21,6 +21,7 @@ export const DEFAULT_MODEL_PROFILES: ModelProfileMap = {
     model: "qwen2.5-coder:7b",
     baseUrl: "http://127.0.0.1:11434",
     roles: ["code", "review", "plan"],
+    notGoodAt: ["code-review", "plan", "refactor"],
     cost: { type: "free" },
   },
   localFast: {
@@ -29,6 +30,7 @@ export const DEFAULT_MODEL_PROFILES: ModelProfileMap = {
     model: "llama3.2:3b",
     baseUrl: "http://127.0.0.1:11434",
     roles: ["small", "summarize"],
+    notGoodAt: ["code-review", "plan", "refactor"],
     cost: { type: "free" },
   },
 

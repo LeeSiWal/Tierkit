@@ -7,6 +7,7 @@ import {
   type RiskInput,
   type RiskThresholds,
 } from "./RiskScorer.js";
+import type { TaskType } from "./TaskClassifier.js";
 
 export interface RouteCandidate {
   id: string;
@@ -130,7 +131,7 @@ export function decideRoute(input: ExplainRouteInput): RouteDecision {
   const ceiling = input.ceiling ?? "public-cloud";
   const taskType = input.taskType ?? "general";
 
-  const { score, reasons } = scoreRisk(task);
+  const { score, reasons } = scoreRisk({ ...task, taskType: taskType as TaskType });
   const tier = tierForScore(score, thresholds);
 
   const escalationChain = buildEscalationChain(profiles, tier, ceiling, taskType);
