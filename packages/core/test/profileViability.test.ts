@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { checkProfileViability, partitionByViability } from "../src/model/profileViability.js";
+import fs from "node:fs/promises";
 
 const realFetch = globalThis.fetch;
 
@@ -70,6 +71,17 @@ describe("checkProfileViability", () => {
       {},
     );
     expect(r.viable).toBe(true);
+  });
+});
+
+describe("profileViability — runChild integration", () => {
+  it("imports runChild and uses it (no direct spawn)", async () => {
+    const src = await fs.readFile(
+      new URL("../src/model/profileViability.ts", import.meta.url),
+      "utf8",
+    );
+    expect(src).toContain('from "./providers/runChild.js"');
+    expect(src).not.toMatch(/^\s*import\s+\{\s*spawn\s*\}\s+from\s+"node:child_process"/m);
   });
 });
 
