@@ -8,6 +8,8 @@
  * — but a "not viable" verdict is reliably actionable.
  *
  * Checks by tier:
+ *   - **subprocess transport**: spawn `transport.command transport.healthCheckArgs`, wait for
+ *     exit 0. ENOENT/EACCES → cli-not-found; non-zero exit or timeout → cli-healthcheck-failed.
  *   - **local-device + ollama**: probe `{baseUrl}/api/tags`, confirm the profile's model
  *     appears in the installed list (exact match OR with a `:tag` suffix).
  *   - **private-remote / public-cloud**: confirm the `apiKeyEnv` env var is set.
@@ -15,12 +17,18 @@
  * We use a short timeout (1.5s) so a hung probe doesn't delay routing. If the probe times
  * out, we mark the profile non-viable — same effect as if Ollama were down.
  */
+import { spawn } from "node:child_process";
 import type { ModelProfile } from "./ModelProfile.js";
 
 export interface ViabilityResult {
   viable: boolean;
   /** Why not, when viable === false. Useful for logging / error messages. */
-  reason?: "missing-api-key" | "ollama-unreachable" | "model-not-installed";
+  reason?:
+    | "missing-api-key"
+    | "ollama-unreachable"
+    | "model-not-installed"
+    | "cli-not-found"
+    | "cli-healthcheck-failed";
 }
 
 const PROBE_TIMEOUT_MS = 1500;
@@ -33,6 +41,46 @@ export async function checkProfileViability(
   profile: ModelProfile,
   env: Record<string, string | undefined>,
 ): Promise<ViabilityResult> {
+  // ── Subprocess transport: spawn healthcheck command and check exit code. ───
+  if (profile.transport?.type === "subprocess") {
+    const t = profile.transport;
+    const probeTimeout = Math.min(1500, t.timeoutMs);
+    const result = await new Promise<
+      { ok: true } | { ok: false; reason: "cli-not-found" | "cli-healthcheck-failed" }
+    >((resolve) => {
+      let settled = false;
+      let timed = false;
+      const finish = (
+        r: { ok: true } | { ok: false; reason: "cli-not-found" | "cli-healthcheck-failed" },
+      ) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(r);
+      };
+      const child = spawn(t.command, t.healthCheckArgs, { stdio: ["ignore", "pipe", "pipe"] });
+      const timer = setTimeout(() => {
+        timed = true;
+        try { child.kill("SIGKILL"); } catch { /* */ }
+      }, probeTimeout);
+      child.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "ENOENT" || err.code === "EACCES") {
+          finish({ ok: false, reason: "cli-not-found" });
+        } else {
+          finish({ ok: false, reason: "cli-healthcheck-failed" });
+        }
+      });
+      child.on("close", (code) => {
+        if (timed) return finish({ ok: false, reason: "cli-healthcheck-failed" });
+        finish(code === 0 ? { ok: true } : { ok: false, reason: "cli-healthcheck-failed" });
+      });
+      // Drain stdio so the child does not block on a full pipe buffer.
+      child.stdout!.resume();
+      child.stderr!.resume();
+    });
+    return result.ok ? { viable: true } : { viable: false, reason: result.reason };
+  }
+
   // ── Remote tiers: API key must be set. (Cheap — no network.) ──────────────
   if (profile.kind !== "local-device") {
     if (profile.apiKeyEnv && !env[profile.apiKeyEnv]) {
