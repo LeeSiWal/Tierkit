@@ -37,6 +37,32 @@ the MCP Bridge, or the agent's tool layer.
       for the tools that were used. No `cli-timeout` entries unless the
       prompt was genuinely large.
 
+### v0.17 additions
+
+- [ ] **claudeCode appears in the activity panel after a streaming chat.**
+      Send any prompt through the GUI chat sidebar (which uses streaming).
+      The Recent activity card shows a row with `profileId=claudeCode`.
+      Pre-v0.17 this row was missing entirely (the streaming path skipped
+      usage logging).
+- [ ] **Savings card shows non-`—` values.** With at least one local-device
+      LLM call today, the "Today (routing)" card shows non-zero "Cloud input
+      tokens saved" / "Estimated cost saved" / "Cloud calls avoided".
+      Baseline line shows the resolved profile (default `claudeCode`).
+      When `routingBaseline` is unset and `claudeCode` is missing or
+      uncosted, the hint row appears below.
+- [ ] **Per-tool envelope rendering.** Drive a tool call from the chat
+      sidebar (e.g. ask the agent to read a file) and confirm the activity
+      panel shows the per-tool view — line-numbered code for `read_file`,
+      file/dir tree for `list_files`, etc. — NOT raw JSON.
+- [ ] **`[Copy cursor]` works** on a truncated `read_file` result. Click
+      it; clipboard contains the opaque cursor string.
+- [ ] **MCP `initialize` advertises `0.17.0`.** Run `tierkit mcp serve` and
+      connect from an MCP client; `serverInfo.version` should read `0.17.0`,
+      not the v0.15.0 literal.
+- [ ] **`tierkit doctor` flags subprocess command paths with spaces.**
+      Set `transport.command` to a path containing whitespace in
+      `tierkit.config.json`; `tierkit doctor` emits a `subprocess-command-space-<id>` warn check.
+
 ### Failure protocol
 
 If any item fails, STOP and surface the failure. Do not publish the vsix.

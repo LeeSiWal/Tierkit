@@ -12,7 +12,7 @@ agents. Two distribution surfaces:
    agent. Tierkit becomes the local policy gateway; the agent remains in
    the calling client. See [docs/MCP_BRIDGE.md](docs/MCP_BRIDGE.md).
 
-> **Status: v0.16.0** — Windows unlock + Tool Result Envelope + timeout policy. See [CHANGELOG.md](CHANGELOG.md#0160--2026-05-22). Key milestones:
+> **Status: v0.17.0** — Telemetry completion + GUI per-tool rendering + Windows hardening + cross-OS CI. See [CHANGELOG.md](CHANGELOG.md#0170--2026-05-22). Key milestones:
 >
 > - **v0.11** — deterministic `tierkit context build / show / send / compare` CLI for measuring real savings.
 > - **v0.12** — cost-aware routing v2 with `paymentModel` dimension (free / flat-rate / per-token), per-profile USD + input-token caps, `/v1/usage.profiles`, GUI per-profile bars.
@@ -20,6 +20,7 @@ agents. Two distribution surfaces:
 > - **v0.14** — zero-CLI onboarding, daemon health checks, profile state unification.
 > - **v0.15** — MCP Bridge: `@tierkit/mcp-server` with 7 gated tools, ephemeral patch tickets, approval flow (CLI + GUI), `run_command` sandbox, activity log.
 > - **v0.16** — Windows unlock (`.cmd` shim resolution, env propagation), Tool Result Envelope (`tool-result-envelope.v1`) for all long-output tools, timeout policy (300 s default, doctor hint).
+> - **v0.17** — Streaming usage telemetry (claudeCode now shows in activity panel), routing-based Savings card, per-tool envelope rendering (read_file/list_files/search_files/run_command + uniform failure card), Windows shell quoting + cross-OS CI matrix.
 >
 > See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 

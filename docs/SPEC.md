@@ -715,5 +715,55 @@ Invariants:
 | Code | Tools | Meaning |
 |---|---|---|
 | `cursor-invalid` | all long-output tools | Cursor failed to decode or shape mismatch |
-| `stale-cursor` | `read_file` | File's `fileHash` differs from cursor's stored hash |
+| `stale-cursor` | `read_file` | File's `fileHash` differs from cursor's stored hash OR file was deleted between issue and reuse |
 | `invalid-args` | all | Missing required arg (e.g. `path`) |
+
+## v0.17 — Completion + Hardening
+
+Spec: [docs/superpowers/specs/2026-05-22-v0.17-completion-and-hardening-design.md](superpowers/specs/2026-05-22-v0.17-completion-and-hardening-design.md)
+
+### Telemetry surface
+
+- Streaming LLM calls write `UsageRecord` to `usage.jsonl` on stream end.
+  Aborted streams write `ok: false, failureCode: "stream-aborted"`.
+  Provider error events write `ok: false` with the event's code as
+  `failureCode` (e.g. `cli-exit-nonzero`).
+- New `GET /v1/savings/today` returns `RoutingSavingsSummary`:
+  `{ baselineConfigured, baselineProfileId, baselineDisplayName,
+     inputTokensRouted, outputTokensRouted, estimatedCostSaved,
+     cloudCallsAvoided, windowStart }`. When the baseline can't be priced,
+  returns `{ baselineConfigured: false, reason: "profile-missing"|"no-cost-data" }`.
+- `tierkit.config.json` gains optional `routingBaseline: string` (default
+  `"claudeCode"` at resolution time).
+- `usage.jsonl` auto-trims in place at 10 MB → 5 MB on next `appendUsage`.
+
+### New error codes (additive to v0.16)
+
+| Code | Meaning |
+|---|---|
+| `stream-aborted` | Streaming chat aborted before completion (`UsageRecord.failureCode`) |
+
+### Tool result UX
+
+GUI renders v0.16 envelope shape per tool: `read_file` (line-numbered code),
+`list_files` (file/dir icon tree), `search_files` / `codebase_search` (match
+snippets with `<mark>`-highlighted query), `run_command` (terminal-style
+stdout/stderr with exit-code badge). Failure envelopes use a uniform card
+with a 16-entry hint table keyed by `error.code`. The same dispatch covers
+both Agent names (e.g. `read_file`) and MCP names (e.g. `tierkit.read_file`).
+
+### Subscription-CLI subprocess
+
+`runChild()` exports `quoteForWindowsShell()` and applies it to the command
+and each arg when `process.platform === "win32"` (where `shell: true` is
+already required for `.cmd` shim resolution). The helper is a no-op for
+plain strings, so simple invocations are unchanged. `tierkit doctor`
+surfaces a `warn` check (`subprocess-command-space-<id>`) when a profile's
+`transport.command` contains whitespace.
+
+### CI
+
+Cross-OS matrix at `.github/workflows/ci.yml` enforces `pnpm build` + `pnpm
+test` on `ubuntu-latest`, `macos-latest`, and `windows-latest` on every PR
+and push to `main`. `fail-fast: false`.
+
