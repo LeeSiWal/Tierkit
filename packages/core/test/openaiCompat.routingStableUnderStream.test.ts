@@ -37,6 +37,7 @@ describe("routing stable under stream:true", () => {
       JSON.stringify({ version: "0.1", plugins: [] }));
     await fs.writeFile(path.join(root, "tierkit.config.json"), JSON.stringify({
       version: "0.1",
+      migrations: { defaultDisabledSeededProfileIds: ["claudeCode"] },
       modelProfiles: {
         claudeCode: {
           kind: "private-remote", provider: "claude-code", model: "auto", paymentModel: "flat-rate",
@@ -80,6 +81,7 @@ describe("routing stable under stream:true", () => {
       JSON.stringify({ version: "0.1", plugins: [] }));
     await fs.writeFile(path.join(root, "tierkit.config.json"), JSON.stringify({
       version: "0.1",
+      migrations: { defaultDisabledSeededProfileIds: ["claudeCode"] },
       modelProfiles: {
         // Within the same tier, claudeCode (flat-rate) should beat claudeSonnet (per-token).
         // claudeSonnet has no API key in this test env, so it'd be pruned anyway, but we
