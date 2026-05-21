@@ -129,7 +129,21 @@ export async function handleOpenAIChatCompletions(
   if (req2.stream) {
     // For streaming we only try the first candidate — switching mid-stream is hairy.
     // If auto's first pick fails for streaming clients, they'll get the error in-band.
-    await streamResponse(res, { profileId: candidateIds[0]!, ...baseLlmReq }, context, candidateIds[0]!);
+    const firstId = candidateIds[0]!;
+
+    // Subprocess providers (e.g. claude-code) don't support native streaming in v0.13.
+    // Load config to inspect the first candidate's transport type. loadConfig is cheap
+    // (cached) so re-calling it here doesn't add meaningful latency.
+    const { loadConfig: loadCfgForStream } = await import("../config/loadConfig.js");
+    const cfgForStream = await loadCfgForStream(context.cwd);
+    const firstProfile = cfgForStream.config.modelProfiles[firstId];
+    const isSubprocess = firstProfile?.transport?.type === "subprocess";
+
+    if (isSubprocess) {
+      await streamDegradedResponse(res, { profileId: firstId, ...baseLlmReq }, context, firstId);
+      return;
+    }
+    await streamResponse(res, { profileId: firstId, ...baseLlmReq }, context, firstId);
     return;
   }
 
@@ -292,6 +306,97 @@ async function streamResponse(
       total_tokens: result.inputTokens + result.outputTokens,
     },
   });
+  res.write("data: [DONE]\n\n");
+  res.end();
+}
+
+/**
+ * Synthesise a valid OpenAI SSE stream from a single buffered `executeLlmCall` result.
+ *
+ * Used when the selected profile uses a subprocess transport (e.g. claude-code). These
+ * providers do not support native token streaming in v0.13, so we collect the full
+ * response and emit it as a three-chunk SSE sequence.  Both the first (role) chunk and
+ * the final (usage + finish) chunk carry a `tierkit.warning: "stream-degraded-to-non-stream"`
+ * field so callers can detect the behaviour and log/surface it as appropriate.
+ */
+async function streamDegradedResponse(
+  res: http.ServerResponse,
+  llmReq: LlmCallRequest,
+  context: OpenAICompatContext,
+  profileId: string,
+): Promise<void> {
+  res.statusCode = 200;
+  res.setHeader("content-type", "text/event-stream");
+  res.setHeader("cache-control", "no-cache");
+  res.setHeader("connection", "keep-alive");
+  res.flushHeaders?.();
+
+  const result = await executeLlmCall(llmReq, { cwd: context.cwd, env: context.env });
+  const created = Math.floor(Date.now() / 1000);
+  const cmplId = `chatcmpl-${Math.random().toString(36).slice(2, 12)}`;
+
+  const tierkitWarning = "stream-degraded-to-non-stream" as const;
+
+  if (!result.ok) {
+    // Emit a single error chunk so the client gets an in-band signal, then DONE.
+    res.write(`data: ${JSON.stringify({
+      id: cmplId,
+      object: "chat.completion.chunk",
+      created,
+      model: profileId,
+      choices: [],
+      tierkit: {
+        profileId,
+        warning: tierkitWarning,
+        error: result.code,
+      },
+    })}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+    return;
+  }
+
+  const tierkitMeta = {
+    profileId,
+    warning: tierkitWarning,
+  };
+
+  // Chunk 1: role assignment + warning envelope (matches OpenAI's convention of sending
+  // a role-only delta before the first content delta).
+  res.write(`data: ${JSON.stringify({
+    id: cmplId,
+    object: "chat.completion.chunk",
+    created,
+    model: result.model || profileId,
+    choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }],
+    tierkit: tierkitMeta,
+  })}\n\n`);
+
+  // Chunk 2: single content delta (no tierkit envelope — middle chunks stay lean).
+  res.write(`data: ${JSON.stringify({
+    id: cmplId,
+    object: "chat.completion.chunk",
+    created,
+    model: result.model || profileId,
+    choices: [{ index: 0, delta: { content: result.text }, finish_reason: null }],
+  })}\n\n`);
+
+  // Chunk 3: finish + usage + warning envelope (lets callers correlate usage with the
+  // degraded-stream warning without having to inspect chunk 1).
+  res.write(`data: ${JSON.stringify({
+    id: cmplId,
+    object: "chat.completion.chunk",
+    created,
+    model: result.model || profileId,
+    choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
+    usage: {
+      prompt_tokens: result.inputTokens,
+      completion_tokens: result.outputTokens,
+      total_tokens: result.inputTokens + result.outputTokens,
+    },
+    tierkit: tierkitMeta,
+  })}\n\n`);
+
   res.write("data: [DONE]\n\n");
   res.end();
 }
