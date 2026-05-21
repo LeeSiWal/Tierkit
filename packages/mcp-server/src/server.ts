@@ -69,7 +69,7 @@ async function dispatchTool(
 function summarizeInput(name: ToolName, args: Record<string, unknown>): unknown {
   switch (name) {
     case "tierkit.read_file":         return { path: pathBasename(args.path), encoding: args.encoding ?? "utf8" };
-    case "tierkit.list_files":        return { pattern: args.pattern, hasGlob: Boolean(args.pattern) };
+    case "tierkit.list_files":        return { patternLength: stringLen(args.pattern), hasGlob: Boolean(args.pattern) };
     case "tierkit.codebase_search":   return { queryLength: stringLen(args.query) };
     case "tierkit.propose_patch":     return { fileCount: Array.isArray(args.files) ? args.files.length : 0 };
     case "tierkit.apply_patch":       return { patchId: args.patchId };
@@ -81,7 +81,13 @@ function summarizeInput(name: ToolName, args: Record<string, unknown>): unknown 
 
 function summarizeOutput(name: ToolName, result: ToolEnvelope): unknown {
   // Sizes and counts only. Never the actual content.
-  if (!result || result.ok === false) return null;
+  if (!result) return null;
+  // get_policy_status's count is safe to log even on failure
+  if (name === "tierkit.get_policy_status") {
+    return { pendingPatches: result.pendingPatches };
+  }
+  // For everything else, content-bearing results — only log on success
+  if (result.ok === false) return null;
   switch (name) {
     case "tierkit.read_file":         return { bytes: stringLen(result.content), truncated: Boolean(result.truncated) };
     case "tierkit.list_files":        return { count: Array.isArray(result.files) ? result.files.length : 0 };
@@ -89,7 +95,6 @@ function summarizeOutput(name: ToolName, result: ToolEnvelope): unknown {
     case "tierkit.propose_patch":     return { patchId: result.patchId, riskLevel: (result.risk as any)?.level };
     case "tierkit.apply_patch":       return { fileCount: Array.isArray(result.files) ? result.files.length : 0 };
     case "tierkit.run_command":       return { exitCode: result.exitCode, truncated: Boolean(result.truncated) };
-    case "tierkit.get_policy_status": return { pendingPatches: result.pendingPatches };
     default:                          return null;
   }
 }
@@ -122,7 +127,7 @@ async function withActivityLog(
     result = await dispatchTool(name, args, ctx);
     if (result && result.ok === false) {
       ok = false;
-      code = (result.code as string) ?? "unknown";
+      code = result.code ?? "unknown";
     }
   } catch (err: any) {
     ok = false;
