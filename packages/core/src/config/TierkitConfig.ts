@@ -164,6 +164,13 @@ export const TierkitConfigSchema = z
       dataDir: ".tierkit/runtime",
       host: "127.0.0.1",
     }),
+    migrations: z.object({
+      defaultDisabledSeededProfileIds: z.array(z.string().min(1)).default([]),
+    }).default({}),
+    notices: z.object({
+      seenPinnedNoFallbackV013: z.boolean().default(false),
+      seenModelTestExplained: z.boolean().default(false),
+    }).default({}),
   })
   .strict();
 

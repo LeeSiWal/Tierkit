@@ -94,6 +94,18 @@ function mergeConfigs(
     ...(o.budget !== undefined ? { budget: o.budget } : base.budget !== undefined ? { budget: base.budget } : {}),
     ...(o.modelPolicy !== undefined ? { modelPolicy: o.modelPolicy } : base.modelPolicy !== undefined ? { modelPolicy: base.modelPolicy } : {}),
     runtime: o.runtime ?? base.runtime,
+    migrations: {
+      defaultDisabledSeededProfileIds: [
+        ...new Set([
+          ...base.migrations.defaultDisabledSeededProfileIds,
+          ...o.migrations.defaultDisabledSeededProfileIds,
+        ]),
+      ],
+    },
+    notices: {
+      seenPinnedNoFallbackV013: o.notices.seenPinnedNoFallbackV013 || base.notices.seenPinnedNoFallbackV013,
+      seenModelTestExplained: o.notices.seenModelTestExplained || base.notices.seenModelTestExplained,
+    },
   };
 }
 
