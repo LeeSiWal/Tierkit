@@ -70,4 +70,25 @@ describe("@tierkit/mcp-server — minimal handshake", () => {
       await fs.rm(workspace, { recursive: true, force: true });
     }
   });
+
+  it("activity log carries envelope.{truncated,hasCursor,remainingLines} for envelope tools", async () => {
+    const { readMcpActivity } = await import("@tierkit/core");
+    const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-actlog-env-"));
+    try {
+      // Create a file large enough to trigger truncation (900 lines > 300 default maxLines)
+      const big = Array.from({ length: 900 }, (_, i) => `line ${i + 1}`).join("\n");
+      await fs.writeFile(path.join(workspace, "big.ts"), big);
+
+      await callOneTool(workspace, "tierkit.read_file", { path: "big.ts" });
+
+      const log = await readMcpActivity(workspace);
+      const lastEntry = log[log.length - 1];
+      expect(lastEntry.envelope).toBeDefined();
+      expect(lastEntry.envelope?.truncated).toBe(true);
+      expect(lastEntry.envelope?.hasCursor).toBe(true);
+      expect(lastEntry.envelope?.remainingLines).toBe(600);
+    } finally {
+      await fs.rm(workspace, { recursive: true, force: true });
+    }
+  });
 });

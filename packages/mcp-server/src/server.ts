@@ -124,21 +124,63 @@ function summarizeInput(name: ToolName, args: Record<string, unknown>): unknown 
 function summarizeOutput(name: ToolName, result: ToolEnvelope): unknown {
   // Sizes and counts only. Never the actual content.
   if (!result) return null;
-  // get_policy_status's count is safe to log even on failure
+  // get_policy_status is safe to log on both success and failure (count only).
   if (name === "tierkit.get_policy_status") {
     return { pendingPatches: result.pendingPatches };
   }
   // For everything else, content-bearing results — only log on success
   if (result.ok === false) return null;
   switch (name) {
-    case "tierkit.read_file":         return { bytes: stringLen(result.content), truncated: Boolean(result.truncated) };
-    case "tierkit.list_files":        return { count: Array.isArray(result.entries) ? result.entries.length : 0 };
-    case "tierkit.codebase_search":   return { hits: Array.isArray(result.matches) ? result.matches.length : 0 };
+    // v0.16 envelope tools: data lives under result.data
+    case "tierkit.read_file": {
+      const data = result.data;
+      return {
+        bytes: stringLen(data?.content),
+        path: pathBasename(data?.path),
+      };
+    }
+    case "tierkit.list_files": {
+      const data = result.data;
+      return {
+        count: Array.isArray(data?.entries) ? data.entries.length : 0,
+      };
+    }
+    case "tierkit.codebase_search": {
+      const data = result.data;
+      return {
+        hits: Array.isArray(data?.matches) ? data.matches.length : 0,
+      };
+    }
+    case "tierkit.run_command": {
+      const data = result.data;
+      const size = result.size;
+      return {
+        exitCode: data?.exitCode,
+        stdoutBytes: size?.stdoutBytesReturned,
+        stderrBytes: size?.stderrBytesReturned,
+        truncated: Boolean(result.truncated),
+      };
+    }
+    // Non-envelope tools (propose_patch, apply_patch) still read top-level fields
     case "tierkit.propose_patch":     return { patchId: result.patchId, riskLevel: (result.risk as any)?.level };
     case "tierkit.apply_patch":       return { fileCount: Array.isArray(result.files) ? result.files.length : 0 };
-    case "tierkit.run_command":       return { exitCode: result.exitCode, truncated: Boolean(result.truncated) };
     default:                          return null;
   }
+}
+
+/**
+ * Extract activity-log envelope metadata from a tool result. Returns undefined
+ * for non-envelope results (e.g. propose_patch / apply_patch / get_policy_status
+ * which don't migrate to envelope in v0.16).
+ */
+function summarizeEnvelope(result: ToolEnvelope): { truncated: boolean; hasCursor: boolean; remainingLines?: number } | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  if (result.version !== "tool-result-envelope.v1") return undefined;
+  return {
+    truncated: Boolean(result.truncated),
+    hasCursor: Boolean(result.next?.cursor),
+    remainingLines: typeof result.size?.remainingLines === "number" ? result.size.remainingLines : undefined,
+  };
 }
 
 function pathBasename(p: unknown): string | null {
@@ -169,7 +211,8 @@ async function withActivityLog(
     result = await dispatchTool(name, args, ctx);
     if (result && result.ok === false) {
       ok = false;
-      code = result.code ?? "unknown";
+      // v0.16 envelope tools use result.error.code; legacy tools use result.code
+      code = result.error?.code ?? result.code ?? "unknown";
     }
   } catch (err: any) {
     ok = false;
@@ -190,6 +233,7 @@ async function withActivityLog(
     redactionHits,
     inputSummary: summarizeInput(name, args),
     outputSummary: summarizeOutput(name, result),
+    envelope: summarizeEnvelope(result),   // v0.16: envelope metadata
   }).catch(() => { /* swallow — never fail a tool call because logging failed */ });
 
   return {
