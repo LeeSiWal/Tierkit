@@ -71,6 +71,32 @@ export const DEFAULT_MODEL_PROFILES: ModelProfileMap = {
     defaultMode: "review-only",
     cost: { type: "per-token", inputUsdPerMillion: 0.15, outputUsdPerMillion: 0.6 },
   },
+
+  // ── private-remote subscription CLI (v0.13) ───────────────────────────────────
+  // Disabled by default — `migrateSeedDefaultDisabled` adds this id to
+  // `disabledProfileIds` on first workspace load. Once seeded, user-driven enable
+  // is respected and never re-undone.
+  // No `cost` declared: the subscription is paid out of band, so per-call costUsd = 0.
+  claudeCode: {
+    kind: "private-remote",
+    paymentModel: "flat-rate",
+    provider: "claude-code",
+    model: "auto",
+    displayName: "Claude Code",
+    roles: ["code", "review", "plan"],
+    goodAt: ["code-review", "planning", "debugging", "large-refactor"],
+    requiresApproval: true,
+    defaultDisabled: true,
+    transport: {
+      type: "subprocess",
+      command: "claude",
+      args: ["-p", "--output-format", "json"],
+      healthCheckArgs: ["--version"],
+      timeoutMs: 120_000,
+      maxStdoutBytes: 2_000_000,
+      maxStderrBytes: 524_288,
+    },
+  },
 };
 
 export const DEFAULT_PROFILE_IDS = Object.keys(DEFAULT_MODEL_PROFILES);
