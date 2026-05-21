@@ -740,15 +740,23 @@ export const GUI_HTML = `<!doctype html>
   <!-- ── SAVINGS ─────────────────────────────────────────────────────── -->
   <h3 class="settings-group" data-i18n="groupSavings">Savings</h3>
 
+  <!-- v0.17: routing-based savings — sums local-device LLM calls today and
+       multiplies by the configured baseline (default claudeCode) cost. Polls
+       /v1/savings/today every 5s alongside refreshUsage/refreshActivity. -->
   <section class="card">
-    <h2><span data-i18n="cardSavingsToday">Today</span></h2>
-    <!-- Existing usage-summary refresh logic renders here. Cells render as '—' when /v1/usage has no data. -->
+    <h2><span data-i18n="cardSavingsTodayRouting">Today (routing)</span></h2>
     <div id="card-savings-today-body">
-      <div class="metric"><span data-i18n="metricTokensSaved">Cloud input tokens saved</span>: <span id="m-tokens-saved">—</span></div>
-      <div class="metric"><span data-i18n="metricCostSaved">Estimated cost saved</span>: <span id="m-cost-saved">—</span></div>
-      <div class="metric"><span data-i18n="metricCallsAvoided">Cloud calls avoided</span>: <span id="m-calls-avoided">—</span></div>
-      <div class="dim" data-i18n="hintNoMeasurements">Run \`tierkit context compare\` to start measuring savings.</div>
+      <div class="metric"><span data-i18n="metricInputTokensSaved">Cloud input tokens saved</span>: <span id="m-routing-input-tokens">—</span></div>
+      <div class="metric"><span data-i18n="metricCostSaved">Estimated cost saved</span>: <span id="m-routing-cost-saved">—</span></div>
+      <div class="metric"><span data-i18n="metricCloudCallsAvoided">Cloud calls avoided</span>: <span id="m-routing-calls-avoided">—</span></div>
+      <div class="metric dim"><span data-i18n="labelBaseline">Baseline</span>: <span id="m-routing-baseline">—</span></div>
+      <div id="m-routing-empty-hint" class="dim" data-i18n="hintBaselineNotConfigured" hidden>(no baseline configured — set routingBaseline in tierkit.config.json)</div>
     </div>
+  </section>
+
+  <section class="card">
+    <h2><span data-i18n="cardCompressionMeasurements">Compression measurements</span></h2>
+    <div class="dim" data-i18n="hintCompressionMeasurements">Run \`tierkit context compare\` to populate compression A/B measurements.</div>
   </section>
 
   <!-- ── CURRENT PROJECT ────────────────────────────────────────────── -->
@@ -965,6 +973,13 @@ export const GUI_HTML = `<!doctype html>
       groupIntegrations: '연결된 도구',
       groupAdvanced: '고급',
       cardSavingsToday: '오늘',
+      cardSavingsTodayRouting: '오늘 (라우팅 절감)',
+      metricInputTokensSaved: '클라우드 입력 토큰 절감',
+      metricCloudCallsAvoided: '회피된 클라우드 호출',
+      labelBaseline: '비교 대상',
+      hintBaselineNotConfigured: '(비교 대상 미설정 — tierkit.config.json에서 routingBaseline 지정)',
+      cardCompressionMeasurements: '압축 측정',
+      hintCompressionMeasurements: '\`tierkit context compare\`를 실행하면 압축 A/B 측정이 채워집니다.',
       cardCurrentArtifact: '마지막 압축 컨텍스트',
       cardLocalModels: '로컬 + 프라이빗 + 클라우드 모델',
       labelLocalCompressor: '로컬 압축기',
@@ -2107,6 +2122,30 @@ export const GUI_HTML = `<!doctype html>
       }
     } catch (e) {
       $('activity-list').innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  // ── Card: routing savings (v0.17) ────────────────────────────────────────
+  // Polls GET /v1/savings/today every 5s. When the baseline is not configured
+  // or the resolved profile lacks cost data, shows '—' values + the hint row.
+  async function refreshSavings() {
+    try {
+      const r = await jget('/v1/savings/today');
+      if (!r || r.baselineConfigured === false) {
+        $('m-routing-input-tokens').textContent = '—';
+        $('m-routing-cost-saved').textContent = '—';
+        $('m-routing-calls-avoided').textContent = '—';
+        $('m-routing-baseline').textContent = '—';
+        $('m-routing-empty-hint').hidden = false;
+        return;
+      }
+      $('m-routing-input-tokens').textContent = String(r.inputTokensRouted ?? 0);
+      $('m-routing-cost-saved').textContent = fmtCost(r.estimatedCostSaved);
+      $('m-routing-calls-avoided').textContent = String(r.cloudCallsAvoided ?? 0);
+      $('m-routing-baseline').textContent = String(r.baselineDisplayName || r.baselineProfileId || '—');
+      $('m-routing-empty-hint').hidden = true;
+    } catch (err) {
+      // Swallow — leave dashes; the next poll will retry.
     }
   }
 
@@ -4145,7 +4184,7 @@ export const GUI_HTML = `<!doctype html>
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
     wirePresetButtons();
-    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshModels(), refreshAutoCeiling(), loadAgentModesAndCommands(), refreshSettings()]);
+    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshSavings(), refreshModels(), refreshAutoCeiling(), loadAgentModesAndCommands(), refreshSettings()]);
   }
   $('btn-refresh').onclick = refreshAll;
 
@@ -4777,7 +4816,7 @@ export const GUI_HTML = `<!doctype html>
 
   refreshAll();
   // Auto-refresh activity + usage every 5s — the user wants to see Roo's calls appear live.
-  setInterval(() => { refreshActivity(); refreshUsage(); refreshHealth(); }, 5_000);
+  setInterval(() => { refreshActivity(); refreshUsage(); refreshSavings(); refreshHealth(); }, 5_000);
 })();
 </script>
 
