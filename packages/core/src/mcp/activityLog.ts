@@ -9,6 +9,15 @@ export interface McpActivityInput {
   redactionHits: number;
   inputSummary: unknown;   // tool-specific; MUST be path-basename / counts only
   outputSummary: unknown;  // tool-specific; MUST be sizes / counts only
+  /**
+   * Envelope metadata extracted from the tool result. Optional — only present
+   * for tools that use tool-result-envelope.v1.
+   */
+  envelope?: {
+    truncated: boolean;
+    hasCursor: boolean;
+    remainingLines?: number;
+  };
 }
 
 export interface McpActivityEntry extends McpActivityInput {

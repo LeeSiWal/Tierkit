@@ -148,6 +148,22 @@ function stringLen(s: unknown): number {
   return typeof s === "string" ? s.length : 0;
 }
 
+/**
+ * Extract activity-log envelope metadata from a tool result. Returns undefined
+ * for non-envelope results (e.g. propose_patch / apply_patch / get_policy_status
+ * which don't migrate to envelope in v0.16).
+ */
+function summarizeEnvelope(result: ToolEnvelope): { truncated: boolean; hasCursor: boolean; remainingLines?: number } | undefined {
+  const r = result as any;
+  if (!r || typeof r !== "object") return undefined;
+  if (r.version !== "tool-result-envelope.v1") return undefined;
+  return {
+    truncated: Boolean(r.truncated),
+    hasCursor: Boolean(r.next?.cursor),
+    remainingLines: typeof r.size?.remainingLines === "number" ? r.size.remainingLines : undefined,
+  };
+}
+
 // ---- the activity-log wrapper ----
 //
 // Runs the dispatcher, captures success/failure shape, logs exactly once,
@@ -187,6 +203,7 @@ async function withActivityLog(
     redactionHits,
     inputSummary: summarizeInput(name, args),
     outputSummary: summarizeOutput(name, result),
+    envelope: summarizeEnvelope(result),
   }).catch(() => { /* swallow — never fail a tool call because logging failed */ });
 
   return {
