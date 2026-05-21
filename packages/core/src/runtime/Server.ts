@@ -1212,9 +1212,23 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   return new Promise<RunningServer>((resolve, reject) => {
     server.once("error", reject);
-    server.listen(opts.port, opts.host, () => {
+    server.listen(opts.port, opts.host, async () => {
       const addr = server.address() as AddressInfo | null;
       const port = addr?.port ?? opts.port;
+      // v0.13 BREAKING notice. Suppressed once the user dismisses the GUI banner
+      // or sets notices.seenPinnedNoFallbackV013. Skipped under TIERKIT_NO_BUNDLED_DEFAULTS=1
+      // (test runs) to avoid racing migration writes against test temp-dir cleanup.
+      if (process.env.TIERKIT_NO_BUNDLED_DEFAULTS !== "1") {
+        try {
+          const cfg = await loadConfig(opts.cwd);
+          if (cfg.config.notices?.seenPinnedNoFallbackV013 !== true) {
+            // eslint-disable-next-line no-console
+            console.log(`[info] v0.13: pinned profiles no longer fall back to local. Use model:"auto" for fallback routing.`);
+          }
+        } catch {
+          // Config not yet present (first boot before init) — skip the notice silently.
+        }
+      }
       resolve({
         address: opts.host,
         port,
@@ -1229,19 +1243,6 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
             });
           }),
       });
-      // v0.13 BREAKING notice. Suppressed once the user dismisses the GUI banner
-      // or runs `tierkit doctor` (both POST `/v1/notices` to set the flag).
-      void (async () => {
-        try {
-          const cfg = await loadConfig(opts.cwd);
-          if (cfg.config.notices?.seenPinnedNoFallbackV013 !== true) {
-            // eslint-disable-next-line no-console
-            console.log(`[info] v0.13: pinned profiles no longer fall back to local. Use model:"auto" for fallback routing.`);
-          }
-        } catch {
-          // Config not yet present (first boot before init) — skip the notice silently.
-        }
-      })();
     });
   });
 }
