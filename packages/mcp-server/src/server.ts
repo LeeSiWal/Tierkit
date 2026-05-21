@@ -3,6 +3,7 @@ import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprot
 import { logMcpActivity } from "@tierkit/core";
 import { listFilesTool } from "./tools/listFiles.js";
 import { readFileTool } from "./tools/readFile.js";
+import { codebaseSearchTool } from "./tools/codebaseSearch.js";
 import { countHits } from "./redactOutput.js";
 
 export interface CreateMcpServerOptions {
@@ -64,7 +65,13 @@ async function dispatchTool(
         path: typeof args.path === "string" ? args.path : "",
         maxBytes: typeof args.maxBytes === "number" ? args.maxBytes : undefined,
       });
-    case "tierkit.codebase_search":   return notImplemented(name);
+    case "tierkit.codebase_search":
+      return codebaseSearchTool({
+        workspaceRoot: ctx.workspaceRoot,
+        query: typeof args.query === "string" ? args.query : "",
+        maxMatches: typeof args.maxMatches === "number" ? args.maxMatches : undefined,
+        contextLines: typeof args.contextLines === "number" ? args.contextLines : undefined,
+      });
     // Phase 4-5 fill these in:
     case "tierkit.propose_patch":     return notImplemented(name);
     case "tierkit.apply_patch":       return notImplemented(name);
