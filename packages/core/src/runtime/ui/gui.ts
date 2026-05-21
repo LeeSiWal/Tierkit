@@ -4721,14 +4721,13 @@ export const GUI_HTML = `<!doctype html>
   if (showSnippetBtn) {
     showSnippetBtn.onclick = async () => {
       try {
-        const r = await fetch('/v1/mcp/config');
-        const json = await r.json();
+        const json = await jget('/v1/mcp/config');
         snippetOutput.style.display = 'block';
         snippetOutput.textContent = JSON.stringify(json, null, 2);
         copySnippetBtn.style.display = 'inline-block';
       } catch (err) {
         snippetOutput.style.display = 'block';
-        snippetOutput.textContent = 'Error: ' + String(err);
+        snippetOutput.textContent = 'Error: ' + String(err && err.message || err);
       }
     };
   }
