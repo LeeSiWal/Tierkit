@@ -49,6 +49,7 @@ export async function doctor(input: DoctorInput = {}): Promise<DoctorResult> {
   for (const c of await checkPerProfileBudgets(projectRoot)) checks.push(c);
   const cliTimeoutCheck = await checkRecentCliTimeouts(projectRoot);
   if (cliTimeoutCheck) checks.push(cliTimeoutCheck);
+  for (const c of await checkSubprocessCommandPaths(projectRoot)) checks.push(c);
 
   const status: CheckStatus = checks.some((c) => c.status === "fail")
     ? "fail"
@@ -451,6 +452,37 @@ async function checkRecentCliTimeouts(workspaceRoot: string): Promise<DoctorChec
       `Consider raising transport.timeoutMs on the affected profile. ` +
       `See docs/MODEL_PROFILES.md for per-profile tuning.`,
   };
+}
+
+/**
+ * v0.17: warn when a subscription-CLI profile's `transport.command` contains
+ * spaces. On Windows runChild quotes these for cmd.exe so the spawn still
+ * succeeds, but a path without spaces is faster + more portable across
+ * shells. Emits one `warn` check per affected profile.
+ */
+async function checkSubprocessCommandPaths(projectRoot: string): Promise<DoctorCheck[]> {
+  const out: DoctorCheck[] = [];
+  try {
+    const result = await loadConfig(projectRoot);
+    if (!result.found) return out;
+    const profiles = result.config.modelProfiles ?? {};
+    for (const [id, profile] of Object.entries(profiles)) {
+      const cmd = profile.transport?.type === "subprocess" ? profile.transport.command : undefined;
+      if (!cmd) continue;
+      if (/\s/.test(cmd)) {
+        out.push({
+          id: `subprocess-command-space-${id}`,
+          label: `subprocess command path contains spaces (${id})`,
+          status: "warn",
+          targetProfileId: id,
+          detail:
+            `profile "${id}" transport.command contains spaces: ${cmd}. ` +
+            `runChild quotes these on Windows for shell:true safety, but consider moving the binary to a path without spaces if you hit spawn failures.`,
+        });
+      }
+    }
+  } catch { /* config invalid — surfaced by checkConfigFile already */ }
+  return out;
 }
 
 async function checkRegistryPluginPaths(projectRoot: string): Promise<DoctorCheck> {
