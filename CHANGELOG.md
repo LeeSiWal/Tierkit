@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.14.2 — 2026-05-21
+
+### Fixed — AgentLoop ↔ subscription-CLI mismatch
+
+- **Subscription-CLI providers (claudeCode) now run in single-shot mode
+  inside Tierkit's agent loop.** When the selected profile has
+  `transport.type === "subprocess"`, the loop emits the response text once
+  and ends — no XML tool parsing, no recursive tool invocation. Previously
+  the agent parsed claudeCode's narrative ("first I'll `<list_files>`...")
+  as a tool call, executed it, then re-invoked claudeCode with the
+  accumulated history. Because claudeCode has no memory across subprocess
+  calls it emitted the same `<list_files>` text again — infinite loop.
+- **Subscription-CLI timeouts surface as explicit errors** with code
+  `subscription-cli-timeout`. No silent auto-fallback to a weak local
+  model after a long-running claudeCode call exceeds its timeoutMs.
+- **Activity log now shows the profile id** (`claudeCode (auto)`) instead
+  of just the model field (`auto`).
+- Bundled `claudeCode.transport.timeoutMs` raised from 120s → 180s to
+  better fit project-wide review tasks. Custom subprocess profiles still
+  default to 120s via the schema.
+
+### Limitation documented
+
+claudeCode (and other subscription-CLI providers) return text only — they
+cannot perform multi-turn tool calls. For file editing and multi-turn
+agent behavior inside Tierkit's Chat tab, configure an API key
+(ANTHROPIC_API_KEY for claudeSonnet, OPENAI_API_KEY for gpt4o) in
+Settings → API Keys. Roo / Cline have their own tool loops that handle
+claudeCode-style text models robustly; Tierkit's loop intentionally fails
+fast to surface this architectural fact. **Native Claude Agent SDK
+integration with proper tool_use bridging is planned for v0.15.**
+
 ## 0.14.1 — 2026-05-21
 
 ### Fixed
