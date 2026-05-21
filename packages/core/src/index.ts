@@ -12,6 +12,17 @@ export {
   type ToolResultEnvelopeVersion,
 } from "./tools/envelope.js";
 
+// v0.16 Cursor encode/decode + per-tool cursor types
+export {
+  encodeCursor,
+  decodeCursor,
+  CursorDecodeError,
+  type ReadFileCursor,
+  type ListFilesCursor,
+  type SearchFilesCursor,
+  type AnyCursor,
+} from "./tools/cursor.js";
+
 // Plugin schema and loader
 export {
   PluginManifestSchema,
