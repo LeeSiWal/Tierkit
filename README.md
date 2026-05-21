@@ -1,23 +1,26 @@
 # Tierkit
 
-Tierkit is a **local-first cost optimizer and token firewall for AI coding CLIs**.
+**Tierkit** is a local-first cost optimizer and policy gateway for AI coding
+agents. Two distribution surfaces:
 
-It helps tools like Claude Code, Codex CLI, Gemini CLI, Roo Code, Cline,
-Continue, and aider spend fewer cloud tokens — without losing task quality.
-Before any premium cloud model sees your project, Tierkit can search files
-locally, compress them into a minimal high-signal prompt, redact secrets,
-compare compressed vs. baseline output side-by-side with real provider
-usage, and route easy work to your local or private models so the expensive
-model is only used when it actually has to be.
+1. **OpenAI-compatible gateway** — point Roo, Cline, Continue, or any
+   OpenAI-compatible coding agent at Tierkit's loopback endpoint and gain
+   routing (local-first, subscription before per-token), redaction, budget,
+   and approval gates without changing the agent.
+2. **MCP server** — expose Tierkit's gated tools (file I/O, search, patch,
+   command execution) to Claude Code, Claude Desktop, and any MCP-aware
+   agent. Tierkit becomes the local policy gateway; the agent remains in
+   the calling client. See [docs/MCP_BRIDGE.md](docs/MCP_BRIDGE.md).
 
-> **Status: v0.12.3** — 5 shipped milestones since v0.10.x:
+> **Status: v0.15.0** — MCP Bridge shipped. Key milestones:
 >
 > - **v0.11** — deterministic `tierkit context build / show / send / compare` CLI for measuring real savings.
 > - **v0.12** — cost-aware routing v2 with `paymentModel` dimension (free / flat-rate / per-token), per-profile USD + input-token caps, `/v1/usage.profiles`, GUI per-profile bars.
-> - **v0.12.2** — UI validation loop in the Cost Control sidebar (5 new `/v1/context/*` HTTP endpoints + SSE compare + sidecar `verdict.json`).
-> - **v0.12.3** — model profile state unification: single source of truth for "disabled" (`disabledProfileIds`), canonical-identity dedup, two on-load idempotent migrations.
+> - **v0.13** — subscription-CLI provider (claudeCode) with subprocess execution, stream degrade, pinned-no-fallback routing.
+> - **v0.14** — zero-CLI onboarding, daemon health checks, profile state unification.
+> - **v0.15** — MCP Bridge: `@tierkit/mcp-server` with 7 gated tools, ephemeral patch tickets, approval flow (CLI + GUI), `run_command` sandbox, activity log.
 >
-> Next: **v0.13** wires the OpenAI-compatible gateway into Codex / Claude Code subprocess providers + an MCP server. **v0.14** adds local-LLM rerank/compress on top of the deterministic compressor (gated by manual validation of v0.12.2's verdicts). See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
+> See [`CHANGELOG.md`](CHANGELOG.md) for the full history.
 
 > 🇰🇷 **한글 안내**
 >
