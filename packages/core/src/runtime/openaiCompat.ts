@@ -78,6 +78,34 @@ export async function handleOpenAIChatCompletions(
     }
   } else {
     candidateIds = [req2.model];
+
+    // v0.13: pinned profiles do not silently fall back. Validate up front and emit
+    // a clear error if the profile is missing, disabled, or non-viable.
+    const { loadConfig } = await import("../config/loadConfig.js");
+    const cfg = await loadConfig(context.cwd);
+    const profile = cfg.config.modelProfiles[req2.model];
+    if (!profile) {
+      return sendError(res, 404, `unknown profile: ${req2.model}`, "invalid_request_error", {
+        profileId: req2.model,
+      });
+    }
+    if ((cfg.config.disabledProfileIds ?? []).includes(req2.model)) {
+      return sendError(res, 409, `profile is disabled: ${req2.model}`, "profile_disabled", {
+        profileId: req2.model,
+        reason: "profile-disabled",
+      });
+    }
+    const { checkProfileViability } = await import("../model/profileViability.js");
+    const v = await checkProfileViability(profile, context.env);
+    if (!v.viable) {
+      return sendError(
+        res,
+        502,
+        viabilityMessage(req2.model, v.reason!),
+        "profile_not_viable",
+        { profileId: req2.model, reason: v.reason },
+      );
+    }
   }
   void autoTaskType; // will be used by Phase 2b activity log
 
@@ -137,7 +165,7 @@ export async function handleOpenAIChatCompletions(
     const detail = attempts.length > 0
       ? ` (tried ${attempts.length + 1}: ${attempts.map((a) => `${a.profileId}=${a.code}`).join(", ")}${attempts.length + 1 > attempts.length ? `, last=${final.code !== "no-candidates" ? final.code : "?"}` : ""})`
       : "";
-    return sendError(res, 400, final.message + detail, mapErrorType(final.code), final.code);
+    return sendError(res, 400, final.message + detail, mapErrorType(final.code), { code: final.code });
   }
 
   const completionId = "chatcmpl-" + Math.random().toString(36).slice(2, 12);
@@ -444,7 +472,7 @@ function sendError(
   status: number,
   message: string,
   type: string,
-  code?: string,
+  meta?: { code?: string; profileId?: string; reason?: string },
 ): void {
   res.statusCode = status;
   res.setHeader("content-type", "application/json");
@@ -453,10 +481,29 @@ function sendError(
       error: {
         message,
         type,
-        ...(code ? { code } : {}),
+        ...(meta?.code ? { code: meta.code } : {}),
+        ...(meta?.profileId ? { profileId: meta.profileId } : {}),
+        ...(meta?.reason ? { reason: meta.reason } : {}),
       },
     }),
   );
+}
+
+function viabilityMessage(profileId: string, reason: string): string {
+  switch (reason) {
+    case "cli-not-found":
+      return `${profileId}: CLI not found on PATH. Install the CLI, fix transport.command, or use model:"auto" to allow fallback routing.`;
+    case "cli-healthcheck-failed":
+      return `${profileId}: CLI healthcheck failed. Verify the CLI is logged in and runnable, or use model:"auto".`;
+    case "missing-api-key":
+      return `${profileId}: required API key env var is not set. Set the apiKeyEnv variable or use model:"auto".`;
+    case "ollama-unreachable":
+      return `${profileId}: Ollama is unreachable. Start Ollama or use model:"auto".`;
+    case "model-not-installed":
+      return `${profileId}: configured model is not installed. Pull the model or use model:"auto".`;
+    default:
+      return `${profileId}: not viable (${reason})`;
+  }
 }
 
 function mapErrorType(code: string): string {
