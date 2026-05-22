@@ -578,7 +578,7 @@ export const GUI_HTML = `<!doctype html>
     overflow: hidden;
   }
   .chat-sidebar {
-    flex: 0 0 220px;
+    flex: 0 1 220px;
     min-width: 0;
     border-right: 1px solid var(--border);
     background: var(--bg-card);
@@ -624,7 +624,7 @@ export const GUI_HTML = `<!doctype html>
   /* On narrow viewports, the sidebar auto-collapses so the thread isn't squeezed. */
   @media (max-width: 480px) {
     .chat-sidebar { flex-basis: 36px; }
-    .chat-sidebar > #tk-chat-new-session,
+    .chat-sidebar .chat-sidebar-header > #tk-chat-new-session,
     .chat-sidebar #tk-chat-session-list { display: none; }
   }
 
