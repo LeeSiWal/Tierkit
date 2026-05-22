@@ -8,9 +8,11 @@
  * (Tierkit Chat, claude CLI, the VS Code extension).
  */
 
+import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createInterface } from "node:readline";
 
 /**
  * Map a workspace path to the directory name Claude uses under
@@ -68,10 +70,18 @@ export async function listClaudeSessions(
     if (!ent.isFile() || !ent.name.endsWith(".jsonl")) continue;
     const id = ent.name.slice(0, -".jsonl".length);
     const full = path.join(dir, ent.name);
-    const stat = await fs.stat(full);
-    const { messageCount, preview } = await summarizeJsonl(full);
-    if (messageCount === 0) continue;
-    out.push({ id, mtime: stat.mtime.toISOString(), messageCount, preview });
+    try {
+      const stat = await fs.stat(full);
+      const { messageCount, preview } = await summarizeJsonl(full);
+      if (messageCount === 0) continue;
+      out.push({ id, mtime: stat.mtime.toISOString(), messageCount, preview });
+    } catch (err) {
+      // The file may have been deleted between readdir and stat — Claude
+      // writes to its own project dir actively. Skip races; don't abort the
+      // whole scan over one missing file.
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw err;
+    }
   }
   out.sort((a, b) => (a.mtime < b.mtime ? 1 : a.mtime > b.mtime ? -1 : 0));
   return { sessions: out };
@@ -85,10 +95,13 @@ export async function listClaudeSessions(
  * loud failure.
  */
 async function summarizeJsonl(filePath: string): Promise<{ messageCount: number; preview: string }> {
-  const text = await fs.readFile(filePath, "utf8");
   let messageCount = 0;
   let preview = "";
-  for (const line of text.split("\n")) {
+  const rl = createInterface({
+    input: createReadStream(filePath, { encoding: "utf8" }),
+    crlfDelay: Infinity,
+  });
+  for await (const line of rl) {
     if (!line) continue;
     let event: { type?: string; message?: { content?: unknown } };
     try { event = JSON.parse(line); } catch { continue; }
