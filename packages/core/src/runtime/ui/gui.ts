@@ -1086,17 +1086,6 @@ export const GUI_HTML = `<!doctype html>
     <button id="tk-open-panel" class="tiny primary" data-i18n="openInPanel">📱 Open in main editor (mobile / wide view)</button>
   </section>
 
-  <!-- v0.21.10: per-session metrics. Each chat thread (Claude session_id) gets
-       its own row so the user can see usage broken down by conversation. -->
-  <section class="card">
-    <h2><span data-i18n="cardChatSessions">Chat sessions</span></h2>
-    <div class="dim" style="font-size:10.5px;margin-bottom:8px" data-i18n="hintChatSessions">Each chat thread (Claude session) tracked separately. Stored locally in your browser; clears on full reset.</div>
-    <div id="tk-sessions-list"></div>
-    <div style="margin-top:8px;text-align:right">
-      <button id="tk-sessions-clear" class="tiny" data-i18n="sessionsClear">Clear history</button>
-    </div>
-  </section>
-
   <!-- ── COST ROUTING ───────────────────────────────────────────────── -->
   <h3 class="settings-group" data-i18n="groupCostRouting">Cost routing</h3>
 
@@ -4930,45 +4919,6 @@ export const GUI_HTML = `<!doctype html>
     loadChatSessions(); // refresh highlight
   }
 
-  function refreshSessionsCard() {
-    const host = $('tk-sessions-list');
-    if (!host) return;
-    const map = loadSessions();
-    const sessions = Object.values(map).sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0));
-    if (sessions.length === 0) {
-      host.innerHTML = '<div class="dim" style="font-size:11px">' + (lang === 'ko' ? '아직 채팅 세션 없음.' : 'No chat sessions yet.') + '</div>';
-      return;
-    }
-    const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
-    const fmtTime = (ms) => {
-      try {
-        const d = new Date(ms);
-        return d.toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US', {
-          month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
-        });
-      } catch { return ''; }
-    };
-    let html = '';
-    for (const s of sessions) {
-      const idShort = (s.sessionId || '').slice(0, 8);
-      html +=
-        '<div style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px;font-size:11px">' +
-          '<div style="display:flex;justify-content:space-between;align-items:baseline;font-family:var(--mono);font-size:10.5px">' +
-            '<span>' + escapeHtmlMd(idShort) + '… · ' + s.turns + ' turn' + (s.turns === 1 ? '' : 's') + '</span>' +
-            '<span class="dim">' + escapeHtmlMd(fmtTime(s.lastUsedAt)) + '</span>' +
-          '</div>' +
-          '<div style="display:flex;gap:10px;margin-top:3px;font-family:var(--mono);font-size:10.5px;color:var(--fg-dim);flex-wrap:wrap">' +
-            '<span>' + fmtTok(s.tokensIn) + ' in / ' + fmtTok(s.tokensOut) + ' out</span>' +
-            '<span>$' + (s.costUsd || 0).toFixed(4) + '</span>' +
-            (s.savedTokens > 0
-              ? '<span style="color:rgb(74,222,128)">▼ ' + fmtTok(s.savedTokens) + ' tok ' + (lang === 'ko' ? '절감' : 'saved') + '</span>'
-              : '') +
-          '</div>' +
-        '</div>';
-    }
-    host.innerHTML = html;
-  }
-
   // Extract { savedTokens, savedRatio, beforeTokens, afterTokens } from a
   // tool_result output. The output may be a stringified JSON envelope
   // (from MCP) or an object — handle both. Returns null if no stats are
@@ -5039,18 +4989,6 @@ export const GUI_HTML = `<!doctype html>
       }
     };
   }
-
-  // v0.21.10: chat sessions card — clear history button.
-  const tkSessionsClearBtn = $('tk-sessions-clear');
-  if (tkSessionsClearBtn) {
-    tkSessionsClearBtn.onclick = () => {
-      try { localStorage.removeItem(TK_SESSIONS_LS_KEY); } catch (_) { /* */ }
-      refreshSessionsCard();
-      toast(lang === 'ko' ? '세션 기록 초기화됨' : 'session history cleared', 'ok');
-    };
-  }
-  // Initial paint of the sessions card so the user sees existing history immediately on load.
-  refreshSessionsCard();
 
   // ── Chat sidebar toggle + new-session button ─────────────────────────────
   const TK_SIDEBAR_LS_KEY = 'tk_chat_sidebar_collapsed';
