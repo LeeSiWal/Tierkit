@@ -123,6 +123,12 @@ export interface ServerOptions {
    * so providers see the keys via process.env. Without this field, /v1/secrets returns 501.
    */
   secrets?: SecretsStore;
+  /**
+   * Override `os.homedir()` for Claude's project-session lookup
+   * (~/.claude/projects/). Primarily used by tests so they don't have to
+   * mutate `process.env.HOME`. Production callers leave this undefined.
+   */
+  homeDir?: string;
 }
 
 export interface RouteExtension {
@@ -480,7 +486,10 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       // v0.22: List all Claude Code sessions for the current workspace.
       if (route === "GET /v1/claude-code/sessions") {
         try {
-          const r = await listClaudeSessions({ cwd: opts.cwd });
+          const r = await listClaudeSessions({
+            cwd: opts.cwd,
+            ...(opts.homeDir ? { homeDirOverride: opts.homeDir } : {}),
+          });
           return sendJson(res, 200, { ok: true, sessions: r.sessions });
         } catch (err) {
           return sendJson(res, 500, { ok: false, code: "scan-failed", message: (err as Error).message });
@@ -491,7 +500,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       if (method === "GET" && url.pathname.startsWith("/v1/claude-code/sessions/")) {
         const id = decodeURIComponent(url.pathname.slice("/v1/claude-code/sessions/".length));
         try {
-          const r = await readClaudeSession({ cwd: opts.cwd, id });
+          const r = await readClaudeSession({
+            cwd: opts.cwd,
+            id,
+            ...(opts.homeDir ? { homeDirOverride: opts.homeDir } : {}),
+          });
           return sendJson(res, 200, { ok: true, id: r.id, messages: r.messages });
         } catch (err) {
           if (err instanceof ReadClaudeSessionError) {

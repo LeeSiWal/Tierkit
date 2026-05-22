@@ -10,13 +10,10 @@ describe("GET /v1/claude-code/sessions[/:id]", () => {
   let workspace: string;
   let baseUrl: string;
   const realId = "11111111-2222-3333-4444-555555555555";
-  let originalHome: string | undefined;
 
   beforeAll(async () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "tk-srv-ccs-"));
     workspace = await fs.mkdtemp(path.join(os.tmpdir(), "tk-srv-ccs-ws-"));
-    originalHome = process.env.HOME;
-    process.env.HOME = home; // listClaudeSessions reads os.homedir() by default
     const dir = path.join(home, ".claude", "projects", workspace.replace(/[/.]/g, "-"));
     await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(
@@ -26,14 +23,12 @@ describe("GET /v1/claude-code/sessions[/:id]", () => {
         '{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}',
       ].join("\n"),
     );
-    server = await startServer({ cwd: workspace, host: "127.0.0.1", port: 0, adapters: {} });
+    server = await startServer({ cwd: workspace, host: "127.0.0.1", port: 0, adapters: {}, homeDir: home });
     baseUrl = `http://127.0.0.1:${server.port}`;
   });
 
   afterAll(async () => {
     await server.close();
-    if (originalHome !== undefined) process.env.HOME = originalHome;
-    else delete process.env.HOME;
   });
 
   it("GET /sessions returns the seeded session", async () => {
