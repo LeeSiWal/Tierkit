@@ -4884,7 +4884,7 @@ export const GUI_HTML = `<!doctype html>
       data = await jget('/v1/claude-code/sessions/' + encodeURIComponent(id));
     } catch (e) {
       // jget throws on non-2xx. Map 404 to a friendly "session vanished" toast.
-      const msg = /HTTP 404/.test(String(e.message)) || /not-found/.test(String(e.message))
+      const msg = /HTTP 404/.test(String(e.message))
         ? (lang === 'ko' ? '이 세션은 사라졌습니다 — 다른 세션을 선택해주세요' : 'Session no longer exists — pick another')
         : String(e.message);
       toast(msg, 'err');
@@ -4901,6 +4901,12 @@ export const GUI_HTML = `<!doctype html>
     // so historical view and in-flight view look the same.
     // Note: chatUserBubble() is the existing helper that renders user messages
     // (appends to agentThread via appendAgent). No separate appendUserBubble needed.
+    // Bubble grouping: one bubble per user turn. We reset currentAssistantBubble
+    // only on "user" role, so an assistant-emitted sequence (text -> tool_use ->
+    // tool_result -> more text) collapses into a single bubble -- matching how
+    // the live streamChat() renders one chat turn. Consecutive assistant
+    // events with no intervening user (rare sub-agent flows) currently merge;
+    // acceptable trade-off for matching live rendering.
     let currentAssistantBubble = null;
     for (const m of (data.messages || [])) {
       if (m.role === 'user') {
