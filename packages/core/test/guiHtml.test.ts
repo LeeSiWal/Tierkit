@@ -104,6 +104,15 @@ describe("GUI_HTML inline script", () => {
       var fetch = function () { return Promise.resolve({ ok: true, json: function () { return Promise.resolve({}); } }); };
       var requestAnimationFrame = function () {};
       var btoa = function (s) { return Buffer.from(s, "binary").toString("base64"); };
+      // v0.20.8+: webview now reads/writes localStorage (auto-forward toggle,
+      // refine profile id, chat session id). Stub a minimal in-memory store so
+      // top-level evaluation doesn't crash.
+      var __ls = {};
+      var localStorage = {
+        getItem: function (k) { return Object.prototype.hasOwnProperty.call(__ls, k) ? __ls[k] : null; },
+        setItem: function (k, v) { __ls[k] = String(v); },
+        removeItem: function (k) { delete __ls[k]; },
+      };
     `;
     // The IIFE must run to completion without throwing. We capture `__acquireCount` by
     // returning it from the synthesised Function.

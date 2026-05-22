@@ -148,18 +148,24 @@ export const GUI_HTML = `<!doctype html>
   /* ── Layout / cards ──────────────────────────────────────────────────────── */
   main {
     max-width: 880px;
+    width: 100%;
     margin: 0 auto;
     padding: 14px 12px;
     display: grid;
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr) — 1fr alone defaults to minmax(auto, 1fr), which lets grid
+       items grow to their content's intrinsic width and push the column past the
+       viewport. minmax(0, 1fr) forces the column to never exceed the available
+       space, so cards always wrap inside the panel. */
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     /* min-width:0 — CSS grid items default to min-width:auto, which makes the column
        widen to fit non-wrapping content (long file paths, mono lines). In a narrow
        sidebar that pushes the tab-panel horizontally and clips the right edge. */
     min-width: 0;
+    box-sizing: border-box;
   }
   @media (min-width: 720px) {
-    main { grid-template-columns: 1fr 1fr; }
+    main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
     .card.full { grid-column: 1 / -1; }
   }
   .card {
@@ -171,6 +177,11 @@ export const GUI_HTML = `<!doctype html>
        otherwise stretch to their content. overflow-wrap:anywhere forces wrapping
        on long tokens (URLs, paths, .config keys) without touching white-space. */
     min-width: 0;
+    /* Belt + suspenders: max-width:100% + box-sizing keeps the card inside its
+       grid column. Without this, an inner table / pre / long flex row could
+       still inflate the card past the column width even with min-width:0. */
+    max-width: 100%;
+    box-sizing: border-box;
     overflow-wrap: anywhere;
     word-break: break-word;
   }
@@ -188,7 +199,7 @@ export const GUI_HTML = `<!doctype html>
     font-weight: 600;
   }
   .card h2 .h2-actions { margin-left: auto; display: flex; gap: 6px; }
-  .row { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--border); }
   .row:last-child { border-bottom: none; }
   .row.dense { padding: 4px 0; }
   .row .col-grow { flex: 1; min-width: 0; }
@@ -220,9 +231,13 @@ export const GUI_HTML = `<!doctype html>
     padding: 10px;
     margin-top: 8px;
   }
-  .inline-form .form-grid { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; font-size: 12px; }
-  .inline-form label { font-size: 11px; color: var(--fg-dim); }
-  .inline-form input, .inline-form select { width: 100%; padding: 4px 6px; }
+  /* minmax(0, …) on grid columns is essential — without it grid items default to
+     min-width:auto and refuse to shrink below their intrinsic content width. Long
+     mono labels or option text would then push the second column (and the whole
+     card) past the sidebar's right edge. */
+  .inline-form .form-grid { display: grid; grid-template-columns: minmax(0, auto) minmax(0, 1fr); gap: 6px 8px; align-items: center; font-size: 12px; }
+  .inline-form label { font-size: 11px; color: var(--fg-dim); min-width: 0; overflow-wrap: anywhere; }
+  .inline-form input, .inline-form select { width: 100%; min-width: 0; padding: 4px 6px; box-sizing: border-box; }
   .inline-form .actions { display: flex; gap: 6px; justify-content: flex-end; margin-top: 10px; }
   .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg-card); border: 1px solid var(--border); padding: 8px 14px; border-radius: 6px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.3); animation: fadeIn 0.2s; z-index: 10; }
   .toast.err { color: var(--err); border-color: rgba(247, 118, 142, 0.4); }
@@ -239,6 +254,7 @@ export const GUI_HTML = `<!doctype html>
     margin: 14px auto 0;
     padding: 0 12px 12px;
     flex: 1;
+    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -508,7 +524,41 @@ export const GUI_HTML = `<!doctype html>
     font-weight: 600;
   }
   .tab-panel { display: none; min-height: 0; }
-  .tab-panel.active { display: block; flex: 1; min-height: 0; overflow-y: auto; }
+  /* overflow-x:hidden — defensive guard. Without it, any descendant that escapes its
+     container width (long mono lines, fixed-min-width form fields) ends up visible past
+     the tab panel boundary on narrow sidebars. Children should still wrap properly via
+     min-width:0 + overflow-wrap chains; this is the belt-and-suspenders catch. */
+  .tab-panel.active { display: block; flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+
+  /* ── Settings tab: blanket overflow protection ─────────────────────────────
+     Descendants that get innerHTML'd after refresh (mcp snippet pre, model
+     ids, file paths in activity rows, anything mono) must never push their
+     parent card past the right edge of the sidebar. These rules don't
+     replace per-element fixes — they're the final safety net for content
+     we don't control directly. */
+  .tab-panel[data-tab-panel="settings"] pre {
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-wrap: anywhere;
+    box-sizing: border-box;
+  }
+  .tab-panel[data-tab-panel="settings"] code,
+  .tab-panel[data-tab-panel="settings"] .mono {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    min-width: 0;
+  }
+  .tab-panel[data-tab-panel="settings"] input,
+  .tab-panel[data-tab-panel="settings"] textarea,
+  .tab-panel[data-tab-panel="settings"] select {
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  .tab-panel[data-tab-panel="settings"] .card > * {
+    max-width: 100%;
+  }
   /* Chat tab: full-height layout. Thread expands to fill, composer stays pinned just
      below via natural flex flow (NOT sticky — sticky needs a scroll-root that webview
      iframes don't provide, which is what broke 0.8.2). */
@@ -516,6 +566,66 @@ export const GUI_HTML = `<!doctype html>
     display: flex;
     flex-direction: column;
     overflow: hidden;
+  }
+
+  /* Chat tab: split into sidebar + main thread. The sidebar lists past sessions
+     and is collapsible to keep the chat thread roomy. */
+  .chat-layout {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .chat-sidebar {
+    flex: 0 0 220px;
+    min-width: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-card);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .chat-sidebar.collapsed { flex-basis: 36px; }
+  .chat-sidebar.collapsed .chat-sidebar-header > #tk-chat-new-session,
+  .chat-sidebar.collapsed #tk-chat-session-list { display: none; }
+  .chat-sidebar-header {
+    display: flex;
+    gap: 4px;
+    padding: 6px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .chat-sidebar-header > button { flex: 0 0 auto; }
+  .chat-sidebar-header > #tk-chat-new-session { flex: 1 1 auto; min-width: 0; }
+  #tk-chat-session-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px;
+  }
+  .chat-session-row {
+    padding: 6px 8px;
+    margin-bottom: 2px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .chat-session-row:hover { background: var(--bg-hover); }
+  .chat-session-row.selected { background: var(--bg-hover); border-left: 2px solid var(--accent); padding-left: 6px; }
+  .chat-session-row .session-preview { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-session-row .session-meta { color: var(--fg-dim); font-family: var(--mono); font-size: 10px; }
+  /* On narrow viewports, the sidebar auto-collapses so the thread isn't squeezed. */
+  @media (max-width: 480px) {
+    .chat-sidebar { flex-basis: 36px; }
+    .chat-sidebar > #tk-chat-new-session,
+    .chat-sidebar #tk-chat-session-list { display: none; }
   }
 
   /* Touch responsiveness (all viewports). Strips iOS 300ms tap-delay +
@@ -654,13 +764,29 @@ export const GUI_HTML = `<!doctype html>
   /* v0.14 — secrets card */
   .secrets-card { display: flex; flex-direction: column; gap: 8px; }
   .secrets-card h2 { margin-bottom: 0; }
-  .secret-row { display: flex; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
+  /* flex-wrap so a narrow sidebar wraps the value + buttons onto a second line
+     instead of overflowing horizontally past the card edge. */
+  .secret-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 4px 0; font-size: 12px; border-bottom: 1px solid var(--border); }
   .secret-row:last-of-type { border-bottom: none; }
-  .secret-row .secret-key { font-family: var(--mono); font-weight: 600; flex-shrink: 0; min-width: 160px; }
-  .secret-row .secret-val { font-family: var(--mono); color: var(--fg-dim); flex: 1; font-size: 11px; }
+  /* Allow shrink, but bias toward a reasonable column width via flex-basis. The
+     previous flex-shrink:0 + min-width:160px combo refused to compress and pushed
+     the row out of the sidebar on widths below ~300px. */
+  .secret-row .secret-key { font-family: var(--mono); font-weight: 600; flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+  .secret-row .secret-val { font-family: var(--mono); color: var(--fg-dim); flex: 1 1 120px; min-width: 0; font-size: 11px; overflow-wrap: anywhere; }
   .secret-row .secret-notset { color: var(--warn); font-size: 11px; }
   .secret-inline-form { padding: 6px 0; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-  .secret-inline-form input[type=password], .secret-inline-form input[type=text] { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 160px; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 3px 6px; border-radius: 4px; }
+  .secret-inline-form input[type=password], .secret-inline-form input[type=text] { font-family: var(--mono); font-size: 12px; flex: 1 1 100px; min-width: 0; background: var(--bg-input); border: 1px solid var(--border); color: var(--fg); padding: 3px 6px; border-radius: 4px; }
+  /* mcp-patch rows render comma-separated file path lists — without flex-wrap +
+     overflow-wrap the long paths push past the sidebar's right edge. */
+  .mcp-patch-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 11.5px; }
+  .mcp-patch-row:last-child { border-bottom: none; }
+  .mcp-patch-row .mcp-patch-id { font-family: var(--mono); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+  .mcp-patch-row .mcp-patch-files { font-family: var(--mono); color: var(--fg-dim); font-size: 11px; flex: 1 1 100%; min-width: 0; overflow-wrap: anywhere; word-break: break-all; }
+  .mcp-patch-row .mcp-patch-risk { font-size: 10px; padding: 1px 5px; border-radius: 3px; }
+  .mcp-patch-row .mcp-patch-risk.risk-high { background: rgba(247, 118, 142, 0.15); color: var(--err); }
+  .mcp-patch-row .mcp-patch-risk.risk-medium { background: rgba(224, 175, 104, 0.15); color: var(--warn); }
+  .mcp-patch-row .mcp-patch-risk.risk-low { background: rgba(158, 206, 106, 0.15); color: var(--ok); }
+  .mcp-patch-row .mcp-patch-risk.risk-unknown { background: rgba(138, 146, 163, 0.15); color: var(--fg-dim); }
 </style>
 </head>
 <body>
@@ -681,47 +807,102 @@ export const GUI_HTML = `<!doctype html>
 <div class="tab-panel active" data-tab-panel="chat">
 <div id="host-banner" class="err-banner" style="display:none"></div>
 
+<div class="chat-layout">
+  <aside id="tk-chat-sidebar" class="chat-sidebar">
+    <div class="chat-sidebar-header">
+      <button id="tk-chat-sidebar-toggle" class="tiny" title="toggle">«</button>
+      <button id="tk-chat-new-session" class="tiny primary" title="start a new session">+ <span data-i18n="chatNewSession">New</span></button>
+    </div>
+    <div id="tk-chat-session-list">
+      <div class="empty dim" data-i18n="loading">loading…</div>
+    </div>
+  </aside>
+
 <div class="agent-shell">
   <div class="agent-card">
     <h2>
-      <span data-i18n="cardAgent">Agent</span>
+      <span data-i18n="cardAgent">Tierkit Compressor</span>
+      <!-- v0.19: agent loop (status/usage/export/import/clear) hidden. The Chat tab
+           is now a thin shell for the v0.18 digest pipeline. The hidden DOM nodes
+           remain so existing JS handlers that null-check them keep compiling. -->
       <span id="agent-status" class="agent-status pill pill-dim">idle</span>
-      <span id="agent-usage-meter" class="pill pill-dim" style="font-size:10px;font-family:var(--mono);display:none">0 tok</span>
-      <span class="h2-actions">
-        <button id="btn-agent-export" class="tiny" title="export conversation" data-i18n="exportBtn">Export</button>
-        <button id="btn-agent-import" class="tiny" title="import conversation" data-i18n="importBtn">Import</button>
-        <button id="btn-agent-clear" class="tiny" title="clear thread" data-i18n="clearBtn">Clear</button>
+      <span id="agent-usage-meter" class="pill pill-dim" style="font-size:10px;font-family:var(--mono)">0 tok</span>
+      <span id="tk-chat-cost-meter" class="pill pill-dim" style="font-size:10px;font-family:var(--mono);display:none">$0.0000</span>
+      <!-- v0.21.10: session-cumulative compression savings. Shows once the user
+           has triggered at least one Tierkit MCP digest tool through chat. -->
+      <span id="tk-chat-saved-meter" class="pill" style="font-size:10px;font-family:var(--mono);display:none;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:rgb(74,222,128)" title="cumulative tokens saved by Tierkit MCP compression this chat session">절감 0 tok</span>
+      <span class="h2-actions" hidden>
+        <button id="btn-agent-export" class="tiny" hidden>Export</button>
+        <button id="btn-agent-import" class="tiny" hidden>Import</button>
+        <button id="btn-agent-clear" class="tiny" title="clear results" data-i18n="clearBtn">Clear</button>
       </span>
     </h2>
     <div id="agent-thread" class="agent-thread">
-      <div class="agent-empty" data-i18n="agentEmpty">Type a task below to run the Tierkit agent. Every model call goes through the same routing + policy stack as the rest of Tierkit.</div>
+      <div class="agent-empty" data-i18n="agentEmpty" style="line-height:1.6">
+        <b>Tierkit Chat = your Claude Code chat.</b><br>
+        <br>
+        Type a task and press Enter. Tierkit spawns <code>claude</code> in the background and streams the response right here — assistant text, tool calls, results, the works. Sessions persist across messages.<br>
+        <br>
+        If you've wired the Tierkit MCP server (Settings → Auto-wire Claude Code), Claude will compress your input via <code>tierkit.compress_command</code> when it helps. No clipboard, no ⌘V, no separate Claude Code sidebar required.<br>
+        <br>
+        Use 📦 for explicit local digests (Context Pack, file/diff/json — these don't go to Claude unless you click "→ Claude Code" on the card).
+      </div>
     </div>
-    <div class="agent-composer">
-      <textarea id="agent-input" rows="2" data-i18n-placeholder="agentPlaceholder" placeholder="Describe what you want done. e.g. 'list files in src/ and explain the structure'"></textarea>
-      <button id="agent-send" class="primary" title="send (Enter)">→</button>
-      <button id="agent-stop" title="stop" style="display:none">■</button>
+    <div class="agent-composer" style="position:relative">
+      <textarea id="agent-input" rows="2" data-i18n-placeholder="agentPlaceholder" placeholder="Chat with Claude (proxied through claude CLI). Enter to send · Shift+Enter for newline."></textarea>
+      <!-- v0.21.3: visible Stop button shown only while a chat turn is streaming.
+           Clicking it aborts the in-flight claude subprocess via the SSE
+           abort signal. Hidden by default; streamChat toggles it. -->
+      <button id="tk-chat-stop" title="stop the current Claude turn" style="display:none">⏹ <span data-i18n="tkChatStop">Stop</span></button>
+      <!-- v0.19: legacy agent send / stop hidden. Enter now defaults to chat. -->
+      <button id="agent-send" class="primary" hidden>→</button>
+      <button id="agent-stop" hidden>■</button>
+      <button id="tk-tools-btn" class="primary" title="Tierkit context tools — compress, pack, digest" style="position:relative">📦 ▾</button>
+      <div id="tk-tools-menu" style="display:none;position:absolute;right:0;bottom:calc(100% + 4px);min-width:220px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);z-index:10;font-size:12px;overflow:hidden">
+        <button class="tk-tool-item" data-tk-tool="compress" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:transparent;color:inherit;cursor:pointer;border-bottom:1px solid var(--border)">🗜️ <span data-i18n="tkToolCompress">Compress → Claude Code (Enter)</span></button>
+        <button class="tk-tool-item" data-tk-tool="pack" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:transparent;color:inherit;cursor:pointer;border-bottom:1px solid var(--border)">📦 <span data-i18n="tkToolPack">Build Context Pack…</span></button>
+        <button class="tk-tool-item" data-tk-tool="file" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:transparent;color:inherit;cursor:pointer;border-bottom:1px solid var(--border)">📁 <span data-i18n="tkToolFile">Digest file…</span></button>
+        <button class="tk-tool-item" data-tk-tool="diff" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:transparent;color:inherit;cursor:pointer;border-bottom:1px solid var(--border)">🔍 <span data-i18n="tkToolDiff">Digest diff</span></button>
+        <button class="tk-tool-item" data-tk-tool="diff-staged" style="display:block;width:100%;text-align:left;padding:8px 12px;border:0;background:transparent;color:inherit;cursor:pointer">🔍 <span data-i18n="tkToolDiffStaged">Digest staged diff</span></button>
+      </div>
     </div>
-    <div id="agent-composer-meta" style="display:flex;gap:8px;align-items:center;margin-top:6px;font-size:11px;color:var(--fg-dim);flex-wrap:wrap">
-      <span data-i18n="modeLabel">mode:</span>
-      <select id="agent-mode-select" style="padding:2px 6px;font-size:11px"></select>
-      <span data-i18n="approvalLabel">approval:</span>
-      <select id="agent-approval-select" style="padding:2px 6px;font-size:11px">
-        <option value="auto" data-i18n="approvalAuto">auto</option>
-        <option value="interactive" data-i18n="approvalInteractive">ask each</option>
-      </select>
-      <label style="display:flex;align-items:center;gap:3px;cursor:pointer" title="force the model to call write_file / apply_diff / search_and_replace when it would otherwise just describe">
-        <input type="checkbox" id="agent-force-edit" style="margin:0">
-        <span data-i18n="forceEditLabel">🪄 force edit</span>
+    <!-- v0.21.3: chat-mode controls. The composer's default Enter behavior
+         sends a message to claude via the streaming proxy. These controls
+         affect that flow:
+           - tk-perm-mode: what permission policy claude uses for tool calls
+             (acceptEdits / bypassPermissions / default / plan).
+           - tk-auto-forward: the legacy "compress + ⌘V → Claude Code" toggle
+             used by the 📦 dropdown's manual Compress/Pack/Digest paths. -->
+    <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--fg-dim);flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="how claude handles tool permissions (Edit/Write/Bash) in this chat turn">
+        <span>perm:</span>
+        <select id="tk-perm-mode" style="padding:2px 6px;font-size:11px">
+          <option value="acceptEdits" data-i18n="tkPermAcceptEdits">Accept edits (default)</option>
+          <option value="bypassPermissions" data-i18n="tkPermBypass">Bypass all (⚠ dangerous)</option>
+          <option value="default" data-i18n="tkPermDefault">Default (denies edits in -p)</option>
+          <option value="plan" data-i18n="tkPermPlan">Plan (read-only)</option>
+        </select>
       </label>
-      <span class="spacer" style="flex:1"></span>
-      <span><span class="kbd" style="font-family:var(--mono);background:var(--bg-input);padding:1px 5px;border-radius:3px;font-size:10px">/</span> <span data-i18n="forSlash">for plugin commands</span></span>
+      <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="legacy: when ON, the 📦 dropdown's Compress/Pack/Digest results auto-copy + focus Claude Code's sidebar so you can ⌘V. Unrelated to Enter, which now chats with claude directly.">
+        <input type="checkbox" id="tk-auto-forward" style="margin:0">
+        <span>📦 → Claude (⌘V)</span>
+      </label>
     </div>
-    <div id="agent-slash-suggest" style="display:none;position:relative">
-      <div style="position:absolute;left:0;right:60px;bottom:8px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,0.4);max-height:180px;overflow-y:auto;font-family:var(--mono);font-size:11.5px;z-index:5"></div>
+    <!-- v0.19: composer meta (mode/approval/force-edit) hidden. Modes were tied to
+         the agent loop which is no longer running. -->
+    <div id="agent-composer-meta" hidden>
+      <select id="agent-mode-select" hidden></select>
+      <select id="agent-approval-select" hidden>
+        <option value="auto">auto</option>
+        <option value="interactive">ask each</option>
+      </select>
+      <input type="checkbox" id="agent-force-edit" hidden>
     </div>
-    <div id="agent-attachments" style="display:none;flex-wrap:wrap;gap:6px;margin-top:6px"></div>
+    <div id="agent-slash-suggest" hidden></div>
+    <div id="agent-attachments" hidden></div>
   </div>
 </div>
+</div><!-- /chat-layout -->
 </div><!-- /tab-panel:chat -->
 
 <main class="tab-panel" data-tab-panel="settings">
@@ -737,19 +918,112 @@ export const GUI_HTML = `<!doctype html>
     <div id="onboarding-trace" style="display:none;font-size:11px;margin-top:8px;padding:6px 8px;background:var(--bg-input);border-radius:4px;font-family:var(--mono);color:var(--fg-dim)"></div>
   </div>
 
-  <!-- ── MCP BRIDGE card (v0.15) ─────────────────────────────────────── -->
+  <!-- ── MCP BRIDGE card (v0.15, extended in v0.18) ──────────────────── -->
   <section class="card mcp-bridge-card">
     <h2 data-i18n="cardMcpBridge">Connect Claude Code (MCP)</h2>
-    <p data-i18n="mcpBridgeIntro">Let Claude Code, Claude Desktop, or any MCP-aware agent use Tierkit's gated tools for safe file editing and command execution.</p>
+    <p data-i18n="mcpBridgeIntro">Let Claude Code, Claude Desktop, or any MCP-aware agent use Tierkit's gated tools: safe file editing + command execution (v0.15) and the v0.18 Context Gateway (compress / digest / build_context_pack) for token-cheap context.</p>
     <button id="btn-mcp-show-snippet" data-i18n="mcpShowSnippet">Show config snippet</button>
     <pre id="mcp-snippet-output" style="display:none"></pre>
     <button id="btn-mcp-copy-snippet" style="display:none" data-i18n="mcpCopySnippet">Copy to clipboard</button>
+    <div class="dim" style="font-size:10.5px;margin-top:6px" data-i18n="mcpBridgeToolsHint">14 tools registered: 7 base (list/read/search/patch/run/policy) + 7 v0.18 (compress_command, get_error_digest, get_test_digest, get_json_digest, get_file_digest, get_diff_summary, build_context_pack)</div>
   </section>
 
   <!-- ── PENDING MCP PATCHES panel (v0.15) ──────────────────────────── -->
   <section class="card mcp-patches-card">
     <h2 data-i18n="cardMcpPatches">Pending MCP patches</h2>
     <div id="mcp-patches-list" class="mcp-patches-list"></div>
+  </section>
+
+  <!-- ── CONTEXT GATEWAY card (v0.18) ──────────────────────────────── -->
+  <section class="card tk-ctx-gateway-card">
+    <h2 data-i18n="cardContextGateway">Context Gateway</h2>
+    <p class="dim" style="font-size:11.5px;margin-top:0" data-i18n="ctxGatewayIntro">Local compression for commands, error logs, tests, files, diffs, and JSON. Use the 📦 Tierkit dropdown in Chat, the CLI, or call these via MCP from Claude Code.</p>
+
+    <div style="margin-top:10px">
+      <h3 style="font-size:12px;margin:6px 0" data-i18n="ctxGatewayRefineLabel">Refine profile for "Compress task"</h3>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;font-size:11.5px">
+        <select id="tk-refine-profile" style="flex:1 1 140px;min-width:0;padding:4px 6px;max-width:100%;box-sizing:border-box">
+          <option value="" data-i18n="ctxGatewayRefineNone">(rule-only — no LLM)</option>
+        </select>
+        <button id="tk-refine-clear" class="tiny" style="flex-shrink:0" title="reset to rule-only" data-i18n="ctxGatewayRefineReset">Reset</button>
+      </div>
+      <div class="dim" style="font-size:10.5px;margin-top:4px" data-i18n="ctxGatewayRefineHint">When set, Chat "Compress task" sends the rule-based brief through this local model for further compression. Falls back to rule output on failure.</div>
+      <!-- v0.21.9: dynamic hint surfaced when picker has no usable options (no
+           local profiles found, or all disabled/unreachable). Empty/idle otherwise. -->
+      <div id="tk-refine-hint" style="font-size:10.5px;margin-top:4px"></div>
+      <!-- v0.21.12: inline "+ Custom Ollama" form. The default discovery only
+           finds Ollama on the SAME host as the daemon — useless on code-server
+           where the daemon runs on a remote container but Ollama runs on the
+           user's local machine. This form lets the user point at any reachable
+           Ollama instance (e.g. http://host.docker.internal:11434, or a LAN IP). -->
+      <div style="margin-top:6px">
+        <button id="tk-refine-add-toggle" class="tiny" data-i18n="ctxGatewayRefineAddBtn">+ Add custom Ollama profile</button>
+      </div>
+      <div id="tk-refine-add-form" style="display:none;margin-top:6px;padding:8px;background:var(--bg-input);border-radius:4px;font-size:11px">
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
+          <label style="min-width:50px">id:</label>
+          <input id="tk-refine-add-id" type="text" placeholder="myOllama" style="flex:1 1 120px;min-width:0;padding:3px 6px;font-size:11px;box-sizing:border-box">
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
+          <label style="min-width:50px">model:</label>
+          <input id="tk-refine-add-model" type="text" placeholder="qwen2.5-coder:7b" style="flex:1 1 120px;min-width:0;padding:3px 6px;font-size:11px;box-sizing:border-box">
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px;align-items:center">
+          <label style="min-width:50px">baseUrl:</label>
+          <input id="tk-refine-add-url" type="text" placeholder="http://host.docker.internal:11434" style="flex:1 1 120px;min-width:0;padding:3px 6px;font-size:11px;box-sizing:border-box" value="http://127.0.0.1:11434">
+        </div>
+        <div class="dim" style="font-size:10px;margin-bottom:6px">
+          <span data-i18n="ctxGatewayRefineAddHint">code-server tip: if Ollama runs on your local laptop, use http://host.docker.internal:11434 (Docker Desktop) or your laptop's LAN IP.</span>
+        </div>
+        <div style="display:flex;gap:6px;justify-content:flex-end">
+          <button id="tk-refine-add-cancel" class="tiny" data-i18n="cancel">Cancel</button>
+          <button id="tk-refine-add-save" class="tiny primary" data-i18n="saveBtn">Save</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <h3 style="font-size:12px;margin:6px 0" data-i18n="ctxGatewayCacheLabel">File digest cache</h3>
+      <div id="tk-cache-stats" style="font-size:11px;font-family:var(--mono);color:var(--fg-dim)">—</div>
+      <div style="margin-top:4px;display:flex;gap:6px">
+        <button id="tk-cache-refresh" class="tiny" data-i18n="ctxGatewayCacheRefresh">↻ Refresh</button>
+        <button id="tk-cache-clear" class="tiny" data-i18n="ctxGatewayCacheClear">🗑 Clear cache</button>
+      </div>
+    </div>
+
+    <div style="margin-top:14px">
+      <h3 style="font-size:12px;margin:6px 0" data-i18n="ctxGatewayToolsLabel">MCP tools exposed (v0.18)</h3>
+      <ul style="font-size:10.5px;font-family:var(--mono);color:var(--fg-dim);margin:0;padding-left:18px">
+        <li>tierkit.compress_command</li>
+        <li>tierkit.get_error_digest</li>
+        <li>tierkit.get_test_digest</li>
+        <li>tierkit.get_json_digest</li>
+        <li>tierkit.get_file_digest</li>
+        <li>tierkit.get_diff_summary</li>
+        <li>tierkit.build_context_pack</li>
+      </ul>
+    </div>
+
+    <!-- v0.20: Claude Code auto-wire. Adds the tierkit MCP server entry to
+         the user's Claude config + injects a CLAUDE.md instruction block. -->
+    <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+      <h3 style="font-size:12px;margin:6px 0" data-i18n="ctxGatewayClaudeLabel">Auto-wire Claude Code</h3>
+      <div id="tk-claude-status" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">—</div>
+      <div id="tk-claude-paths" style="font-size:10.5px;margin-bottom:6px;display:none"></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="tk-claude-connect-ws" class="tiny primary" title="register tierkit MCP server in workspace .mcp.json + append CLAUDE.md block">Connect (workspace)</button>
+        <button id="tk-claude-connect-global" class="tiny" title="register tierkit MCP server in ~/.claude.json (all projects)">Connect (global)</button>
+        <button id="tk-claude-disconnect" class="tiny" title="remove MCP entry + strip CLAUDE.md block (current scope)">Disconnect</button>
+      </div>
+      <div id="tk-claude-verify" class="dim" style="font-size:10.5px;margin-top:8px;display:none;padding:6px 8px;background:var(--bg-input);border-radius:4px;line-height:1.5">
+        <b data-i18n="ctxGatewayVerifyTitle">How to verify:</b>
+        <ol style="margin:4px 0 0 16px;padding:0">
+          <li data-i18n="ctxGatewayVerifyStep1">Reload window (already done if you clicked Reload now).</li>
+          <li data-i18n="ctxGatewayVerifyStep2">Open Claude Code. Type <code>/mcp</code> in its chat — <code>tierkit</code> should appear with green status.</li>
+          <li data-i18n="ctxGatewayVerifyStep3">If missing, click the config path above to inspect the JSON entry directly.</li>
+        </ol>
+      </div>
+    </div>
   </section>
 
   <!-- ── TODAY hero ─────────────────────────────────────────────────── -->
@@ -768,64 +1042,58 @@ export const GUI_HTML = `<!doctype html>
        multiplies by the configured baseline (default claudeCode) cost. Polls
        /v1/savings/today every 5s alongside refreshUsage/refreshActivity. -->
   <section class="card">
-    <h2><span data-i18n="cardSavingsTodayRouting">Today (routing)</span></h2>
+    <h2><span data-i18n="cardSavingsTodayRouting">Today — Tierkit MCP compression savings</span></h2>
     <div id="card-savings-today-body">
-      <div class="metric"><span data-i18n="metricInputTokensSaved">Cloud input tokens saved</span>: <span id="m-routing-input-tokens">—</span></div>
-      <div class="metric"><span data-i18n="metricCostSaved">Estimated cost saved</span>: <span id="m-routing-cost-saved">—</span></div>
-      <div class="metric"><span data-i18n="metricCloudCallsAvoided">Cloud calls avoided</span>: <span id="m-routing-calls-avoided">—</span></div>
-      <div class="metric dim"><span data-i18n="labelBaseline">Baseline</span>: <span id="m-routing-baseline">—</span></div>
-      <div id="m-routing-empty-hint" class="dim" data-i18n="hintBaselineNotConfigured" hidden>(no baseline configured — set routingBaseline in tierkit.config.json)</div>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2><span data-i18n="cardCompressionMeasurements">Compression measurements</span></h2>
-    <div class="dim" data-i18n="hintCompressionMeasurements">Run \`tierkit context compare\` to populate compression A/B measurements.</div>
-  </section>
-
-  <!-- ── CURRENT PROJECT ────────────────────────────────────────────── -->
-  <h3 class="settings-group" data-i18n="groupCurrentProject">Current project</h3>
-
-  <section class="card c122-validation-card">
-    <h2><span data-i18n="cardCurrentProjectValidation">Current project — validation</span></h2>
-
-    <!-- Recent contexts dropdown + New button -->
-    <div class="c122-state-row">
-      <label data-i18n="labelRecentContexts">Recent:</label>
-      <select id="c122-recent-select"></select>
-      <button id="c122-new-btn" type="button" data-i18n="labelNewContext">+ New</button>
-    </div>
-    <div class="dim" id="c122-recent-hint" hidden></div>
-
-    <!-- Task input -->
-    <div>
-      <label data-i18n="labelTask">Task:</label>
-      <textarea id="c122-task" rows="3" placeholder=""></textarea>
-    </div>
-    <button id="c122-build-btn" type="button" data-i18n="labelBuildButton">Build compressed context</button>
-    <div class="c122-progress" id="c122-build-status" hidden></div>
-    <div class="c122-error-banner" id="c122-build-error" hidden></div>
-
-    <!-- After-build block (hidden until State D) -->
-    <div id="c122-built-block" hidden>
-      <hr/>
-      <div><strong data-i18n="labelContextId">Context:</strong> <code id="c122-artifact-id"></code></div>
-      <div><strong data-i18n="labelBaselineEst">Baseline (est):</strong> <span id="c122-baseline-est">—</span> tokens</div>
-      <div><strong data-i18n="labelCompressedEst">Compressed (est):</strong> <span id="c122-compressed-est">—</span> tokens</div>
-      <div><strong data-i18n="labelSavingsEst">Savings (est):</strong> <span id="c122-savings-est">—</span></div>
-      <div><strong data-i18n="labelFilesInScope">Files in scope:</strong></div>
-      <ul class="c122-files-list" id="c122-files-list"></ul>
-      <div class="c122-prompt-path-row">
-        <span data-i18n="labelPromptPath">Prompt:</span>
-        <code id="c122-prompt-path"></code>
-        <button id="c122-copy-path-btn" type="button" data-i18n="labelCopyPathButton">Copy path</button>
+      <!-- v0.21.10: before/after visual bar — the user can see at a glance
+           how much smaller the compressed payload is vs what would have been
+           sent without Tierkit. -->
+      <div id="m-routing-visual" style="margin-bottom:10px;display:none">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;font-size:10.5px;color:var(--fg-dim);margin-bottom:4px">
+          <span data-i18n="labelBefore">압축 전 (원본 입력)</span>
+          <span id="m-routing-before-label" style="font-family:var(--mono)">—</span>
+        </div>
+        <div style="position:relative;height:8px;background:rgba(245,176,65,0.18);border-radius:4px;overflow:hidden">
+          <div id="m-routing-before-bar" style="position:absolute;left:0;top:0;bottom:0;background:rgba(245,176,65,0.6);width:100%"></div>
+        </div>
+        <div style="display:flex;align-items:baseline;justify-content:space-between;font-size:10.5px;color:var(--fg-dim);margin:6px 0 4px">
+          <span data-i18n="labelAfter">압축 후 (Claude로 전달)</span>
+          <span id="m-routing-after-label" style="font-family:var(--mono)">—</span>
+        </div>
+        <div style="position:relative;height:8px;background:rgba(74,222,128,0.15);border-radius:4px;overflow:hidden">
+          <div id="m-routing-after-bar" style="position:absolute;left:0;top:0;bottom:0;background:rgba(74,222,128,0.6);width:0%"></div>
+        </div>
+        <div style="display:flex;justify-content:flex-end;font-size:11px;font-weight:600;color:rgb(74,222,128);margin-top:6px">
+          <span id="m-routing-saved-summary">—</span>
+        </div>
       </div>
-      <!-- Compare block (Task 8 adds Profile picker + Compare button) -->
-      <div id="c122-compare-block"></div>
-      <!-- Result block (Task 8 adds Response viewer + summary) -->
-      <div id="c122-result-block"></div>
-      <!-- Verdict block (Task 9) -->
-      <div id="c122-verdict-block"></div>
+      <div class="metric"><span data-i18n="metricInputTokensSaved">Input tokens saved (compression)</span>: <span id="m-routing-input-tokens">—</span></div>
+      <div class="metric"><span data-i18n="metricCostSaved">Estimated cost saved</span>: <span id="m-routing-cost-saved">—</span></div>
+      <div class="metric"><span data-i18n="metricCloudCallsAvoided">MCP compression calls</span>: <span id="m-routing-calls-avoided">—</span></div>
+      <div class="metric dim"><span data-i18n="labelBaseline">Priced against</span>: <span id="m-routing-baseline">—</span></div>
+      <div class="metric dim" style="font-size:10.5px;margin-top:6px" id="m-routing-by-tool"></div>
+      <div id="m-routing-empty-hint" class="dim" style="font-size:10.5px;margin-top:6px" hidden></div>
+    </div>
+  </section>
+
+  <!-- v0.21.7: removed legacy cards (Compression measurements + Current project validation) -->
+  <div id="c122-legacy-removed-placeholder" hidden></div>
+
+  <!-- v0.21.10: layout toggle. Sidebar webview is cramped on small windows /
+       tablets; this button reveals the same UI in the main editor area. -->
+  <section class="card">
+    <h2><span data-i18n="cardLayout">Layout</span></h2>
+    <div class="dim" style="font-size:11px;margin-bottom:8px" data-i18n="hintLayoutPanel">Open Tierkit in the main editor pane — much roomier than the sidebar. Useful on tablets / narrow screens.</div>
+    <button id="tk-open-panel" class="tiny primary" data-i18n="openInPanel">📱 Open in main editor (mobile / wide view)</button>
+  </section>
+
+  <!-- v0.21.10: per-session metrics. Each chat thread (Claude session_id) gets
+       its own row so the user can see usage broken down by conversation. -->
+  <section class="card">
+    <h2><span data-i18n="cardChatSessions">Chat sessions</span></h2>
+    <div class="dim" style="font-size:10.5px;margin-bottom:8px" data-i18n="hintChatSessions">Each chat thread (Claude session) tracked separately. Stored locally in your browser; clears on full reset.</div>
+    <div id="tk-sessions-list"></div>
+    <div style="margin-top:8px;text-align:right">
+      <button id="tk-sessions-clear" class="tiny" data-i18n="sessionsClear">Clear history</button>
     </div>
   </section>
 
@@ -870,19 +1138,15 @@ export const GUI_HTML = `<!doctype html>
     </div>
     <details id="risk-thresholds-row" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">
       <summary style="cursor:pointer;outline:none;user-select:none"><span data-i18n="riskThresholdsLabel">Risk score thresholds</span></summary>
-      <div style="display:grid;grid-template-columns:auto 80px auto;gap:4px 8px;align-items:center;padding:6px 0 0 0;font-size:11px">
-        <label for="rt-local-fast" style="white-space:nowrap"><code>localFastMax</code></label>
-        <input type="number" id="rt-local-fast" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
-        <span class="dim" data-i18n="rtLocalFastHint">small tasks → local-fast</span>
-        <label for="rt-local-strong" style="white-space:nowrap"><code>localStrongMax</code></label>
-        <input type="number" id="rt-local-strong" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
-        <span class="dim" data-i18n="rtLocalStrongHint">most coding tasks → strong local</span>
-        <label for="rt-private-remote" style="white-space:nowrap"><code>privateRemoteMax</code></label>
-        <input type="number" id="rt-private-remote" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
-        <span class="dim" data-i18n="rtPrivateRemoteHint">complex / sensitive → private-remote</span>
-        <label for="rt-public-cloud" style="white-space:nowrap"><code>publicCloudReviewMin</code></label>
-        <input type="number" id="rt-public-cloud" min="0" max="100" step="1" style="width:60px;font-size:11px;padding:1px 4px">
-        <span class="dim" data-i18n="rtPublicCloudHint">≥ this score → public-cloud (review-only)</span>
+      <div style="display:grid;grid-template-columns:minmax(0,1fr) 60px;gap:4px 8px;align-items:center;padding:6px 0 0 0;font-size:11px">
+        <label for="rt-local-fast" style="min-width:0;overflow-wrap:anywhere"><code>localFastMax</code> <span class="dim" data-i18n="rtLocalFastHint">small tasks → local-fast</span></label>
+        <input type="number" id="rt-local-fast" min="0" max="100" step="1" style="width:100%;min-width:0;font-size:11px;padding:1px 4px;box-sizing:border-box">
+        <label for="rt-local-strong" style="min-width:0;overflow-wrap:anywhere"><code>localStrongMax</code> <span class="dim" data-i18n="rtLocalStrongHint">most coding tasks → strong local</span></label>
+        <input type="number" id="rt-local-strong" min="0" max="100" step="1" style="width:100%;min-width:0;font-size:11px;padding:1px 4px;box-sizing:border-box">
+        <label for="rt-private-remote" style="min-width:0;overflow-wrap:anywhere"><code>privateRemoteMax</code> <span class="dim" data-i18n="rtPrivateRemoteHint">complex / sensitive → private-remote</span></label>
+        <input type="number" id="rt-private-remote" min="0" max="100" step="1" style="width:100%;min-width:0;font-size:11px;padding:1px 4px;box-sizing:border-box">
+        <label for="rt-public-cloud" style="min-width:0;overflow-wrap:anywhere"><code>publicCloudReviewMin</code> <span class="dim" data-i18n="rtPublicCloudHint">≥ this score → public-cloud (review-only)</span></label>
+        <input type="number" id="rt-public-cloud" min="0" max="100" step="1" style="width:100%;min-width:0;font-size:11px;padding:1px 4px;box-sizing:border-box">
       </div>
       <div style="margin-top:6px;display:flex;gap:6px">
         <button id="rt-save" class="tiny primary" data-i18n="saveBtn">Save</button>
@@ -991,6 +1255,7 @@ export const GUI_HTML = `<!doctype html>
       sessionApproveAll: '이번 세션 동안 모두 승인',
       tabChat: '채팅',
       tabSettings: '설정',
+      chatNewSession: '새 세션',
       groupSavings: '절감',
       groupCurrentProject: '현재 프로젝트',
       groupCostRouting: '비용 라우팅',
@@ -1001,7 +1266,7 @@ export const GUI_HTML = `<!doctype html>
       metricInputTokensSaved: '클라우드 입력 토큰 절감',
       metricCloudCallsAvoided: '회피된 클라우드 호출',
       labelBaseline: '비교 대상',
-      hintBaselineNotConfigured: '(비교 대상 미설정 — tierkit.config.json에서 routingBaseline 지정)',
+      hintBaselineNotConfigured: '(가격 정보가 있는 baseline profile이 없음 — tierkit.config.json에 per-token cost가 있는 profile 추가)',
       cardCompressionMeasurements: '압축 측정',
       hintCompressionMeasurements: '\`tierkit context compare\`를 실행하면 압축 A/B 측정이 채워집니다.',
       cardCurrentArtifact: '마지막 압축 컨텍스트',
@@ -2460,22 +2725,67 @@ export const GUI_HTML = `<!doctype html>
   // ── Card: routing savings (v0.17) ────────────────────────────────────────
   // Polls GET /v1/savings/today every 5s. When the baseline is not configured
   // or the resolved profile lacks cost data, shows '—' values + the hint row.
+  // v0.21.7: this is now Tierkit MCP compression savings, not LLM routing.
+  // Reads /v1/tierkit/savings/today which sums today's tierkit.* compression
+  // tool calls (compress_command / get_*_digest / build_context_pack) and
+  // multiplies savedTokens by the baseline profile's input USD/M to get a
+  // real dollar number the user can feel as they chat.
   async function refreshSavings() {
     try {
-      const r = await jget('/v1/savings/today');
-      if (!r || r.baselineConfigured === false) {
+      const r = await jget('/v1/tierkit/savings/today');
+      if (!r || r.ok === false) {
         $('m-routing-input-tokens').textContent = '—';
         $('m-routing-cost-saved').textContent = '—';
         $('m-routing-calls-avoided').textContent = '—';
         $('m-routing-baseline').textContent = '—';
-        $('m-routing-empty-hint').hidden = false;
+        $('m-routing-by-tool').textContent = '';
+        $('m-routing-empty-hint').hidden = true;
         return;
       }
-      $('m-routing-input-tokens').textContent = String(r.inputTokensRouted ?? 0);
-      $('m-routing-cost-saved').textContent = fmtCost(r.estimatedCostSaved);
-      $('m-routing-calls-avoided').textContent = String(r.cloudCallsAvoided ?? 0);
-      $('m-routing-baseline').textContent = String(r.baselineDisplayName || r.baselineProfileId || '—');
-      $('m-routing-empty-hint').hidden = true;
+      const saved = Number(r.savedTokensTotal || 0);
+      const before = Number(r.beforeTokensTotal || 0);
+      const after = Number(r.afterTokensTotal || 0);
+      const calls = Number(r.toolCallCount || 0);
+      const usd = typeof r.estimatedSavedUsd === 'number' ? r.estimatedSavedUsd : null;
+      const k = saved >= 1000 ? (saved / 1000).toFixed(1) + 'k' : String(saved);
+      $('m-routing-input-tokens').textContent = k + ' tok';
+      $('m-routing-cost-saved').textContent = usd !== null ? '$' + usd.toFixed(4) : '—';
+      $('m-routing-calls-avoided').textContent = String(calls);
+
+      // v0.21.10: visual before/after bar. Width of "after" bar is proportional
+      // to the compression ratio so users see the squish at a glance.
+      const visual = $('m-routing-visual');
+      if (before > 0) {
+        visual.style.display = '';
+        const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k tok' : n + ' tok';
+        $('m-routing-before-label').textContent = fmt(before);
+        $('m-routing-after-label').textContent = fmt(after);
+        const ratio = before > 0 ? Math.min(100, Math.max(0, (after / before) * 100)) : 0;
+        $('m-routing-after-bar').style.width = ratio.toFixed(1) + '%';
+        const pct = (100 - ratio).toFixed(0);
+        $('m-routing-saved-summary').textContent =
+          (lang === 'ko' ? '▼ ' : '▼ ') + pct + '% (' + fmt(saved) + ' ' + (lang === 'ko' ? '절감' : 'saved') + (usd !== null ? ' · $' + usd.toFixed(4) : '') + ')';
+      } else {
+        visual.style.display = 'none';
+      }
+      const baseLabel = String(r.baselineProfileId || '—');
+      $('m-routing-baseline').textContent = (typeof r.inputUsdPerMillion === 'number')
+        ? baseLabel + ' ($' + r.inputUsdPerMillion + '/M input)'
+        : baseLabel;
+      // Per-tool breakdown so the user sees which digest tools Claude actually used.
+      const byTool = r.byTool || {};
+      const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1]);
+      $('m-routing-by-tool').textContent = entries.length
+        ? entries.map(([n, c]) => n.replace('tierkit.', '') + ' ×' + c).join(' · ')
+        : '';
+      if (calls === 0) {
+        $('m-routing-empty-hint').textContent = lang === 'ko'
+          ? '아직 Claude가 Tierkit MCP 도구를 호출하지 않았습니다. Chat에서 메시지를 보내고 Claude가 압축 도구를 사용하면 여기 카운트가 올라갑니다.'
+          : 'No tierkit MCP tool calls yet today. Send a chat message; once Claude uses a compression tool, the counts will update here.';
+        $('m-routing-empty-hint').hidden = false;
+      } else {
+        $('m-routing-empty-hint').hidden = true;
+      }
     } catch (err) {
       // Swallow — leave dashes; the next poll will retry.
     }
@@ -2655,6 +2965,16 @@ export const GUI_HTML = `<!doctype html>
   }
 
   function renderApiKeysSection(secretMap) {
+    // v0.21.7: this section was a duplicate of the dedicated "API Keys" card
+    // (#secrets-card). Two surfaces for the same data confused users. Keep
+    // the standalone card; remove this inline injection. If anything left
+    // a stale section in the DOM (from a prior render), clear it.
+    const stale = document.getElementById('api-keys-section');
+    if (stale) stale.innerHTML = '';
+    // Quiet no-op so existing call sites don't need to change.
+    void secretMap;
+    return;
+    /* eslint-disable @typescript-eslint/no-unreachable */
     const keys = Object.keys(secretMap).sort();
     let section = document.getElementById('api-keys-section');
     if (!section) {
@@ -2977,12 +3297,32 @@ export const GUI_HTML = `<!doctype html>
       const renderTier = (tierKey) => {
         const list = groups[tierKey] || [];
         if (list.length === 0) return;
-        const heading = document.createElement('div');
-        heading.style.cssText = 'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg-dim);margin:10px 0 4px;display:flex;align-items:center;gap:6px';
-        heading.innerHTML =
-          '<span>' + escapeHtml(tierHeadings[tierKey] || tierKey) + '</span>' +
-          '<span style="flex:1;border-top:1px solid var(--border);opacity:0.6"></span>';
-        root.appendChild(heading);
+
+        // v0.21.8: public-cloud tier is collapsed by default. Most Tierkit
+        // users (subscription-based Claude Code) never use raw OpenAI/cloud
+        // profiles and the dim "API key 없음" rows are just visual noise. We
+        // wrap the section in <details> so users can opt in.
+        let container = root;
+        if (tierKey === 'public-cloud') {
+          const det = document.createElement('details');
+          det.style.cssText = 'margin:10px 0 4px';
+          const sum = document.createElement('summary');
+          sum.style.cssText = 'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg-dim);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px';
+          sum.innerHTML =
+            '<span>▸ ' + escapeHtml(tierHeadings[tierKey] || tierKey) + '</span>' +
+            '<span class="dim" style="font-size:10px;font-weight:400;text-transform:none;letter-spacing:0">(' + list.length + ' ' + (lang === 'ko' ? '개 숨김' : 'hidden') + ')</span>' +
+            '<span style="flex:1;border-top:1px solid var(--border);opacity:0.6"></span>';
+          det.appendChild(sum);
+          root.appendChild(det);
+          container = det;
+        } else {
+          const heading = document.createElement('div');
+          heading.style.cssText = 'font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--fg-dim);margin:10px 0 4px;display:flex;align-items:center;gap:6px';
+          heading.innerHTML =
+            '<span>' + escapeHtml(tierHeadings[tierKey] || tierKey) + '</span>' +
+            '<span style="flex:1;border-top:1px solid var(--border);opacity:0.6"></span>';
+          root.appendChild(heading);
+        }
         for (const e of list) {
           const p = e.profile || {};
           const isDiscovered = e.source === 'discovered' || isAutoDiscoveredId(e.id);
@@ -3046,7 +3386,9 @@ export const GUI_HTML = `<!doctype html>
             (canDelete
               ? ' <button class="tiny" data-action="delete-profile" data-id="' + escapeHtml(e.id) + '" data-scope="' + escapeHtml(e.source) + '">' + escapeHtml(i18n.deleteBtn) + '</button>'
               : '');
-          root.appendChild(row);
+          // v0.21.8: rows of the public-cloud tier go inside the <details>
+          // collapse container; other tiers append directly to root.
+          container.appendChild(row);
         }
       };
       for (const tierKey of TIER_ORDER) renderTier(tierKey);
@@ -4089,14 +4431,1244 @@ export const GUI_HTML = `<!doctype html>
     };
     input.click();
   };
+  // v0.21: Enter now sends the message to Claude Code via the streaming chat
+  // proxy. Tierkit Chat IS the chat UI — the response renders here, not in
+  // Claude Code's sidebar. The 📦 dropdown remains for explicit local digests.
+  // Hold Shift+Enter for newline; plain Enter sends.
+  //
+  // v0.21.2: IME composition guard. While an IME is assembling a candidate
+  // (e.g. Korean Hangul, Japanese kana, Chinese pinyin) the user's Enter is
+  // meant to COMMIT the candidate, not submit the chat message. Without this
+  // guard, the last character gets duplicated because the keydown fires
+  // before the IME finishes and we end up sending the message AND letting
+  // the IME re-insert the final character. Browsers signal IME composition
+  // via e.isComposing (modern) or e.keyCode === 229 (legacy fallback).
   agentInput.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      const text = agentInput.value;
+      const text = agentInput.value.trim();
+      if (!text) return;
       agentInput.value = '';
-      void submitAgentTask(text);
+      void streamChat(text);
     }
   });
+
+  // ── v0.18 Context Gateway: Tierkit Tools dropdown in chat composer ─────────
+  // The dropdown surfaces the digest pipeline (compress, pack, digest file/diff)
+  // without routing through the agent loop. Results render directly in the same
+  // agent thread as small "Tierkit" cards — no separate panel, no new tab.
+  const tkToolsBtn = $('tk-tools-btn');
+  const tkToolsMenu = $('tk-tools-menu');
+
+  function closeTkMenu() { tkToolsMenu.style.display = 'none'; }
+
+  if (tkToolsBtn && tkToolsMenu) {
+    tkToolsBtn.onclick = (e) => {
+      e.stopPropagation();
+      tkToolsMenu.style.display = tkToolsMenu.style.display === 'none' ? '' : 'none';
+    };
+    document.addEventListener('click', (e) => {
+      if (tkToolsMenu.style.display === 'none') return;
+      if (!tkToolsMenu.contains(e.target) && e.target !== tkToolsBtn) closeTkMenu();
+    });
+    tkToolsMenu.querySelectorAll('.tk-tool-item').forEach((btn) => {
+      btn.onclick = () => {
+        closeTkMenu();
+        const tool = btn.getAttribute('data-tk-tool');
+        void runTkTool(tool);
+      };
+    });
+  }
+
+  function tkUserBubble(label) {
+    const el = document.createElement('div');
+    el.className = 'agent-msg agent-msg-user';
+    el.style.cssText = 'padding:6px 10px;margin:6px 0;background:var(--bg-input);border-left:3px solid var(--accent);border-radius:4px;font-size:12px';
+    el.textContent = '▸ ' + label;
+    appendAgent(el);
+  }
+
+  function tkCard(title, savedLabel) {
+    const el = document.createElement('div');
+    el.className = 'agent-msg agent-msg-tool tk-card';
+    el.style.cssText = 'margin:8px 0;padding:10px 12px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px';
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px';
+    const pill = document.createElement('span');
+    pill.className = 'pill pill-accent';
+    pill.textContent = 'Tierkit';
+    header.appendChild(pill);
+    const titleEl = document.createElement('span');
+    titleEl.style.fontWeight = '600';
+    titleEl.textContent = title;
+    header.appendChild(titleEl);
+    if (savedLabel) {
+      const saved = document.createElement('span');
+      saved.className = 'dim';
+      saved.style.marginLeft = 'auto';
+      saved.style.fontFamily = 'var(--mono)';
+      saved.textContent = savedLabel;
+      header.appendChild(saved);
+    }
+    el.appendChild(header);
+    return el;
+  }
+
+  function tkBody(text) {
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'margin:0;padding:8px 10px;background:var(--bg-input);border-radius:4px;font-size:11px;font-family:var(--mono);max-height:320px;overflow:auto;white-space:pre-wrap;word-wrap:break-word';
+    pre.textContent = text;
+    return pre;
+  }
+
+  function tkActions(actions) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:6px;margin-top:6px;flex-wrap:wrap';
+    for (const a of actions) {
+      const b = document.createElement('button');
+      // First action is treated as the "primary" handoff button so the user
+      // can spot it without thinking. Subsequent actions stay neutral.
+      b.className = a.primary ? 'primary' : 'tiny';
+      b.textContent = a.label;
+      b.onclick = a.onClick;
+      row.appendChild(b);
+    }
+    return row;
+  }
+
+  function tkUncertainty(items) {
+    if (!items || items.length === 0) return null;
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'margin-top:6px;padding:6px 8px;background:rgba(245,176,65,0.08);border:1px solid rgba(245,176,65,0.35);border-radius:4px;font-size:10.5px';
+    const h = document.createElement('div');
+    h.style.fontWeight = '600';
+    h.textContent = lang === 'ko' ? '⚠ 검증 필요' : '⚠ Uncertainty';
+    wrap.appendChild(h);
+    const ul = document.createElement('ul');
+    ul.style.cssText = 'margin:4px 0 0 16px;padding:0';
+    for (const u of items) {
+      const li = document.createElement('li');
+      li.textContent = u;
+      ul.appendChild(li);
+    }
+    wrap.appendChild(ul);
+    return wrap;
+  }
+
+  async function copyTextToClipboard(text) {
+    try { await navigator.clipboard.writeText(text); toast(lang === 'ko' ? '복사됨' : 'copied', 'ok'); }
+    catch { toast(lang === 'ko' ? '복사 실패' : 'copy failed', 'err'); }
+  }
+
+  // v0.19.1: hand the compressed text to Claude Code (the whole point of
+  // the gateway). In VS Code we post tk:claude-code to the extension host
+  // which then runs the multi-strategy sendToClaudeCode (clipboard +
+  // newConversation + focus). In a plain browser session we fall back to
+  // copying to clipboard so the user can paste somewhere themselves.
+  function sendToClaudeCode(text) {
+    if (!text) return;
+    if (vsApi && typeof vsApi.postMessage === 'function') {
+      vsApi.postMessage({ type: 'tk:claude-code', text });
+      toast(lang === 'ko' ? '→ Claude Code' : '→ Claude Code', 'ok');
+    } else {
+      void copyTextToClipboard(text);
+    }
+  }
+
+  // v0.20.8: read the auto-forward checkbox. localStorage-persisted so the
+  // user's choice survives reloads. Default true (= auto-forward) — the
+  // dominant use case is hand-off, not silent compression.
+  const TK_AUTOFWD_KEY = 'tk_auto_forward';
+  const tkAutoFwdEl = $('tk-auto-forward');
+  if (tkAutoFwdEl) {
+    const stored = localStorage.getItem(TK_AUTOFWD_KEY);
+    // null === never set → default ON; '0' === explicitly OFF; '1' === ON
+    tkAutoFwdEl.checked = stored !== '0';
+    tkAutoFwdEl.addEventListener('change', () => {
+      localStorage.setItem(TK_AUTOFWD_KEY, tkAutoFwdEl.checked ? '1' : '0');
+    });
+  }
+  function autoForwardEnabled() {
+    return tkAutoFwdEl ? tkAutoFwdEl.checked : true;
+  }
+  function maybeAutoForward(text) {
+    if (autoForwardEnabled()) sendToClaudeCode(text);
+  }
+
+  function savedLabelOf(stats) {
+    if (!stats) return '';
+    const pct = (stats.savedRatio * 100).toFixed(1);
+    return (lang === 'ko' ? '절감 ' : 'saved ') + stats.savedTokens + ' tok (' + pct + '%)';
+  }
+
+  function tkError(label, data) {
+    const el = tkCard(label + ' — ' + (lang === 'ko' ? '실패' : 'failed'));
+    el.style.borderColor = 'var(--err)';
+    const msg = document.createElement('div');
+    msg.style.cssText = 'font-size:11px;color:var(--err)';
+    msg.textContent = (data && (data.message || data.code)) || 'unknown error';
+    el.appendChild(msg);
+    appendAgent(el);
+  }
+
+  function renderCompressedCard(d) {
+    const el = tkCard('Compressed task — ' + d.id, savedLabelOf(d.stats));
+    el.appendChild(tkBody(d.compressed));
+    el.appendChild(tkActions([
+      { label: (lang === 'ko' ? '복사 + Claude Code 열기 (⌘V로 붙여넣기)' : 'Copy + open Claude Code (⌘V to paste)'), onClick: () => sendToClaudeCode(d.compressed), primary: true },
+      { label: '📋 ' + (lang === 'ko' ? '복사' : 'Copy'), onClick: () => copyTextToClipboard(d.compressed) },
+    ]));
+    const u = tkUncertainty(d.uncertainty);
+    if (u) el.appendChild(u);
+    appendAgent(el);
+    return el;
+  }
+
+  function renderPackCard(p) {
+    const el = tkCard('Context Pack — ' + p.id, savedLabelOf(p.stats));
+    const meta = document.createElement('div');
+    meta.style.cssText = 'font-size:10.5px;color:var(--fg-dim);margin-bottom:4px';
+    const cached = (p.relevantFileDigests || []).filter((f) => f.cacheHit).length;
+    meta.textContent = (lang === 'ko' ? '제목' : 'Title') + ': ' + p.title +
+      ' · ' + (p.relevantFileDigests?.length || 0) + ' files' +
+      (cached > 0 ? ' (' + cached + ' cached)' : '');
+    el.appendChild(meta);
+    el.appendChild(tkBody(p.contentMd));
+    el.appendChild(tkActions([
+      { label: (lang === 'ko' ? '복사 + Claude Code 열기 (⌘V로 붙여넣기)' : 'Copy + open Claude Code (⌘V to paste)'), onClick: () => sendToClaudeCode(p.contentMd), primary: true },
+      { label: '📋 ' + (lang === 'ko' ? '전체 복사' : 'Copy pack'), onClick: () => copyTextToClipboard(p.contentMd) },
+    ]));
+    const u = tkUncertainty(p.uncertainty);
+    if (u) el.appendChild(u);
+    appendAgent(el);
+    return el;
+  }
+
+  function renderDigestCard(title, d) {
+    const el = tkCard(title + ' — ' + d.id, savedLabelOf(d.stats));
+    el.appendChild(tkBody(d.summaryMd));
+    el.appendChild(tkActions([
+      { label: (lang === 'ko' ? '복사 + Claude Code 열기 (⌘V로 붙여넣기)' : 'Copy + open Claude Code (⌘V to paste)'), onClick: () => sendToClaudeCode(d.summaryMd), primary: true },
+      { label: '📋 ' + (lang === 'ko' ? '복사' : 'Copy'), onClick: () => copyTextToClipboard(d.summaryMd) },
+    ]));
+    const u = tkUncertainty(d.uncertainty);
+    if (u) el.appendChild(u);
+    appendAgent(el);
+    return el;
+  }
+
+  // For the 'file' and 'pack' tools we need extra input. Use a small inline prompt rendered
+  // as a message bubble in the thread, since VS Code webviews block window.prompt.
+  function promptInline(opts) {
+    return new Promise((resolve) => {
+      const el = document.createElement('div');
+      el.className = 'agent-msg agent-msg-tool';
+      el.style.cssText = 'margin:8px 0;padding:10px 12px;background:var(--bg-card);border:1px solid var(--accent);border-radius:6px';
+      const h = document.createElement('div');
+      h.style.cssText = 'font-size:12px;font-weight:600;margin-bottom:6px';
+      h.textContent = opts.title;
+      el.appendChild(h);
+      const fields = {};
+      for (const f of opts.fields) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:6px;margin:4px 0';
+        const label = document.createElement('label');
+        label.style.cssText = 'font-size:11px;min-width:90px;color:var(--fg-dim)';
+        label.textContent = f.label;
+        row.appendChild(label);
+        let input;
+        if (f.type === 'checkbox') {
+          input = document.createElement('input');
+          input.type = 'checkbox';
+          input.checked = f.defaultValue === true;
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+          input.style.cssText = 'flex:1;padding:4px 6px;font-size:11.5px';
+          input.placeholder = f.placeholder || '';
+          if (f.defaultValue) input.value = f.defaultValue;
+        }
+        row.appendChild(input);
+        el.appendChild(row);
+        fields[f.key] = input;
+      }
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex;gap:6px;margin-top:8px;justify-content:flex-end';
+      const cancel = document.createElement('button');
+      cancel.className = 'tiny';
+      cancel.textContent = lang === 'ko' ? '취소' : 'Cancel';
+      cancel.onclick = () => { el.remove(); resolve(null); };
+      const run = document.createElement('button');
+      run.className = 'primary';
+      run.textContent = opts.submitLabel || (lang === 'ko' ? '실행' : 'Run');
+      run.onclick = () => {
+        const out = {};
+        for (const f of opts.fields) {
+          const inp = fields[f.key];
+          out[f.key] = inp.type === 'checkbox' ? inp.checked : inp.value.trim();
+        }
+        el.remove();
+        resolve(out);
+      };
+      actions.appendChild(cancel);
+      actions.appendChild(run);
+      el.appendChild(actions);
+      appendAgent(el);
+    });
+  }
+
+  // v0.21: Tierkit Chat as a streaming proxy for the claude CLI.
+  // The webview POSTs the user's message + saved session id; daemon spawns
+  // "claude -p" and SSE-forwards stream-json events. We render the user
+  // bubble immediately, then a live-updating assistant bubble, plus a small
+  // card per tool_use / tool_result so the user sees Claude's MCP activity.
+  let tkChatSessionId = null;
+  let tkChatAbortCtrl = null;
+  // v0.21.6: cumulative cost across the whole chat session (resets only when
+  // the user reloads the webview). Surfaced in the header pill so the user
+  // can see in real time how much Claude Code has spent.
+  let tkChatTotalCostUsd = 0;
+  const tkChatCostMeter = $('tk-chat-cost-meter');
+  function updateChatCostMeter() {
+    if (!tkChatCostMeter) return;
+    if (tkChatTotalCostUsd <= 0) {
+      tkChatCostMeter.style.display = 'none';
+      return;
+    }
+    tkChatCostMeter.style.display = '';
+    tkChatCostMeter.textContent = '$' + tkChatTotalCostUsd.toFixed(4);
+  }
+
+  // v0.21.10: session-cumulative compression savings (Tierkit MCP only).
+  // Updated every time Claude calls a tierkit.* digest tool and the result
+  // carries a stats.savedTokens field. Tracked separately from chat usage so
+  // the user can see both: "I spent X" + "but Tierkit saved me Y".
+  let tkChatSavedTokens = 0;
+  const tkChatSavedMeter = $('tk-chat-saved-meter');
+  function updateSavedMeter() {
+    if (!tkChatSavedMeter) return;
+    if (tkChatSavedTokens <= 0) {
+      tkChatSavedMeter.style.display = 'none';
+      return;
+    }
+    tkChatSavedMeter.style.display = '';
+    const k = tkChatSavedTokens >= 1000
+      ? (tkChatSavedTokens / 1000).toFixed(1) + 'k'
+      : String(tkChatSavedTokens);
+    tkChatSavedMeter.textContent = (lang === 'ko' ? '절감 ' : 'saved ') + k + ' tok';
+  }
+
+  // v0.21.10: per-session metrics tracking. We bucket all chat traffic by
+  // claude's session_id (the one we --resume) so the user can see breakdowns
+  // like "this morning's session: 12 turns, 240k in, 8k out, $0.84 spent,
+  // 38k tok saved by Tierkit MCP". Stored in localStorage so reloads don't
+  // wipe history. Sessions auto-expire after 30 entries (LRU by lastUsedAt).
+  const TK_SESSIONS_LS_KEY = 'tk_chat_sessions';
+  const TK_SESSIONS_MAX = 30;
+  function loadSessions() {
+    try {
+      const raw = localStorage.getItem(TK_SESSIONS_LS_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch { return {}; }
+  }
+  function saveSessions(map) {
+    try {
+      // LRU prune to keep storage bounded.
+      const entries = Object.entries(map);
+      if (entries.length > TK_SESSIONS_MAX) {
+        entries.sort((a, b) => (b[1].lastUsedAt || 0) - (a[1].lastUsedAt || 0));
+        const keep = {};
+        for (const [k, v] of entries.slice(0, TK_SESSIONS_MAX)) keep[k] = v;
+        map = keep;
+      }
+      localStorage.setItem(TK_SESSIONS_LS_KEY, JSON.stringify(map));
+    } catch { /* quota or disabled */ }
+  }
+  function recordSessionEvent(sessionId, patch) {
+    if (!sessionId) return;
+    const map = loadSessions();
+    const now = Date.now();
+    const cur = map[sessionId] || {
+      sessionId,
+      startedAt: now,
+      lastUsedAt: now,
+      turns: 0,
+      tokensIn: 0,
+      tokensOut: 0,
+      costUsd: 0,
+      savedTokens: 0,
+    };
+    cur.lastUsedAt = now;
+    if (patch.turn) cur.turns += 1;
+    if (patch.tokensIn) cur.tokensIn += patch.tokensIn;
+    if (patch.tokensOut) cur.tokensOut += patch.tokensOut;
+    if (patch.costUsd) cur.costUsd += patch.costUsd;
+    if (patch.savedTokens) cur.savedTokens += patch.savedTokens;
+    map[sessionId] = cur;
+    saveSessions(map);
+    refreshSessionsCard();
+  }
+  function refreshSessionsCard() {
+    const host = $('tk-sessions-list');
+    if (!host) return;
+    const map = loadSessions();
+    const sessions = Object.values(map).sort((a, b) => (b.lastUsedAt || 0) - (a.lastUsedAt || 0));
+    if (sessions.length === 0) {
+      host.innerHTML = '<div class="dim" style="font-size:11px">' + (lang === 'ko' ? '아직 채팅 세션 없음.' : 'No chat sessions yet.') + '</div>';
+      return;
+    }
+    const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+    const fmtTime = (ms) => {
+      try {
+        const d = new Date(ms);
+        return d.toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US', {
+          month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+        });
+      } catch { return ''; }
+    };
+    let html = '';
+    for (const s of sessions) {
+      const idShort = (s.sessionId || '').slice(0, 8);
+      html +=
+        '<div style="padding:6px 8px;border:1px solid var(--border);border-radius:4px;margin-bottom:4px;font-size:11px">' +
+          '<div style="display:flex;justify-content:space-between;align-items:baseline;font-family:var(--mono);font-size:10.5px">' +
+            '<span>' + escapeHtmlMd(idShort) + '… · ' + s.turns + ' turn' + (s.turns === 1 ? '' : 's') + '</span>' +
+            '<span class="dim">' + escapeHtmlMd(fmtTime(s.lastUsedAt)) + '</span>' +
+          '</div>' +
+          '<div style="display:flex;gap:10px;margin-top:3px;font-family:var(--mono);font-size:10.5px;color:var(--fg-dim);flex-wrap:wrap">' +
+            '<span>' + fmtTok(s.tokensIn) + ' in / ' + fmtTok(s.tokensOut) + ' out</span>' +
+            '<span>$' + (s.costUsd || 0).toFixed(4) + '</span>' +
+            (s.savedTokens > 0
+              ? '<span style="color:rgb(74,222,128)">▼ ' + fmtTok(s.savedTokens) + ' tok ' + (lang === 'ko' ? '절감' : 'saved') + '</span>'
+              : '') +
+          '</div>' +
+        '</div>';
+    }
+    host.innerHTML = html;
+  }
+
+  // Extract { savedTokens, savedRatio, beforeTokens, afterTokens } from a
+  // tool_result output. The output may be a stringified JSON envelope
+  // (from MCP) or an object — handle both. Returns null if no stats are
+  // present (e.g. the tool is one of the non-digest ones like Bash).
+  function extractDigestStats(output) {
+    let parsed = output;
+    if (typeof parsed === 'string') {
+      try { parsed = JSON.parse(parsed); } catch { return null; }
+    }
+    if (!parsed || typeof parsed !== 'object') return null;
+    // The envelope shape is { ok: true, data: { stats: {...} } }; the digest
+    // itself may also surface stats at the top level.
+    const stats = parsed?.data?.stats ?? parsed?.stats ?? null;
+    if (!stats || typeof stats !== 'object') return null;
+    const saved = Number(stats.savedTokens);
+    if (!Number.isFinite(saved) || saved <= 0) return null;
+    return {
+      savedTokens: saved,
+      savedRatio: Number(stats.savedRatio) || 0,
+      beforeTokens: Number(stats.beforeTokens) || 0,
+      afterTokens: Number(stats.afterTokens) || 0,
+    };
+  }
+
+  // v0.21.3: permission mode picker (Settings card + chat composer).
+  // localStorage-persisted so the user's choice survives reloads.
+  const TK_PERM_LS_KEY = 'tk_perm_mode';
+  const tkPermSel = $('tk-perm-mode');
+  if (tkPermSel) {
+    const stored = localStorage.getItem(TK_PERM_LS_KEY);
+    const valid = ['acceptEdits', 'bypassPermissions', 'default', 'plan'];
+    tkPermSel.value = valid.indexOf(stored) >= 0 ? stored : 'acceptEdits';
+    tkPermSel.addEventListener('change', () => {
+      localStorage.setItem(TK_PERM_LS_KEY, tkPermSel.value);
+    });
+  }
+  function currentPermMode() {
+    if (tkPermSel) return tkPermSel.value || 'acceptEdits';
+    return localStorage.getItem(TK_PERM_LS_KEY) || 'acceptEdits';
+  }
+
+  // v0.21.3: Stop button that aborts the in-flight chat turn. Shown only
+  // while streamChat is running; hidden again on completion / error.
+  const tkChatStopBtn = $('tk-chat-stop');
+  function showStopButton(show) {
+    if (!tkChatStopBtn) return;
+    tkChatStopBtn.style.display = show ? '' : 'none';
+  }
+  if (tkChatStopBtn) {
+    tkChatStopBtn.onclick = () => {
+      if (tkChatAbortCtrl) {
+        try { tkChatAbortCtrl.abort(); } catch (_) { /* */ }
+        toast(lang === 'ko' ? '중단됨' : 'stopped', 'ok');
+      }
+    };
+  }
+
+  // v0.21.10: layout toggle button — switches the user to the main editor
+  // panel view (mobile-friendly). Sends a postMessage that extension.ts
+  // routes to vscode.commands.executeCommand('tierkit.openInPanel').
+  const tkOpenPanelBtn = $('tk-open-panel');
+  if (tkOpenPanelBtn) {
+    tkOpenPanelBtn.onclick = () => {
+      if (vsApi && typeof vsApi.postMessage === 'function') {
+        vsApi.postMessage({ type: 'tk:open-panel' });
+      } else {
+        toast(lang === 'ko' ? 'VS Code 내부에서만 동작' : 'VS Code only', 'err');
+      }
+    };
+  }
+
+  // v0.21.10: chat sessions card — clear history button.
+  const tkSessionsClearBtn = $('tk-sessions-clear');
+  if (tkSessionsClearBtn) {
+    tkSessionsClearBtn.onclick = () => {
+      try { localStorage.removeItem(TK_SESSIONS_LS_KEY); } catch (_) { /* */ }
+      refreshSessionsCard();
+      toast(lang === 'ko' ? '세션 기록 초기화됨' : 'session history cleared', 'ok');
+    };
+  }
+  // Initial paint of the sessions card so the user sees existing history immediately on load.
+  refreshSessionsCard();
+
+  function escapeHtmlMd(s) {
+    return String(s).replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  }
+
+  function chatUserBubble(text) {
+    const el = document.createElement('div');
+    el.className = 'agent-msg agent-msg-user';
+    el.style.cssText = 'padding:10px 14px;margin:14px 0 6px;background:var(--bg-input);border-left:3px solid var(--accent);border-radius:4px;font-size:13px;line-height:1.5;white-space:pre-wrap;word-wrap:break-word';
+    el.textContent = text;
+    appendAgent(el);
+  }
+
+  // v0.21.5: lightweight Markdown renderer for assistant text.
+  // Handles only the patterns Claude actually emits often:
+  //   - fenced code blocks (triple-backtick lang ... triple-backtick)
+  //   - inline code (single-backtick x single-backtick)
+  //   - bold (asterisk-asterisk x asterisk-asterisk)
+  //   - headings (## x, ### x)
+  //   - bullets (- x)
+  // Everything else stays as preserved whitespace. We never use innerHTML on
+  // unsanitized content — every interpolation goes through escapeHtmlMd().
+  function renderMarkdown(src) {
+    if (!src) return '';
+    const parts = [];
+    let i = 0;
+    while (i < src.length) {
+      // Fenced code block.
+      if (src.startsWith('\`\`\`', i)) {
+        const close = src.indexOf('\`\`\`', i + 3);
+        if (close >= 0) {
+          const inside = src.slice(i + 3, close);
+          // Drop optional language hint on the first line.
+          const nl = inside.indexOf('\\n');
+          const body = nl >= 0 ? inside.slice(nl + 1) : inside;
+          parts.push('<pre style="margin:8px 0;padding:8px 10px;background:var(--bg-input);border-radius:4px;font-size:11.5px;font-family:var(--mono);overflow-x:auto;white-space:pre">' + escapeHtmlMd(body) + '</pre>');
+          i = close + 3;
+          continue;
+        }
+      }
+      // End of line — find next significant marker.
+      const nextLine = src.indexOf('\\n', i);
+      const lineEnd = nextLine < 0 ? src.length : nextLine;
+      let line = src.slice(i, lineEnd);
+      // Headings.
+      const headingMatch = /^(#{2,4})\\s+(.+)$/.exec(line);
+      if (headingMatch) {
+        const lvl = Math.min(headingMatch[1].length, 4);
+        const size = lvl === 2 ? '14px' : lvl === 3 ? '13px' : '12.5px';
+        parts.push('<div style="font-weight:700;font-size:' + size + ';margin:10px 0 4px">' + escapeHtmlMd(headingMatch[2]) + '</div>');
+      } else if (/^\\s*[-*]\\s+/.test(line)) {
+        const inner = line.replace(/^\\s*[-*]\\s+/, '');
+        parts.push('<div style="margin-left:14px;text-indent:-12px">• ' + inlineMarkdown(inner) + '</div>');
+      } else if (line.length > 0) {
+        parts.push('<div>' + inlineMarkdown(line) + '</div>');
+      } else {
+        parts.push('<div style="height:6px"></div>');
+      }
+      i = lineEnd + 1;
+    }
+    return parts.join('');
+  }
+  function inlineMarkdown(s) {
+    // Order matters: process code (longest), then bold.
+    let out = '';
+    let i = 0;
+    while (i < s.length) {
+      // Inline code.
+      if (s[i] === '\`') {
+        const close = s.indexOf('\`', i + 1);
+        if (close > i) {
+          out += '<code style="padding:1px 5px;background:var(--bg-input);border-radius:3px;font-family:var(--mono);font-size:11px">' + escapeHtmlMd(s.slice(i + 1, close)) + '</code>';
+          i = close + 1;
+          continue;
+        }
+      }
+      // Bold (**...**)
+      if (s[i] === '*' && s[i + 1] === '*') {
+        const close = s.indexOf('**', i + 2);
+        if (close > i + 1) {
+          out += '<b>' + escapeHtmlMd(s.slice(i + 2, close)) + '</b>';
+          i = close + 2;
+          continue;
+        }
+      }
+      out += escapeHtmlMd(s[i]);
+      i += 1;
+    }
+    return out;
+  }
+
+  // Pick a concise one-line summary of a tool_use input. Different tools have
+  // different "main" fields — we surface the most useful one as the header so
+  // the user can tell at a glance what Claude is doing without expanding.
+  function summarizeToolInput(name, input) {
+    if (!input || typeof input !== 'object') return '';
+    const o = input;
+    if (name === 'Bash' && typeof o.command === 'string') {
+      return o.command.length > 80 ? o.command.slice(0, 80) + '…' : o.command;
+    }
+    if ((name === 'Read' || name === 'Write' || name === 'Edit') && typeof o.file_path === 'string') {
+      return o.file_path;
+    }
+    if (name === 'Grep' && typeof o.pattern === 'string') {
+      return o.pattern + (o.path ? ' in ' + o.path : '');
+    }
+    if (name === 'Glob' && typeof o.pattern === 'string') {
+      return o.pattern;
+    }
+    // MCP tools (tierkit.*) often have a small primary field — try a few.
+    if (typeof o.path === 'string') return o.path;
+    if (typeof o.command === 'string') return o.command.slice(0, 80);
+    if (typeof o.query === 'string') return o.query.slice(0, 80);
+    if (typeof o.message === 'string') return o.message.slice(0, 80);
+    // Fall back to compact JSON.
+    try { const s = JSON.stringify(o); return s.length > 80 ? s.slice(0, 80) + '…' : s; } catch { return ''; }
+  }
+
+  function chatAssistantBubble() {
+    const el = document.createElement('div');
+    el.className = 'agent-msg agent-msg-assistant';
+    el.style.cssText = 'margin:6px 0 14px;padding:10px 14px;background:var(--bg-card);border:1px solid var(--border);border-radius:6px;font-size:13px;line-height:1.55;word-wrap:break-word';
+    const header = document.createElement('div');
+    header.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:10.5px;color:var(--fg-dim)';
+    const pill = document.createElement('span');
+    pill.className = 'pill pill-accent';
+    pill.textContent = 'Claude';
+    pill.style.fontSize = '10px';
+    header.appendChild(pill);
+    const meta = document.createElement('span');
+    meta.className = 'tk-chat-meta';
+    meta.textContent = lang === 'ko' ? '응답 생성 중…' : 'thinking…';
+    header.appendChild(meta);
+    el.appendChild(header);
+    const body = document.createElement('div');
+    body.className = 'tk-chat-body';
+    el.appendChild(body);
+    appendAgent(el);
+
+    // Accumulate raw assistant text so we can re-render the whole buffer with
+    // markdown on each delta (cheaper + simpler than diffing).
+    let textBuffer = '';
+    let textNode = null;
+
+    function ensureTextNode() {
+      if (!textNode) {
+        textNode = document.createElement('div');
+        textNode.className = 'tk-chat-text';
+        body.appendChild(textNode);
+      }
+      return textNode;
+    }
+
+    return {
+      el,
+      appendText(t) {
+        textBuffer += (t || '');
+        const node = ensureTextNode();
+        // Re-render the whole buffer each chunk. Cheap because Claude turns
+        // are usually < 50 KB and JS string rendering is fast.
+        node.innerHTML = renderMarkdown(textBuffer);
+        scrollAgentBottom();
+      },
+      addToolUse(d) {
+        // Force a new text node next time so tool cards appear AFTER current text.
+        textNode = null;
+        textBuffer = '';
+
+        const card = document.createElement('details');
+        card.style.cssText = 'margin:6px 0;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);font-size:11.5px';
+        card.dataset.toolId = d.id || '';
+        const summary = document.createElement('summary');
+        summary.style.cssText = 'padding:6px 10px;cursor:pointer;list-style:none;display:flex;gap:6px;align-items:baseline';
+        const summaryText = summarizeToolInput(d.name, d.input);
+        summary.innerHTML = '<span>🔧</span><b>' + escapeHtmlMd(d.name) + '</b><span class="dim" style="font-family:var(--mono);font-size:10.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">' + escapeHtmlMd(summaryText) + '</span>';
+        card.appendChild(summary);
+        // Full input + result detail (hidden until <details> is opened).
+        const detail = document.createElement('div');
+        detail.style.cssText = 'padding:6px 10px;border-top:1px solid var(--border);font-family:var(--mono);font-size:10.5px;color:var(--fg-dim);white-space:pre-wrap;word-wrap:break-word';
+        try {
+          detail.textContent = 'input: ' + JSON.stringify(d.input, null, 2);
+        } catch {
+          detail.textContent = 'input: <unserializable>';
+        }
+        card.appendChild(detail);
+        body.appendChild(card);
+        scrollAgentBottom();
+      },
+      addToolResult(d) {
+        const matching = body.querySelector('[data-tool-id="' + (d.toolUseId || '').replace(/"/g, '') + '"]');
+        const outStr = typeof d.output === 'string' ? d.output : (() => { try { return JSON.stringify(d.output); } catch { return ''; } })();
+        const firstLine = outStr.split(/\\r?\\n/)[0] || '';
+        const preview = firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine;
+
+        // v0.21.10: pull compression stats out of the tool envelope. When
+        // present (digest tools), we surface a green "절감 X tok (Y%)" badge
+        // and accumulate into the session-cumulative saved counter +
+        // localStorage per-session record.
+        const stats = d.isError ? null : extractDigestStats(d.output);
+        if (stats) {
+          tkChatSavedTokens += stats.savedTokens;
+          updateSavedMeter();
+          recordSessionEvent(tkChatSessionId, { savedTokens: stats.savedTokens });
+        }
+
+        if (matching) {
+          // Update summary line with a small result indicator + savings badge.
+          const sum = matching.querySelector('summary');
+          if (sum) {
+            if (stats) {
+              // Green compression badge BEFORE the generic preview tag.
+              const pct = (stats.savedRatio * 100).toFixed(0);
+              const savedShort = stats.savedTokens >= 1000
+                ? (stats.savedTokens / 1000).toFixed(1) + 'k'
+                : String(stats.savedTokens);
+              const badge = document.createElement('span');
+              badge.style.cssText = 'margin-left:auto;font-size:10px;padding:1px 6px;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:rgb(74,222,128);border-radius:8px;font-family:var(--mono)';
+              badge.textContent = (lang === 'ko' ? '절감 ' : 'saved ') + savedShort + ' tok (' + pct + '%)';
+              badge.title = 'before ' + stats.beforeTokens + ' tok → after ' + stats.afterTokens + ' tok';
+              sum.appendChild(badge);
+            } else {
+              const tag = document.createElement('span');
+              tag.style.cssText = 'margin-left:auto;font-size:10px;color:' + (d.isError ? 'var(--err)' : 'var(--fg-dim)');
+              tag.textContent = d.isError ? '✗' : (preview ? '↳ ' + preview : '↳ ok');
+              sum.appendChild(tag);
+            }
+          }
+          // Add full output to the detail body.
+          const detail = matching.querySelector('div');
+          if (detail) {
+            const out = document.createElement('div');
+            out.style.cssText = 'margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);color:' + (d.isError ? 'var(--err)' : 'var(--fg-dim)');
+            out.textContent = (d.isError ? 'error: ' : 'output: ') + outStr;
+            detail.appendChild(out);
+          }
+        } else {
+          // Orphan result (no matching tool_use card) — render as a standalone line.
+          const card = document.createElement('div');
+          card.style.cssText = 'margin:4px 0;padding:4px 10px;font-size:10.5px;color:var(--fg-dim);font-family:var(--mono)';
+          card.textContent = '↳ ' + preview;
+          body.appendChild(card);
+        }
+        // Re-enable text streaming into a new node after the tool block.
+        textNode = null;
+        textBuffer = '';
+        scrollAgentBottom();
+      },
+      finalize(d) {
+        meta.textContent = '';
+        const parts = [];
+        if (typeof d.costUsd === 'number') parts.push('$' + d.costUsd.toFixed(4));
+        if (d.usage && typeof d.usage.input_tokens === 'number') {
+          parts.push(d.usage.input_tokens + ' in / ' + (d.usage.output_tokens || 0) + ' out tok');
+        }
+        meta.textContent = parts.join(' · ');
+        if (d.text && body.textContent === '') {
+          // Fallback: if we never received any assistant-message events,
+          // render the final result text as the body.
+          ensureTextNode().innerHTML = renderMarkdown(d.text);
+        }
+      },
+      markError(e) {
+        meta.textContent = (lang === 'ko' ? '오류: ' : 'error: ') + (e?.code || '') + ' ' + (e?.message || '');
+        meta.style.color = 'var(--err)';
+        el.style.borderColor = 'var(--err)';
+      },
+    };
+  }
+
+  async function streamChat(message) {
+    if (tkChatAbortCtrl) {
+      // A previous turn is still in-flight; cancel it before sending a new one.
+      try { tkChatAbortCtrl.abort(); } catch { /* */ }
+    }
+    chatUserBubble(message);
+    const bubble = chatAssistantBubble();
+    const ac = new AbortController();
+    tkChatAbortCtrl = ac;
+    showStopButton(true);
+    // v0.21.6: update the chat header pill so the user sees "running…" with
+    // accent color while Claude is streaming.
+    setAgentRunning(true);
+
+    const body = { message, permissionMode: currentPermMode() };
+    if (tkChatSessionId) body.sessionId = tkChatSessionId;
+
+    // v0.21.1: use transport.stream() instead of raw fetch — VS Code webviews
+    // are CSP-blocked from direct fetch, but the message router proxies via
+    // the extension host. The proxy strips SSE event names and only yields
+    // data payloads, so we dispatch by payload.type (which the daemon always
+    // includes inside the JSON).
+    try {
+      for await (const chunk of transport.stream('/v1/claude-code/chat', {
+        method: 'POST',
+        body,
+        signal: ac.signal,
+      })) {
+        if (!chunk || !chunk.data) continue;
+        let payload;
+        try { payload = JSON.parse(chunk.data); } catch { continue; }
+        if (!payload || typeof payload.type !== 'string') continue;
+        handleChatEvent(payload.type, payload, bubble);
+      }
+    } catch (err) {
+      if (!(err && err.name === 'AbortError')) {
+        bubble.markError({ code: 'stream-error', message: String(err && err.message || err) });
+      } else {
+        // Aborted: annotate the assistant bubble so the user sees it was stopped.
+        bubble.markError({ code: 'aborted', message: lang === 'ko' ? '사용자가 중단함' : 'stopped by user' });
+      }
+    } finally {
+      tkChatAbortCtrl = null;
+      showStopButton(false);
+      setAgentRunning(false);
+    }
+  }
+
+  function handleChatEvent(event, data, bubble) {
+    switch (event) {
+      case 'session':
+        if (data.sessionId) tkChatSessionId = data.sessionId;
+        return;
+      case 'assistant-message':
+        bubble.appendText(data.text || '');
+        return;
+      case 'delta':
+        bubble.appendText(data.text || '');
+        return;
+      case 'tool-use':
+        bubble.addToolUse(data);
+        return;
+      case 'tool-result':
+        bubble.addToolResult(data);
+        return;
+      case 'result':
+        if (data.sessionId) tkChatSessionId = data.sessionId;
+        // v0.21.6: accumulate session-level token + cost so the header pill
+        // shows real-time usage. The bubble itself still shows this turn's
+        // numbers via finalize().
+        {
+          const inT = (data.usage && Number(data.usage.input_tokens)) || 0;
+          const outT = (data.usage && Number(data.usage.output_tokens)) || 0;
+          const cost = typeof data.costUsd === 'number' ? data.costUsd : 0;
+          if (inT || outT) {
+            agentSessionTokens += inT + outT;
+            updateUsageMeter();
+          }
+          if (cost > 0) {
+            tkChatTotalCostUsd += cost;
+            updateChatCostMeter();
+          }
+          // v0.21.10: persist per-session metrics. Saved tokens get folded in
+          // separately via the tool_result path (extractDigestStats) — we just
+          // re-emit a recordSessionEvent so this turn shows up even if no MCP
+          // compression tool was called.
+          recordSessionEvent(data.sessionId || tkChatSessionId, {
+            turn: true,
+            tokensIn: inT,
+            tokensOut: outT,
+            costUsd: cost,
+          });
+        }
+        bubble.finalize(data);
+        return;
+      case 'error':
+        bubble.markError(data);
+        return;
+      case 'done':
+        return;
+    }
+  }
+
+  async function runTkTool(tool) {
+    switch (tool) {
+      case 'compress': {
+        const text = agentInput.value.trim();
+        if (!text) {
+          toast(lang === 'ko' ? '입력창에 작업을 적어주세요' : 'type a task in the input first', 'err');
+          return;
+        }
+        tkUserBubble((lang === 'ko' ? '압축: ' : 'compress: ') + text);
+        agentInput.value = '';
+        const body = { command: text };
+        const refineId = (localStorage.getItem('tk_refine_profile_id') || '').trim();
+        if (refineId) body.refine = { profileId: refineId };
+        try {
+          const r = await jpost('/v1/digest/command', body);
+          if (!r.ok) { tkError('Compress', r.data); return; }
+          renderCompressedCard(r.data.digest);
+          // v0.20.8: auto-forward when the toggle is ON (default).
+          maybeAutoForward(r.data.digest.compressed);
+        } catch (e) { tkError('Compress', { message: e.message }); }
+        return;
+      }
+      case 'file': {
+        const out = await promptInline({
+          title: lang === 'ko' ? '파일 digest 생성' : 'Digest a workspace file',
+          fields: [
+            { key: 'path', label: 'path', type: 'text', placeholder: 'src/components/Foo.tsx' },
+            { key: 'force', label: 'force refresh', type: 'checkbox' },
+          ],
+          submitLabel: lang === 'ko' ? '생성' : 'Digest',
+        });
+        if (!out || !out.path) return;
+        tkUserBubble((lang === 'ko' ? '파일 digest: ' : 'digest file: ') + out.path);
+        try {
+          const r = await jpost('/v1/digest/file', { path: out.path, forceRefresh: out.force });
+          if (!r.ok) { tkError('Digest file', r.data); return; }
+          renderDigestCard(lang === 'ko' ? '파일 digest' : 'File digest', r.data.digest);
+          maybeAutoForward(r.data.digest.summaryMd);
+        } catch (e) { tkError('Digest file', { message: e.message }); }
+        return;
+      }
+      case 'diff':
+      case 'diff-staged': {
+        const staged = tool === 'diff-staged';
+        tkUserBubble(staged ? (lang === 'ko' ? 'staged diff 요약' : 'staged diff summary') : (lang === 'ko' ? 'diff 요약' : 'diff summary'));
+        try {
+          const r = await jpost('/v1/digest/diff', { staged });
+          if (!r.ok) { tkError(staged ? 'Staged diff' : 'Diff', r.data); return; }
+          renderDigestCard(staged ? (lang === 'ko' ? 'Staged diff' : 'Staged diff') : (lang === 'ko' ? 'Diff 요약' : 'Diff summary'), r.data.digest);
+          maybeAutoForward(r.data.digest.summaryMd);
+        } catch (e) { tkError('Diff', { message: e.message }); }
+        return;
+      }
+      case 'pack': {
+        const cmdFromInput = agentInput.value.trim();
+        const out = await promptInline({
+          title: lang === 'ko' ? 'Context Pack 생성' : 'Build Context Pack',
+          fields: [
+            { key: 'command', label: lang === 'ko' ? '작업 설명' : 'command', type: 'text', defaultValue: cmdFromInput, placeholder: lang === 'ko' ? '예: 관리자 메뉴 CRUD 추가' : 'e.g. Add CRUD for AdminMenuForm' },
+            { key: 'files', label: lang === 'ko' ? '파일 (쉼표)' : 'files (csv)', type: 'text', placeholder: 'src/a.ts, src/b.ts' },
+            { key: 'includeDiff', label: 'include diff', type: 'checkbox', defaultValue: true },
+            { key: 'stagedDiff', label: 'staged only', type: 'checkbox' },
+          ],
+          submitLabel: lang === 'ko' ? '생성' : 'Build',
+        });
+        if (!out) return;
+        const files = out.files ? out.files.split(',').map((s) => s.trim()).filter(Boolean) : [];
+        tkUserBubble(lang === 'ko' ? 'Context Pack 생성' : 'build Context Pack');
+        if (cmdFromInput && out.command === cmdFromInput) agentInput.value = '';
+        try {
+          const r = await jpost('/v1/context/pack', {
+            command: out.command || undefined,
+            files: files.length > 0 ? files : undefined,
+            includeDiff: out.includeDiff === true,
+            stagedDiff: out.stagedDiff === true,
+          });
+          if (!r.ok) { tkError('Context Pack', r.data); return; }
+          renderPackCard(r.data.pack);
+          maybeAutoForward(r.data.pack.contentMd);
+        } catch (e) { tkError('Context Pack', { message: e.message }); }
+        return;
+      }
+    }
+  }
+
+  // ── v0.18 Context Gateway Settings card: refine picker + cache stats ──────
+  const TK_REFINE_LS_KEY = 'tk_refine_profile_id';
+  const tkRefineSelect = $('tk-refine-profile');
+  const tkRefineClear = $('tk-refine-clear');
+  const tkCacheStats = $('tk-cache-stats');
+  const tkCacheRefresh = $('tk-cache-refresh');
+  const tkCacheClear = $('tk-cache-clear');
+
+  function humanBytes(n) {
+    if (!n) return '0 B';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(2) + ' MB';
+  }
+
+  async function refreshTkRefineProfiles() {
+    if (!tkRefineSelect) return;
+    let entries = [];
+    try {
+      const r = await jget('/v1/models');
+      entries = Array.isArray(r.entries) ? r.entries : [];
+    } catch { /* keep empty */ }
+    // v0.21.9: show ALL local-device profiles, not just viable+enabled ones,
+    // so the user sees what's available + can tell why each one is unselectable.
+    // Public-cloud is still excluded — refine should never silently spend money.
+    const local = entries
+      .filter((e) => e && e.profile && e.profile.kind === 'local-device')
+      .map((e) => ({
+        id: e.id,
+        model: e.profile.model || '',
+        viable: e.viability?.ok !== false,
+        viableReason: e.viability?.reason || '',
+        // ModelProfile.enabled is an optional boolean. Treat explicit false as disabled.
+        enabled: e.profile.enabled !== false,
+      }));
+    // Viable + enabled candidates are the only ones we'll auto-select.
+    const usable = local.filter((m) => m.viable && m.enabled);
+
+    const saved = (localStorage.getItem(TK_REFINE_LS_KEY) || '').trim();
+    tkRefineSelect.innerHTML = '';
+    const none = document.createElement('option');
+    none.value = '';
+    none.textContent = lang === 'ko' ? '(룰만 — LLM 사용 안 함)' : '(rule-only — no LLM)';
+    tkRefineSelect.appendChild(none);
+    for (const m of local) {
+      const opt = document.createElement('option');
+      opt.value = m.id;
+      let label = m.id + (m.model ? ' — ' + m.model : '');
+      if (!m.enabled) label += ' · ' + (lang === 'ko' ? '비활성' : 'disabled');
+      else if (!m.viable) label += ' · ' + (m.viableReason || (lang === 'ko' ? '실행 불가' : 'unreachable'));
+      opt.textContent = label;
+      if (!m.enabled || !m.viable) {
+        opt.disabled = true;
+        opt.style.color = 'var(--fg-dim)';
+      }
+      tkRefineSelect.appendChild(opt);
+    }
+
+    // Resolve selection priority:
+    //   1. saved (if still usable) — respects user choice
+    //   2. first usable profile — auto-pick so refine works out of the box
+    //   3. rule-only fallback
+    if (saved && usable.find((m) => m.id === saved)) {
+      tkRefineSelect.value = saved;
+    } else if (saved && !usable.find((m) => m.id === saved)) {
+      // Saved profile no longer exists or became unusable — clear the stale value.
+      localStorage.removeItem(TK_REFINE_LS_KEY);
+      // Fall through to auto-select.
+    }
+    if (!tkRefineSelect.value && usable.length > 0) {
+      // Auto-pick the first usable profile and persist it so the next reload
+      // doesn't ask the user to choose again.
+      tkRefineSelect.value = usable[0].id;
+      localStorage.setItem(TK_REFINE_LS_KEY, usable[0].id);
+    }
+
+    // Hint area below the picker so the user knows WHY no profile is selected
+    // when the list is empty or all profiles are disabled/unviable.
+    const hintEl = document.getElementById('tk-refine-hint');
+    if (hintEl) {
+      if (local.length === 0) {
+        hintEl.textContent = lang === 'ko'
+          ? '로컬 모델이 발견되지 않았습니다. Ollama를 설치하고 모델을 받은 뒤 (예: ollama pull qwen2.5-coder:3b) 데몬을 재시작하세요.'
+          : 'No local-device profiles found. Install Ollama + pull a model (e.g. ollama pull qwen2.5-coder:3b), then restart the daemon.';
+        hintEl.style.color = 'var(--warn)';
+      } else if (usable.length === 0) {
+        hintEl.textContent = lang === 'ko'
+          ? '로컬 모델은 있지만 모두 비활성/실행 불가 상태입니다. 모델 목록에서 활성화하거나 ollama serve를 실행하세요.'
+          : 'Local profiles exist but are all disabled or unreachable. Enable one in the Models card or run "ollama serve".';
+        hintEl.style.color = 'var(--warn)';
+      } else {
+        hintEl.textContent = '';
+      }
+    }
+  }
+
+  async function refreshTkCacheStats() {
+    if (!tkCacheStats) return;
+    try {
+      const r = await jget('/v1/digest/cache');
+      const s = r.stats || {};
+      if (s.empty) {
+        tkCacheStats.textContent = lang === 'ko' ? '캐시 비어 있음 (' + s.relativePath + ')' : 'empty (' + s.relativePath + ')';
+      } else {
+        tkCacheStats.textContent = s.count + ' digests · ' + humanBytes(s.totalBytes) + ' · ' + s.relativePath;
+      }
+    } catch (e) {
+      tkCacheStats.textContent = (lang === 'ko' ? '오류: ' : 'error: ') + e.message;
+    }
+  }
+
+  if (tkRefineSelect) {
+    tkRefineSelect.onchange = () => {
+      const v = tkRefineSelect.value || '';
+      if (v) localStorage.setItem(TK_REFINE_LS_KEY, v);
+      else localStorage.removeItem(TK_REFINE_LS_KEY);
+    };
+  }
+  if (tkRefineClear) {
+    tkRefineClear.onclick = () => {
+      localStorage.removeItem(TK_REFINE_LS_KEY);
+      if (tkRefineSelect) tkRefineSelect.value = '';
+      toast(lang === 'ko' ? '룰만 사용으로 초기화' : 'reset to rule-only', 'ok');
+    };
+  }
+  if (tkCacheRefresh) {
+    tkCacheRefresh.onclick = () => { void refreshTkCacheStats(); };
+  }
+  if (tkCacheClear) {
+    tkCacheClear.onclick = async () => {
+      try {
+        const r = await jpost('/v1/digest/cache/clear', {});
+        if (!r.ok) {
+          toast((lang === 'ko' ? '캐시 비우기 실패: ' : 'clear failed: ') + (r.data?.message || r.status), 'err');
+          return;
+        }
+        toast((lang === 'ko' ? '' : '') + r.data.removedCount + (lang === 'ko' ? '개 삭제됨' : ' digests cleared'), 'ok');
+        await refreshTkCacheStats();
+      } catch (e) {
+        toast((lang === 'ko' ? '캐시 비우기 실패: ' : 'clear failed: ') + e.message, 'err');
+      }
+    };
+  }
+
+  // ── v0.20: Claude Code auto-wire controls ─────────────────────────────────
+  const tkClaudeStatus = $('tk-claude-status');
+  const tkClaudeConnectWs = $('tk-claude-connect-ws');
+  const tkClaudeConnectGlobal = $('tk-claude-connect-global');
+  const tkClaudeDisconnect = $('tk-claude-disconnect');
+
+  async function refreshTkClaudeStatus() {
+    if (!tkClaudeStatus) return;
+    const tkClaudePaths = $('tk-claude-paths');
+    const tkClaudeVerify = $('tk-claude-verify');
+    try {
+      const r = await jget('/v1/claude-code/status');
+      const s = r.status || {};
+      const parts = [];
+      parts.push((lang === 'ko' ? '워크스페이스: ' : 'workspace: ') + (s.connectedWorkspace ? '✓' : '✗'));
+      parts.push((lang === 'ko' ? '전역: ' : 'global: ') + (s.connectedGlobal ? '✓' : '✗'));
+      parts.push('CLAUDE.md: ' + (s.instructionsInClaudeMd ? '✓' : '✗'));
+      tkClaudeStatus.textContent = parts.join(' · ');
+
+      // Show clickable file paths only when at least one scope is connected.
+      // The user can verify the actual JSON we wrote by clicking the path.
+      const isConnected = s.connectedGlobal || s.connectedWorkspace || s.instructionsInClaudeMd;
+      if (tkClaudePaths) {
+        if (isConnected) {
+          tkClaudePaths.style.display = '';
+          tkClaudePaths.innerHTML = '';
+          const rows = [];
+          if (s.connectedGlobal) rows.push({ label: 'global MCP:    ', path: s.globalMcpConfigPath });
+          if (s.connectedWorkspace) rows.push({ label: 'workspace MCP: ', path: s.workspaceMcpConfigPath });
+          if (s.instructionsInClaudeMd) rows.push({ label: 'CLAUDE.md:     ', path: s.claudeMdPath });
+          for (const row of rows) {
+            const line = document.createElement('div');
+            line.style.cssText = 'font-family:var(--mono);color:var(--fg-dim);margin:2px 0';
+            const label = document.createElement('span');
+            label.textContent = row.label;
+            line.appendChild(label);
+            const link = document.createElement('a');
+            link.href = '#';
+            link.textContent = row.path;
+            link.style.cssText = 'color:var(--accent);text-decoration:underline;cursor:pointer';
+            link.onclick = (e) => {
+              e.preventDefault();
+              if (vsApi && typeof vsApi.postMessage === 'function') {
+                vsApi.postMessage({ type: 'tk:open-path', path: row.path });
+              }
+            };
+            line.appendChild(link);
+            tkClaudePaths.appendChild(line);
+          }
+        } else {
+          tkClaudePaths.style.display = 'none';
+          tkClaudePaths.innerHTML = '';
+        }
+      }
+      if (tkClaudeVerify) {
+        tkClaudeVerify.style.display = isConnected ? '' : 'none';
+      }
+    } catch (e) {
+      tkClaudeStatus.textContent = (lang === 'ko' ? '상태 조회 실패: ' : 'status check failed: ') + e.message;
+    }
+  }
+
+  async function doConnect(scope) {
+    try {
+      const r = await jpost('/v1/claude-code/connect', { scope, instructionsLevel: 'light' });
+      if (!r.ok) {
+        toast((lang === 'ko' ? '연결 실패: ' : 'connect failed: ') + (r.data?.message || r.status), 'err');
+        return;
+      }
+      const res = r.data.result || {};
+      await refreshTkClaudeStatus();
+
+      // v0.20.4: surface verification result. If the file wasn't actually
+      // written, the entry isn't in the file, or the tierkit binary isn't
+      // launchable, Claude Code will show "Failed" in /mcp. Tell the user
+      // BEFORE they reload so they don't get a misleading "Failed" later.
+      const v = res.verification;
+      if (v && (!v.fileWritten || !v.fileContainsEntry || !v.binaryLaunchable)) {
+        const lines = [];
+        lines.push(lang === 'ko' ? '⚠ 검증 실패 — Claude Code가 /mcp에서 "Failed"로 표시할 가능성:' : '⚠ Verification failed — Claude Code will likely show "Failed" in /mcp:');
+        if (!v.fileWritten) lines.push('  • ' + (lang === 'ko' ? '설정 파일을 쓸 수 없음' : 'config file could not be written'));
+        else if (!v.fileContainsEntry) lines.push('  • ' + (lang === 'ko' ? '파일은 썼지만 entry가 들어가지 않음 (디스크 문제?)' : 'file written but entry not found in it (disk issue?)'));
+        if (!v.binaryLaunchable) {
+          lines.push('  • ' + (lang === 'ko' ? '바이너리 실행 불가' : 'binary not launchable') + ': ' + (v.binaryError || 'unknown'));
+        }
+        // Append into the agent thread so it's persistent (toast disappears).
+        const el = tkCard(lang === 'ko' ? 'Claude Code 연결 진단' : 'Claude Code connect diagnostics');
+        el.style.borderColor = 'var(--err)';
+        const body = document.createElement('pre');
+        body.style.cssText = 'margin:0;padding:8px 10px;background:var(--bg-input);border-radius:4px;font-size:11px;font-family:var(--mono);white-space:pre-wrap';
+        body.textContent = lines.join('\\n') + '\\n\\n' + (lang === 'ko' ? '해결 후 다시 Connect를 눌러주세요.' : 'Resolve the issue, then click Connect again.');
+        el.appendChild(body);
+        appendAgent(el);
+        toast(lang === 'ko' ? '연결 검증 실패 — Chat 탭의 진단 카드를 확인하세요' : 'verification failed — see diagnostics in Chat tab', 'err');
+        return;
+      }
+
+      if (res.alreadyConnected) {
+        toast(lang === 'ko' ? '이미 연결됨 (' + scope + ')' : 'already connected (' + scope + ')', 'ok');
+        return;
+      }
+      toast(lang === 'ko' ? '✓ Claude Code 연결됨 + 검증 통과 (' + scope + ')' : '✓ Claude Code connected + verified (' + scope + ')', 'ok');
+
+      if (vsApi && typeof vsApi.postMessage === 'function') {
+        vsApi.postMessage({
+          type: 'tk:reload-vscode',
+          reason: (lang === 'ko'
+            ? 'Claude Code MCP 서버로 tierkit 등록 + 검증 완료 (' + scope + ').'
+            : 'Tierkit registered + verified as a Claude Code MCP server (' + scope + ').'),
+        });
+      }
+    } catch (e) {
+      toast((lang === 'ko' ? '연결 실패: ' : 'connect failed: ') + e.message, 'err');
+    }
+  }
+
+  async function doDisconnect() {
+    // Disconnect both scopes since we can't easily tell which the user wants
+    // to undo from a single button. Each scope is a separate file edit.
+    try {
+      await jpost('/v1/claude-code/disconnect', { scope: 'workspace' });
+      const r = await jpost('/v1/claude-code/disconnect', { scope: 'global' });
+      if (!r.ok) {
+        toast((lang === 'ko' ? '해제 실패: ' : 'disconnect failed: ') + (r.data?.message || r.status), 'err');
+        return;
+      }
+      toast(lang === 'ko' ? '✓ Claude Code 연결 해제됨' : '✓ Claude Code disconnected', 'ok');
+      await refreshTkClaudeStatus();
+    } catch (e) {
+      toast((lang === 'ko' ? '해제 실패: ' : 'disconnect failed: ') + e.message, 'err');
+    }
+  }
+
+  if (tkClaudeConnectWs) tkClaudeConnectWs.onclick = () => doConnect('workspace');
+  if (tkClaudeConnectGlobal) tkClaudeConnectGlobal.onclick = () => doConnect('global');
+  if (tkClaudeDisconnect) tkClaudeDisconnect.onclick = doDisconnect;
 
   // ── Settings panel: read-only view of the resolved Tierkit config + source map. ───
   async function refreshSettings() {
@@ -4525,7 +6097,7 @@ export const GUI_HTML = `<!doctype html>
   // ── Wire-up ────────────────────────────────────────────────────────────────
   async function refreshAll() {
     wirePresetButtons();
-    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshSavings(), refreshModels(), refreshAutoCeiling(), loadAgentModesAndCommands(), refreshSettings()]);
+    await Promise.all([refreshHealth(), refreshFreedom(), refreshTools(), refreshPlugins(), refreshActivity(), refreshUsage(), refreshSavings(), refreshModels(), refreshAutoCeiling(), loadAgentModesAndCommands(), refreshSettings(), refreshTkRefineProfiles(), refreshTkCacheStats(), refreshTkClaudeStatus()]);
   }
   $('btn-refresh').onclick = refreshAll;
 
@@ -4911,8 +6483,8 @@ export const GUI_HTML = `<!doctype html>
     form.style.display = 'block';
     form.innerHTML =
       '<div class="secret-inline-form">' +
-        '<input type="text" id="secrets-add-name" placeholder="KEY_NAME" style="font-family:var(--mono);font-size:12px;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px;width:160px" value="' + escapeHtml(prefillKey || '') + '">' +
-        '<input type="password" id="secrets-add-value" placeholder="sk-… value" style="font-family:var(--mono);font-size:12px;flex:1;min-width:120px;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px">' +
+        '<input type="text" id="secrets-add-name" placeholder="KEY_NAME" style="font-family:var(--mono);font-size:12px;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px;flex:1 1 140px;min-width:0;box-sizing:border-box" value="' + escapeHtml(prefillKey || '') + '">' +
+        '<input type="password" id="secrets-add-value" placeholder="sk-… value" style="font-family:var(--mono);font-size:12px;flex:1 1 100px;min-width:0;background:var(--bg-input);border:1px solid var(--border);color:var(--fg);padding:3px 6px;border-radius:4px;box-sizing:border-box">' +
         '<button class="tiny primary" id="secrets-add-save">' + escapeHtml(i18n.secretSave) + '</button>' +
         '<button class="tiny" id="secrets-add-cancel">' + escapeHtml(i18n.secretCancel) + '</button>' +
       '</div>';
