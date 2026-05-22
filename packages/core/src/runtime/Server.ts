@@ -7,6 +7,30 @@ import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
 import { compareCompressedContext } from "../usecases/compareCompressedContext.js";
 import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
 import { readVerdict, writeVerdict, VerdictStoreError } from "./verdictStore.js";
+import {
+  buildContextPack,
+  clearFileDigestCache,
+  compressCommand,
+  compressErrorLog,
+  compressJson,
+  compressTestOutput,
+  getFileDigestCached,
+  getFileDigestCacheStats,
+  makeRefineCallback,
+  summarizeGitDiff,
+} from "../digest/index.js";
+import { isProfileDisabled } from "../model/profileIdentity.js";
+import {
+  claudeCodeStatus,
+  connectClaudeCode,
+  disconnectClaudeCode,
+  type ConnectScope,
+  type InstructionsLevel,
+} from "../usecases/connectClaudeCode.js";
+import { chatWithClaude } from "../usecases/chatWithClaude.js";
+import { listClaudeSessions } from "../usecases/listClaudeSessions.js";
+import { readClaudeSession, ReadClaudeSessionError } from "../usecases/readClaudeSession.js";
+import { computeTierkitMcpSavings } from "./tierkitSavings.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -191,6 +215,12 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
   // (not module-global) so tests with independent daemons don't share state.
   const runningCompares = new Set<string>();
 
+  // v0.20.7: Extension registers its bundled-CLI path + Electron-as-Node
+  // binary here on startup (POST /v1/claude-code/host-info). The Claude Code
+  // connect flow then uses these so the MCP entry doesn't depend on a global
+  // `tierkit` install. Per-daemon state.
+  const hostInfo: { cliPath?: string; nodeBinary?: string } = {};
+
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
@@ -281,6 +311,305 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           artifact: finalized,
           promptMdWorkspacePath: path.posix.join(".tierkit/runtime/context-artifacts", id, "prompt.md"),
         });
+      }
+
+      // v0.18 context-gateway digest endpoints. Each is a thin wrapper around the
+      // corresponding @tierkit/core function. Inputs are plain JSON; outputs are
+      // the digest object (no envelope wrapper — that's MCP's job). The daemon
+      // does not persist these to the artifact store; callers persist if they want.
+      if (route === "POST /v1/digest/command") {
+        const body = await readJsonBody<{
+          command?: unknown;
+          refine?: unknown;
+        }>(req);
+        if (!body || typeof body.command !== "string" || body.command.length === 0) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "command is required" });
+        }
+        // Optional refine: { profileId: "..." } looks up a local profile and
+        // wires its chat client as the LLM-refinement step inside compressCommand.
+        let refineOpt: { refine: (p: string) => Promise<string>; provider: "ollama"; model: string } | undefined;
+        if (body.refine && typeof body.refine === "object") {
+          const profileId = (body.refine as { profileId?: unknown }).profileId;
+          if (typeof profileId !== "string") {
+            return sendJson(res, 400, { ok: false, code: "bad-request", message: "refine.profileId must be a string" });
+          }
+          const cfg = await loadConfig(opts.cwd);
+          const profile = cfg.config.modelProfiles[profileId];
+          if (!profile) {
+            return sendJson(res, 404, { ok: false, code: "profile-not-found", message: `model profile ${profileId} not found` });
+          }
+          if (isProfileDisabled(cfg.config, profileId)) {
+            return sendJson(res, 400, { ok: false, code: "profile-disabled", message: `model profile ${profileId} is disabled` });
+          }
+          refineOpt = {
+            refine: makeRefineCallback(profile),
+            provider: "ollama",
+            model: profile.model,
+          };
+        }
+        const digest = await compressCommand(body.command, refineOpt);
+        return sendJson(res, 200, { ok: true, digest });
+      }
+
+      if (route === "POST /v1/digest/error") {
+        const body = await readJsonBody<{ log?: unknown }>(req);
+        if (!body || typeof body.log !== "string" || body.log.length === 0) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "log is required" });
+        }
+        const digest = compressErrorLog(body.log);
+        return sendJson(res, 200, { ok: true, digest });
+      }
+
+      if (route === "POST /v1/digest/test") {
+        const body = await readJsonBody<{ output?: unknown }>(req);
+        if (!body || typeof body.output !== "string" || body.output.length === 0) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "output is required" });
+        }
+        const digest = compressTestOutput(body.output);
+        return sendJson(res, 200, { ok: true, digest });
+      }
+
+      if (route === "POST /v1/digest/json") {
+        const body = await readJsonBody<{ json?: unknown }>(req);
+        if (!body || typeof body.json !== "string" || body.json.length === 0) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "json is required" });
+        }
+        const digest = compressJson(body.json);
+        return sendJson(res, 200, { ok: true, digest });
+      }
+
+      if (route === "POST /v1/digest/file") {
+        const body = await readJsonBody<{ path?: unknown; forceRefresh?: unknown }>(req);
+        if (!body || typeof body.path !== "string" || body.path.length === 0) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "path is required" });
+        }
+        // Path must resolve under the workspace; reject ../ escapes before reading.
+        const candidate = path.resolve(opts.cwd, body.path);
+        const rel = path.relative(opts.cwd, candidate);
+        if (rel.startsWith("..") || path.isAbsolute(rel)) {
+          return sendJson(res, 400, { ok: false, code: "outside-workspace", message: `path ${body.path} resolves outside workspaceRoot` });
+        }
+        const digest = await getFileDigestCached(body.path, {
+          workspaceRoot: opts.cwd,
+          forceRefresh: body.forceRefresh === true,
+        });
+        return sendJson(res, 200, { ok: true, digest });
+      }
+
+      if (route === "POST /v1/digest/diff") {
+        const body = await readJsonBody<{ staged?: unknown }>(req) ?? {};
+        const digest = await summarizeGitDiff(opts.cwd, {
+          staged: body.staged === true,
+        });
+        return sendJson(res, 200, { ok: true, digest });
+      }
+
+      if (route === "GET /v1/digest/cache") {
+        const stats = await getFileDigestCacheStats(opts.cwd);
+        return sendJson(res, 200, { ok: true, stats });
+      }
+
+      if (route === "POST /v1/digest/cache/clear") {
+        const result = await clearFileDigestCache(opts.cwd);
+        return sendJson(res, 200, { ok: true, ...result });
+      }
+
+      // v0.20: Claude Code auto-wire (MCP entry + CLAUDE.md instruction block)
+      if (route === "GET /v1/claude-code/status") {
+        const status = await claudeCodeStatus({ workspaceRoot: opts.cwd });
+        return sendJson(res, 200, { ok: true, status });
+      }
+
+      // v0.20.7: Extension registers its bundled-CLI path + Electron path here
+      // on startup. Subsequent /v1/claude-code/connect calls use these so the
+      // MCP entry doesn't depend on a global `tierkit` install.
+      if (route === "POST /v1/claude-code/host-info") {
+        const body = await readJsonBody<{ cliPath?: unknown; nodeBinary?: unknown }>(req) ?? {};
+        if (typeof body.cliPath === "string") hostInfo.cliPath = body.cliPath;
+        if (typeof body.nodeBinary === "string") hostInfo.nodeBinary = body.nodeBinary;
+        return sendJson(res, 200, { ok: true, hostInfo });
+      }
+      if (route === "POST /v1/claude-code/connect") {
+        const body = await readJsonBody<{
+          scope?: unknown;
+          instructionsLevel?: unknown;
+          cliPath?: unknown;
+          nodeBinary?: unknown;
+        }>(req) ?? {};
+        const scope = body.scope === "global" ? "global" : "workspace";
+        const lvl = body.instructionsLevel;
+        const instructionsLevel: InstructionsLevel =
+          lvl === "none" || lvl === "light" || lvl === "full" ? lvl : "light";
+        // v0.20.7: Extension hands us bundled-CLI path + Electron path so the
+        // MCP spawn never depends on a global `tierkit` install. Fall back to
+        // the hostInfo registered at startup so the JS layer doesn't have to
+        // pass paths on every call.
+        const cliPath = (typeof body.cliPath === "string" && body.cliPath.length > 0)
+          ? body.cliPath
+          : hostInfo.cliPath;
+        const nodeBinary = (typeof body.nodeBinary === "string" && body.nodeBinary.length > 0)
+          ? body.nodeBinary
+          : hostInfo.nodeBinary;
+        try {
+          const result = await connectClaudeCode({
+            workspaceRoot: opts.cwd,
+            scope: scope as ConnectScope,
+            instructionsLevel,
+            ...(cliPath ? { cliPath } : {}),
+            ...(nodeBinary ? { nodeBinary } : {}),
+          });
+          return sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          return sendJson(res, 500, { ok: false, code: "connect-failed", message: (err as Error).message });
+        }
+      }
+      if (route === "POST /v1/claude-code/disconnect") {
+        const body = await readJsonBody<{ scope?: unknown }>(req) ?? {};
+        const scope = body.scope === "global" ? "global" : "workspace";
+        try {
+          const result = await disconnectClaudeCode({
+            workspaceRoot: opts.cwd,
+            scope: scope as ConnectScope,
+          });
+          return sendJson(res, 200, { ok: true, result });
+        } catch (err) {
+          return sendJson(res, 500, { ok: false, code: "disconnect-failed", message: (err as Error).message });
+        }
+      }
+
+      // v0.22: List all Claude Code sessions for the current workspace.
+      if (route === "GET /v1/claude-code/sessions") {
+        try {
+          const r = await listClaudeSessions({ cwd: opts.cwd });
+          return sendJson(res, 200, { ok: true, sessions: r.sessions });
+        } catch (err) {
+          return sendJson(res, 500, { ok: false, code: "scan-failed", message: (err as Error).message });
+        }
+      }
+
+      // v0.22: Read one Claude Code session by id.
+      if (method === "GET" && url.pathname.startsWith("/v1/claude-code/sessions/")) {
+        const id = decodeURIComponent(url.pathname.slice("/v1/claude-code/sessions/".length));
+        try {
+          const r = await readClaudeSession({ cwd: opts.cwd, id });
+          return sendJson(res, 200, { ok: true, id: r.id, messages: r.messages });
+        } catch (err) {
+          if (err instanceof ReadClaudeSessionError) {
+            const status = err.code === "bad-id" ? 400 : 404;
+            return sendJson(res, status, { ok: false, code: err.code, message: err.message });
+          }
+          return sendJson(res, 500, { ok: false, code: "read-failed", message: (err as Error).message });
+        }
+      }
+
+      // v0.21: Tierkit Chat as a streaming proxy over the claude CLI. The
+      // webview POSTs the user's message + optional sessionId; we spawn
+      // `claude -p` and forward its stream-json events as SSE so the webview
+      // renders Claude's response in real time. The webview is now the actual
+      // chat surface — no clipboard, no ⌘V, no Claude Code sidebar.
+      if (route === "POST /v1/claude-code/chat") {
+        const body = await readJsonBody<{
+          message?: unknown;
+          sessionId?: unknown;
+          permissionMode?: unknown;
+        }>(req) ?? {};
+        if (typeof body.message !== "string" || body.message.length === 0) {
+          return sendJson(res, 400, { ok: false, code: "bad-request", message: "message is required" });
+        }
+        const sessionId = typeof body.sessionId === "string" && body.sessionId.length > 0
+          ? body.sessionId
+          : undefined;
+        // v0.21.3: forward permissionMode through to chatWithClaude. Validate
+        // against the closed enum so a malformed client doesn't push an
+        // arbitrary string into claude's CLI args.
+        const permModeRaw = body.permissionMode;
+        const validModes = ["default", "acceptEdits", "bypassPermissions", "plan"] as const;
+        const permissionMode = typeof permModeRaw === "string" && (validModes as readonly string[]).includes(permModeRaw)
+          ? (permModeRaw as typeof validModes[number])
+          : undefined;
+
+        // Switch to SSE.
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        res.setHeader("connection", "keep-alive");
+        res.flushHeaders?.();
+
+        // v0.21.2: do NOT emit "event:" lines. The VS Code webview streamProxy
+        // only forwards blocks whose first line starts with "data:" — any
+        // block starting with "event: foo\ndata: ..." gets dropped silently,
+        // which is why the webview saw zero chunks in 0.21.0/0.21.1 and
+        // hung on "thinking…". The event type lives inside the JSON payload
+        // (every ChatEvent has a .type field) and the webview dispatches on
+        // payload.type, so the SSE event-name line is redundant.
+        const writeData = (payload: unknown) => {
+          if (res.writableEnded || res.destroyed) return;
+          try {
+            res.write(`data: ${JSON.stringify(payload)}\n\n`);
+          } catch { /* socket closed */ }
+        };
+        const keepalive = setInterval(() => {
+          if (res.writableEnded || res.destroyed) return;
+          try { res.write(":\n\n"); } catch { /* socket closed */ }
+        }, 15_000);
+
+        // Kill the claude subprocess if the client aborts the SSE stream.
+        const ac = new AbortController();
+        req.on("close", () => ac.abort());
+
+        try {
+          for await (const evt of chatWithClaude({
+            message: body.message,
+            cwd: opts.cwd,
+            signal: ac.signal,
+            ...(sessionId ? { sessionId } : {}),
+            ...(permissionMode ? { permissionMode } : {}),
+          })) {
+            writeData(evt);
+          }
+          writeData({ type: "done", ok: true });
+        } catch (err) {
+          writeData({ type: "error", code: "stream-error", message: (err as Error).message });
+        } finally {
+          clearInterval(keepalive);
+          if (!res.writableEnded) res.end();
+        }
+        return;
+      }
+
+      if (route === "POST /v1/context/pack") {
+        const body = await readJsonBody<{
+          command?: unknown;
+          files?: unknown;
+          includeDiff?: unknown;
+          stagedDiff?: unknown;
+          errorLog?: unknown;
+          testOutput?: unknown;
+          jsonInput?: unknown;
+          rawContext?: unknown;
+        }>(req) ?? {};
+        const files: string[] = Array.isArray(body.files)
+          ? body.files.filter((f): f is string => typeof f === "string" && f.length > 0)
+          : [];
+        for (const f of files) {
+          const candidate = path.resolve(opts.cwd, f);
+          const rel = path.relative(opts.cwd, candidate);
+          if (rel.startsWith("..") || path.isAbsolute(rel)) {
+            return sendJson(res, 400, { ok: false, code: "outside-workspace", message: `path ${f} resolves outside workspaceRoot` });
+          }
+        }
+        const pack = await buildContextPack({
+          workspaceRoot: opts.cwd,
+          command: typeof body.command === "string" ? body.command : undefined,
+          files: files.length > 0 ? files : undefined,
+          includeDiff: body.includeDiff === true,
+          stagedDiff: body.stagedDiff === true,
+          errorLog: typeof body.errorLog === "string" ? body.errorLog : undefined,
+          testOutput: typeof body.testOutput === "string" ? body.testOutput : undefined,
+          jsonInput: typeof body.jsonInput === "string" ? body.jsonInput : undefined,
+          rawContext: typeof body.rawContext === "string" ? body.rawContext : undefined,
+        });
+        return sendJson(res, 200, { ok: true, pack });
       }
 
       if (route === "GET /v1/context/recent") {
@@ -538,13 +867,114 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
 
       // v0.17: today's routing-savings summary, used by the GUI Savings card.
       // Resolves baselineProfileId from config.routingBaseline (defaulting to
-      // "claudeCode"). Returns `baselineConfigured:false` with a reason when
-      // the resolved profile is missing or has no cost data.
+      // "claudeCode"). When the resolved profile has no cost data (e.g. the
+      // bundled claudeCode profile uses flat-rate pricing without per-token
+      // numbers), v0.21.6 picks the most representative priced profile of
+      // the SAME provider family as the requested baseline. So when the user
+      // is running Claude Code (default baseline = "claudeCode" → flat-rate),
+      // we fall back to a Claude-family priced profile (claudeSonnet, etc.) —
+      // NOT to gpt-4o just because it happens to have the highest
+      // inputUsdPerMillion. Otherwise savings get computed against the wrong
+      // model and the dashboard misleads.
+      // v0.21.7: MCP-driven savings. Counts today's tierkit.* compression
+      // tool calls and converts savedTokens to USD using the baseline
+      // profile's input cost-per-million. This is the metric that actually
+      // updates when the user chats with Claude through Tierkit Chat.
+      if (route === "GET /v1/tierkit/savings/today") {
+        const cfg = await loadConfig(opts.cwd);
+        const profiles = cfg.config.modelProfiles ?? {};
+        const requestedId = cfg.config.routingBaseline ?? "claudeCode";
+        const claudeProviders = new Set(["anthropic", "claude-code"]);
+        const openaiProviders = new Set(["openai", "openai-compatible"]);
+        const requestedProv = profiles[requestedId]?.provider ?? "claude-code";
+        const requestedFam = claudeProviders.has(requestedProv) ? "claude"
+          : openaiProviders.has(requestedProv) ? "openai" : "other";
+        const famOf = (p: { provider?: string } | undefined): string => {
+          const prov = p?.provider ?? "";
+          if (claudeProviders.has(prov)) return "claude";
+          if (openaiProviders.has(prov)) return "openai";
+          return "other";
+        };
+        // Same baseline-selection heuristic as /v1/savings/today.
+        let baselineId = requestedId;
+        let baseProfile = profiles[baselineId];
+        if (!baseProfile?.cost || baseProfile.cost.type !== "per-token") {
+          const priced = Object.entries(profiles)
+            .filter(([, p]) => p?.cost?.type === "per-token");
+          priced.sort(([, a], [, b]) => {
+            const af = famOf(a) === requestedFam ? 0 : 1;
+            const bf = famOf(b) === requestedFam ? 0 : 1;
+            if (af !== bf) return af - bf;
+            const ac = (a.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
+            const bc = (b.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
+            return bc - ac;
+          });
+          const cand = priced[0];
+          if (cand) { baselineId = cand[0]; baseProfile = cand[1]; }
+        }
+        const inputUsdPerMillion = baseProfile?.cost?.type === "per-token"
+          ? (baseProfile.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion
+          : undefined;
+        const summary = await computeTierkitMcpSavings(opts.cwd, inputUsdPerMillion);
+        return sendJson(res, 200, {
+          ok: true,
+          baselineProfileId: baselineId,
+          baselineProvider: baseProfile?.provider,
+          inputUsdPerMillion,
+          ...summary,
+        });
+      }
+
       if (route === "GET /v1/savings/today") {
         const { computeRoutingSavings } = await import("./routingSavings.js");
         const cfg = await loadConfig(opts.cwd);
-        const baselineId = cfg.config.routingBaseline ?? "claudeCode";
-        const profile = cfg.config.modelProfiles?.[baselineId];
+        const profiles = cfg.config.modelProfiles ?? {};
+        const requestedId = cfg.config.routingBaseline ?? "claudeCode";
+        let baselineId = requestedId;
+        let profile = profiles[baselineId];
+        let autoFallback: { from: string; to: string } | undefined;
+
+        // Heuristic: which provider family does the requested baseline belong to?
+        // We use this to pick a same-family priced fallback before falling back
+        // to other families.
+        const claudeProviders = new Set(["anthropic", "claude-code"]);
+        const openaiProviders = new Set(["openai", "openai-compatible"]);
+        const requestedProvider = profile?.provider ?? "claude-code";
+        const requestedFamily =
+          claudeProviders.has(requestedProvider) ? "claude"
+          : openaiProviders.has(requestedProvider) ? "openai"
+          : "other";
+
+        function familyOf(p: { provider?: string } | undefined): "claude" | "openai" | "other" {
+          const prov = p?.provider ?? "";
+          if (claudeProviders.has(prov)) return "claude";
+          if (openaiProviders.has(prov)) return "openai";
+          return "other";
+        }
+
+        // If the requested baseline lacks per-token cost data, pick the most
+        // expensive priced profile in the same provider family first; only
+        // fall back to other families if no same-family priced profile exists.
+        if (!profile || !profile.cost || profile.cost.type !== "per-token") {
+          const priced = Object.entries(profiles)
+            .filter(([, p]) => p?.cost?.type === "per-token" && (p.kind === "public-cloud" || p.kind === "private-remote"));
+          // Sort: same-family first, then by descending inputUsdPerMillion.
+          priced.sort(([, a], [, b]) => {
+            const af = familyOf(a) === requestedFamily ? 0 : 1;
+            const bf = familyOf(b) === requestedFamily ? 0 : 1;
+            if (af !== bf) return af - bf;
+            const ac = (a.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
+            const bc = (b.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
+            return bc - ac;
+          });
+          const candidate = priced[0];
+          if (candidate) {
+            autoFallback = { from: requestedId, to: candidate[0] };
+            baselineId = candidate[0];
+            profile = candidate[1];
+          }
+        }
+
         const windowStart = new Date();
         windowStart.setUTCHours(0, 0, 0, 0);
 
@@ -560,7 +990,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         const usagePath = path.join(opts.cwd, cfg.config.runtime.dataDir, "usage.jsonl");
         const records = await readUsage(usagePath);
         const summary = computeRoutingSavings(records, profile, windowStart);
-        return sendJson(res, 200, { baselineConfigured: true, ...summary });
+        return sendJson(res, 200, {
+          baselineConfigured: true,
+          ...summary,
+          ...(autoFallback ? { autoFallback } : {}),
+        });
       }
 
       // ── v1.5: session + models/plugins read endpoints (used by the GUI + SDK) ──
