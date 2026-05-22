@@ -1803,17 +1803,11 @@ export const GUI_HTML = `<!doctype html>
       p.classList.toggle('active', p.dataset.tabPanel === name);
     });
     saveActiveTab(name);
-    // Guard: setActiveTab is called once during startup (before $ is initialised as a const).
-    // We swallow any TDZ ReferenceError here; all subsequent calls from tab clicks run fine.
-    if (name === 'chat') { try { loadChatSessions(); } catch (_) { /* $ not yet in scope */ } }
+    if (name === 'chat') loadChatSessions();
   }
   document.querySelectorAll('.tab-btn').forEach((b) => {
     b.addEventListener('click', () => setActiveTab(b.dataset.tab));
   });
-  // v0.14: on first activation (seenOnboarding !== true), force tab to 'chat'.
-  // This is resolved later after config is loaded in the main init block.
-  setActiveTab(loadActiveTab() || 'chat');
-
   // ── State + helpers ────────────────────────────────────────────────────────
   const BASE = (typeof window !== 'undefined' && window.__TIERKIT_BASE_URL__) || '';
   ${TRANSPORT_INLINE_JS}
@@ -1825,6 +1819,10 @@ export const GUI_HTML = `<!doctype html>
   // pick the handle off the transport rather than acquiring it again. null in browser mode.
   const vsApi = transport.vsApi;
   const $ = (id) => document.getElementById(id);
+  // v0.14: on first activation (seenOnboarding !== true), force tab to 'chat'.
+  // This is resolved later after config is loaded in the main init block.
+  // NOTE: must run AFTER $ is declared so loadChatSessions() (called from setActiveTab) can use it.
+  setActiveTab(loadActiveTab() || 'chat');
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }
   // v0.12: short-form token count formatter — "1.2k", "850", "3.4M".
@@ -4822,9 +4820,7 @@ export const GUI_HTML = `<!doctype html>
    * active thread belongs to.
    */
   async function loadChatSessions() {
-    // $ is a const initialised after setActiveTab's first call — guard against TDZ.
-    let host;
-    try { host = $('tk-chat-session-list'); } catch { return; }
+    const host = $('tk-chat-session-list');
     if (!host) return;
     let sessions;
     try {
