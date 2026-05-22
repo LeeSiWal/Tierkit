@@ -1803,6 +1803,9 @@ export const GUI_HTML = `<!doctype html>
       p.classList.toggle('active', p.dataset.tabPanel === name);
     });
     saveActiveTab(name);
+    // Guard: setActiveTab is called once during startup (before $ is initialised as a const).
+    // We swallow any TDZ ReferenceError here; all subsequent calls from tab clicks run fine.
+    if (name === 'chat') { try { loadChatSessions(); } catch (_) { /* $ not yet in scope */ } }
   }
   document.querySelectorAll('.tab-btn').forEach((b) => {
     b.addEventListener('click', () => setActiveTab(b.dataset.tab));
@@ -4809,8 +4812,63 @@ export const GUI_HTML = `<!doctype html>
     if (patch.savedTokens) cur.savedTokens += patch.savedTokens;
     map[sessionId] = cur;
     saveSessions(map);
-    refreshSessionsCard();
+    loadChatSessions();
   }
+  /**
+   * v0.22: chat-tab sidebar. Fetches the session index from the daemon and
+   * joins on the localStorage metrics map so each row shows id, preview,
+   * mtime, and (if we've seen it before in Tierkit Chat) token + cost stats.
+   * Highlights tkChatSessionId so the user always sees which session the
+   * active thread belongs to.
+   */
+  async function loadChatSessions() {
+    // $ is a const initialised after setActiveTab's first call — guard against TDZ.
+    let host;
+    try { host = $('tk-chat-session-list'); } catch { return; }
+    if (!host) return;
+    let sessions;
+    try {
+      const r = await jget('/v1/claude-code/sessions');
+      sessions = r.sessions || [];
+    } catch (e) {
+      host.innerHTML = '<div class="empty dim">' + escapeHtml(lang === 'ko' ? '세션 불러오기 실패' : 'Failed to load sessions') +
+        ' · <button class="tiny" id="tk-chat-sessions-retry">' + escapeHtml(lang === 'ko' ? '재시도' : 'Retry') + '</button></div>';
+      const retry = $('tk-chat-sessions-retry');
+      if (retry) retry.onclick = () => loadChatSessions();
+      return;
+    }
+    if (sessions.length === 0) {
+      host.innerHTML = '<div class="empty dim">' + escapeHtml(lang === 'ko' ? '아직 채팅 세션 없음' : 'No chat sessions yet') + '</div>';
+      return;
+    }
+    const meta = loadSessions(); // existing helper for tk_chat_sessions localStorage
+    host.innerHTML = '';
+    for (const s of sessions) {
+      const row = document.createElement('div');
+      row.className = 'chat-session-row';
+      if (s.id === tkChatSessionId) row.classList.add('selected');
+      row.dataset.sessionId = s.id;
+      const m = meta[s.id];
+      const tokens = m ? ((m.tokensIn || 0) + (m.tokensOut || 0)) : 0;
+      const cost = m ? (m.costUsd || 0) : 0;
+      const tokensShort = tokens >= 1000 ? (tokens / 1000).toFixed(1) + 'k' : String(tokens);
+      const when = (() => {
+        try {
+          const d = new Date(s.mtime);
+          return d.toLocaleString(lang === 'ko' ? 'ko-KR' : 'en-US', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } catch { return ''; }
+      })();
+      row.innerHTML =
+        '<div class="session-preview">' + escapeHtml(s.preview || s.id.slice(0, 8) + '…') + '</div>' +
+        '<div class="session-meta">' + escapeHtml(s.id.slice(0, 8)) + ' · ' + escapeHtml(when) + ' · ' + s.messageCount + ' msg' +
+        (tokens ? ' · ' + tokensShort + ' tok' : '') +
+        (cost > 0 ? ' · $' + cost.toFixed(4) : '') +
+        '</div>';
+      row.onclick = () => loadChatSessionMessages(s.id);
+      host.appendChild(row);
+    }
+  }
+
   function refreshSessionsCard() {
     const host = $('tk-sessions-list');
     if (!host) return;
@@ -4932,6 +4990,41 @@ export const GUI_HTML = `<!doctype html>
   }
   // Initial paint of the sessions card so the user sees existing history immediately on load.
   refreshSessionsCard();
+
+  // ── Chat sidebar toggle + new-session button ─────────────────────────────
+  const TK_SIDEBAR_LS_KEY = 'tk_chat_sidebar_collapsed';
+  const sidebarEl = $('tk-chat-sidebar');
+  const sidebarToggleBtn = $('tk-chat-sidebar-toggle');
+  if (sidebarEl && sidebarToggleBtn) {
+    if (localStorage.getItem(TK_SIDEBAR_LS_KEY) === '1') {
+      sidebarEl.classList.add('collapsed');
+      sidebarToggleBtn.textContent = '»';
+    }
+    sidebarToggleBtn.onclick = () => {
+      const collapsed = sidebarEl.classList.toggle('collapsed');
+      sidebarToggleBtn.textContent = collapsed ? '»' : '«';
+      try { localStorage.setItem(TK_SIDEBAR_LS_KEY, collapsed ? '1' : '0'); } catch { /* quota */ }
+    };
+  }
+  const newSessionBtn = $('tk-chat-new-session');
+  if (newSessionBtn) {
+    newSessionBtn.onclick = () => newChatSession();
+  }
+
+  function newChatSession() {
+    tkChatSessionId = null;
+    const thread = $('agent-thread');
+    if (thread) {
+      thread.innerHTML = '';
+      // Restore the original empty placeholder (matches the static HTML's <div class="agent-empty"> child).
+      const empty = document.createElement('div');
+      empty.className = 'agent-empty';
+      empty.style.lineHeight = '1.6';
+      empty.innerHTML = (i18n.agentEmpty || '');
+      thread.appendChild(empty);
+    }
+    loadChatSessions();
+  }
 
   function escapeHtmlMd(s) {
     return String(s).replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
