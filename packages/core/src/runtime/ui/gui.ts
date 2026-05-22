@@ -1819,6 +1819,14 @@ export const GUI_HTML = `<!doctype html>
   // pick the handle off the transport rather than acquiring it again. null in browser mode.
   const vsApi = transport.vsApi;
   const $ = (id) => document.getElementById(id);
+  // Capture the initial agent-empty placeholder HTML so newChatSession can
+  // restore it without depending on the locale dictionary (which only has
+  // the Korean translation — the English content lives in the static HTML).
+  const TK_INITIAL_AGENT_EMPTY_HTML = (() => {
+    if (typeof document.querySelector !== 'function') return '';
+    const node = document.querySelector('#agent-thread .agent-empty');
+    return node ? node.innerHTML : '';
+  })();
   // v0.14: on first activation (seenOnboarding !== true), force tab to 'chat'.
   // This is resolved later after config is loaded in the main init block.
   // NOTE: must run AFTER $ is declared so loadChatSessions() (called from setActiveTab) can use it.
@@ -4856,7 +4864,7 @@ export const GUI_HTML = `<!doctype html>
       })();
       row.innerHTML =
         '<div class="session-preview">' + escapeHtml(s.preview || s.id.slice(0, 8) + '…') + '</div>' +
-        '<div class="session-meta">' + escapeHtml(s.id.slice(0, 8)) + ' · ' + escapeHtml(when) + ' · ' + s.messageCount + ' msg' +
+        '<div class="session-meta">' + escapeHtml(s.id.slice(0, 8)) + ' · ' + escapeHtml(when) + ' · ' + escapeHtml(String(s.messageCount)) + ' msg' +
         (tokens ? ' · ' + tokensShort + ' tok' : '') +
         (cost > 0 ? ' · $' + cost.toFixed(4) : '') +
         '</div>';
@@ -5016,7 +5024,7 @@ export const GUI_HTML = `<!doctype html>
       const empty = document.createElement('div');
       empty.className = 'agent-empty';
       empty.style.lineHeight = '1.6';
-      empty.innerHTML = (i18n.agentEmpty || '');
+      empty.innerHTML = i18n.agentEmpty || TK_INITIAL_AGENT_EMPTY_HTML;
       thread.appendChild(empty);
     }
     loadChatSessions();
