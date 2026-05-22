@@ -67,6 +67,22 @@ describe("readClaudeSession", () => {
     ).rejects.toMatchObject({ code: "bad-id" });
   });
 
+  it("flattens a single assistant message with both text and tool_use blocks", async () => {
+    const { home, cwd, dir } = await makeProject();
+    const id = "44444444-4444-4444-4444-444444444444";
+    await writeJsonl(dir, id, [
+      { type: "assistant", message: { content: [
+        { type: "text", text: "I'll read that" },
+        { type: "tool_use", id: "tu2", name: "Read", input: { path: "a.ts" } },
+      ] } },
+    ]);
+    const r = await readClaudeSession({ cwd, id, homeDirOverride: home });
+    expect(r.messages).toEqual([
+      { role: "assistant", text: "I'll read that" },
+      { role: "assistant", toolUse: { id: "tu2", name: "Read", input: { path: "a.ts" } } },
+    ]);
+  });
+
   it("skips queue-operation, attachment, and malformed lines", async () => {
     const { home, cwd, dir } = await makeProject();
     const id = "33333333-3333-3333-3333-333333333333";

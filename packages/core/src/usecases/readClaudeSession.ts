@@ -118,6 +118,10 @@ function extractFromMessage(
             : "";
       out.push({ role: "tool", toolResultFor: b.tool_use_id, text: textContent });
     }
+    // Unknown block types (thinking, future Anthropic additions) are
+    // silently dropped — we render what we know how to render. Adding
+    // explicit handling for thinking would mean teaching the GUI a new
+    // bubble style; not in scope for v0.22.
   }
   return out;
 }
