@@ -12,6 +12,9 @@
  * Map a workspace path to the directory name Claude uses under
  * `~/.claude/projects/`. Verified against real on-disk samples — Claude
  * does NOT collapse repeated dashes or trim trailing dashes.
+ *
+ * Only absolute paths are supported; relative paths produce slugs with no
+ * leading dash and will silently find nothing in Claude's on-disk layout.
  */
 export function encodeCwdForClaudeProjects(cwd: string): string {
   return cwd.replace(/[/.]/g, "-");

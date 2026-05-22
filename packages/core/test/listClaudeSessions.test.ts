@@ -20,4 +20,8 @@ describe("encodeCwdForClaudeProjects", () => {
     expect(encodeCwdForClaudeProjects("/a/./b..c"))
       .toBe("-a---b--c");
   });
+
+  it("returns empty string for empty string input", () => {
+    expect(encodeCwdForClaudeProjects("")).toBe("");
+  });
 });
