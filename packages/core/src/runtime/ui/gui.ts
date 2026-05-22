@@ -4873,6 +4873,57 @@ export const GUI_HTML = `<!doctype html>
     }
   }
 
+  /**
+   * Click a session row → fetch its message thread → render into agent-thread
+   * using the same bubble factories the live chat uses. Sets tkChatSessionId
+   * so the next composer send continues that session via claude --resume.
+   */
+  async function loadChatSessionMessages(id) {
+    let data;
+    try {
+      data = await jget('/v1/claude-code/sessions/' + encodeURIComponent(id));
+    } catch (e) {
+      // jget throws on non-2xx. Map 404 to a friendly "session vanished" toast.
+      const msg = /HTTP 404/.test(String(e.message)) || /not-found/.test(String(e.message))
+        ? (lang === 'ko' ? '이 세션은 사라졌습니다 — 다른 세션을 선택해주세요' : 'Session no longer exists — pick another')
+        : String(e.message);
+      toast(msg, 'err');
+      loadChatSessions(); // sync the sidebar with reality
+      return;
+    }
+
+    tkChatSessionId = id;
+    const thread = $('agent-thread');
+    if (!thread) return;
+    thread.innerHTML = '';
+
+    // Walk messages and synthesize bubbles. We reuse the live chat factories
+    // so historical view and in-flight view look the same.
+    // Note: chatUserBubble() is the existing helper that renders user messages
+    // (appends to agentThread via appendAgent). No separate appendUserBubble needed.
+    let currentAssistantBubble = null;
+    for (const m of (data.messages || [])) {
+      if (m.role === 'user') {
+        currentAssistantBubble = null;
+        chatUserBubble(m.text || '');
+      } else if (m.role === 'assistant') {
+        if (m.text) {
+          if (!currentAssistantBubble) currentAssistantBubble = chatAssistantBubble();
+          currentAssistantBubble.appendText(m.text);
+        } else if (m.toolUse) {
+          if (!currentAssistantBubble) currentAssistantBubble = chatAssistantBubble();
+          currentAssistantBubble.addToolUse(m.toolUse);
+        }
+      } else if (m.role === 'tool') {
+        if (currentAssistantBubble) {
+          currentAssistantBubble.addToolResult({ toolUseId: m.toolResultFor, output: m.text, isError: false });
+        }
+      }
+    }
+    if (currentAssistantBubble) currentAssistantBubble.finalize({});
+    loadChatSessions(); // refresh highlight
+  }
+
   function refreshSessionsCard() {
     const host = $('tk-sessions-list');
     if (!host) return;
