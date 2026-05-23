@@ -28,6 +28,11 @@ import type { ModelProfile } from "./ModelProfile.js";
 const DEFAULT_OLLAMA_BASE = "http://127.0.0.1:11434";
 const PROBE_TIMEOUT_MS = 1000;
 const CACHE_TTL_MS = 30_000;
+/** Negative-result TTL: when no candidate answered, suppress re-probes for this long.
+ *  Shorter than the positive TTL so a freshly-started Ollama gets picked up reasonably
+ *  fast (e.g. user launches Ollama, refreshes the GUI). Longer than zero so a burst of
+ *  concurrent loadConfig calls doesn't all repeatedly stampede unreachable hosts. */
+const NEGATIVE_CACHE_TTL_MS = 5_000;
 
 interface OllamaModelEntry {
   name: string;
@@ -40,28 +45,52 @@ interface OllamaTagsResponse {
 }
 
 let cache: { at: number; baseUrl: string; profiles: Record<string, ModelProfile> } | null = null;
+/** In-flight probe shared across concurrent callers. When set, callers await this
+ *  promise instead of launching their own probe — a burst of concurrent loadConfig
+ *  calls (the GUI's refreshAll fires ~14 in parallel) collapses to ONE probe. */
+let inflightProbe: Promise<Record<string, ModelProfile>> | null = null;
 
 export interface DiscoverOptions {
-  /** Ollama base URL. Defaults to `http://127.0.0.1:11434`. */
+  /** Ollama base URL. When set, probes ONLY this URL. When unset, probes a
+   *  list of candidates (env + Docker host gateways + localhost) and uses
+   *  the first that returns models. */
   baseUrl?: string;
   /** Force a fresh probe even if the cache is fresh. */
   force?: boolean;
 }
 
-export async function discoverOllamaProfiles(opts: DiscoverOptions = {}): Promise<Record<string, ModelProfile>> {
-  if (process.env.TIERKIT_NO_DISCOVERY === "1") return {};
-  const baseUrl = opts.baseUrl ?? DEFAULT_OLLAMA_BASE;
-
-  if (cache && !opts.force && cache.baseUrl === baseUrl && Date.now() - cache.at < CACHE_TTL_MS) {
-    return cache.profiles;
+/**
+ * v0.21.12: build the list of Ollama base URLs to probe when none is specified.
+ *
+ * Order matters — the first one that returns ≥1 model wins. Designed for the
+ * "daemon runs in a container, Ollama runs on the host" case (code-server,
+ * devcontainers, Docker Desktop on Mac/Windows) where 127.0.0.1 inside the
+ * container has nothing on port 11434 but the host's Ollama is reachable via
+ * the standard host gateway names.
+ */
+function getCandidateBaseUrls(opts: DiscoverOptions): string[] {
+  if (opts.baseUrl) return [opts.baseUrl];
+  const out: string[] = [];
+  // 1. User env override (also the standard Ollama client convention).
+  const envHost = process.env.OLLAMA_HOST;
+  if (envHost && envHost.length > 0) {
+    out.push(/^https?:\/\//.test(envHost) ? envHost : `http://${envHost}`);
   }
+  // 2. Localhost — same machine as the daemon.
+  out.push(DEFAULT_OLLAMA_BASE);
+  // 3. Docker / Podman / Linux Docker host gateways. These are name-resolved
+  //    special hosts that point back at the container host on the corresponding
+  //    runtime — the standard escape hatch from a container to host services.
+  out.push("http://host.docker.internal:11434");    // Docker Desktop (Mac/Win)
+  out.push("http://host.containers.internal:11434"); // Podman
+  out.push("http://172.17.0.1:11434");               // Linux Docker default bridge gateway
+  return Array.from(new Set(out));
+}
 
+async function probeOne(baseUrl: string): Promise<{ baseUrl: string; profiles: Record<string, ModelProfile> } | null> {
   try {
     const res = await fetch(`${baseUrl}/api/tags`, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-    if (!res.ok) {
-      cache = { at: Date.now(), baseUrl, profiles: {} };
-      return {};
-    }
+    if (!res.ok) return null;
     const body = (await res.json()) as OllamaTagsResponse;
     const models = body.models ?? [];
     const profiles: Record<string, ModelProfile> = {};
@@ -81,12 +110,86 @@ export async function discoverOllamaProfiles(opts: DiscoverOptions = {}): Promis
         cost: { type: "free" },
       };
     }
-    cache = { at: Date.now(), baseUrl, profiles };
-    return profiles;
+    return { baseUrl, profiles };
   } catch {
-    // Ollama not running, network glitch, etc. — return empty silently. Discovery is
-    // best-effort; absence of profiles isn't an error condition for the caller.
-    return cache?.baseUrl === baseUrl ? cache.profiles : {};
+    return null;
+  }
+}
+
+export async function discoverOllamaProfiles(opts: DiscoverOptions = {}): Promise<Record<string, ModelProfile>> {
+  if (process.env.TIERKIT_NO_DISCOVERY === "1") return {};
+
+  // Cache hit — honored for BOTH positive and negative results. Empty cache used
+  // to force a re-probe on every call, which on long-running daemons (the VS Code
+  // in-process daemon) caused concurrent loadConfig calls to each fan out 4 fetches
+  // to unreachable Docker host gateways and exhaust the undici connection pool.
+  // With the negative TTL gate, a single missing-Ollama burst now collapses to one
+  // probe + 4 cached returns, instead of hundreds of stranded TCP connects.
+  if (cache && !opts.force) {
+    const age = Date.now() - cache.at;
+    const ttl = Object.keys(cache.profiles).length > 0 ? CACHE_TTL_MS : NEGATIVE_CACHE_TTL_MS;
+    if (age < ttl) return cache.profiles;
+  }
+
+  // Coalesce concurrent callers onto a single probe. The GUI's refreshAll fires
+  // ~14 parallel loadConfig calls; without this, each one independently launches
+  // 4 fetches → 56 concurrent connect()s, several of them to unroutable IPs.
+  if (inflightProbe && !opts.force) return inflightProbe;
+
+  const candidates = getCandidateBaseUrls(opts);
+  const probe = (async (): Promise<Record<string, ModelProfile>> => {
+    // Probe all candidates in parallel, but RETURN AS SOON AS one of them succeeds
+    // with ≥1 model. Critical for the macOS/Linux case where localhost Ollama
+    // responds in ~15ms but Docker bridge gateway IPs (e.g. 172.17.0.1) blackhole
+    // the TCP connect and AbortSignal.timeout(1000) doesn't actually cancel the
+    // OS-level connect promptly — it can sit for 3+ seconds. Waiting for all
+    // probes to settle stalls the daemon's loadConfig by that worst-case.
+    //
+    // Implementation: a manual Promise that resolves on the first successful
+    // probe, or after all probes settle (whichever is sooner). The slow probes
+    // keep running in the background and their AbortSignals will eventually
+    // tear them down — we just don't wait for them.
+    const winnerOrSettled = await new Promise<{ baseUrl: string; profiles: Record<string, ModelProfile> } | null>((resolve) => {
+      let pendingCount = candidates.length;
+      let resolved = false;
+      const allResults: Array<{ baseUrl: string; profiles: Record<string, ModelProfile> } | null> = [];
+      if (candidates.length === 0) { resolve(null); return; }
+      for (const url of candidates) {
+        probeOne(url).then((r) => {
+          allResults.push(r);
+          if (!resolved && r && Object.keys(r.profiles).length > 0) {
+            resolved = true;
+            resolve(r);
+            return;
+          }
+          if (--pendingCount === 0 && !resolved) {
+            resolved = true;
+            // No successful probe — pick the first non-null (e.g. Ollama up but
+            // returned 0 models) for cache provenance, else null.
+            resolve(allResults.find((x) => x !== null) ?? null);
+          }
+        });
+      }
+    });
+
+    if (winnerOrSettled && Object.keys(winnerOrSettled.profiles).length > 0) {
+      cache = { at: Date.now(), baseUrl: winnerOrSettled.baseUrl, profiles: winnerOrSettled.profiles };
+      return winnerOrSettled.profiles;
+    }
+    // Nothing useful — keep an empty cache so the TTL gate kicks in and we
+    // don't probe every single llm-call when Ollama is truly absent.
+    cache = { at: Date.now(), baseUrl: candidates[0] ?? DEFAULT_OLLAMA_BASE, profiles: {} };
+    return {};
+  })();
+
+  inflightProbe = probe;
+  try {
+    return await probe;
+  } finally {
+    // Clear the in-flight only if it's still ours (a parallel forced probe could
+    // have replaced it). Without this guard, a force probe completing after a
+    // non-force probe would null out the wrong reference.
+    if (inflightProbe === probe) inflightProbe = null;
   }
 }
 
@@ -240,4 +343,5 @@ function sanitizeId(modelName: string): string {
 /** Test introspection — clears the cache so subsequent calls re-probe. */
 export function _clearDiscoveryCacheForTests(): void {
   cache = null;
+  inflightProbe = null;
 }
