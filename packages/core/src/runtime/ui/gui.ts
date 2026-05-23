@@ -1060,9 +1060,9 @@ export const GUI_HTML = `<!doctype html>
       <div id="tk-claude-status" style="font-size:11px;color:var(--fg-dim);margin-bottom:6px">—</div>
       <div id="tk-claude-paths" style="font-size:10.5px;margin-bottom:6px;display:none"></div>
       <div style="display:flex;gap:6px;flex-wrap:wrap">
-        <button id="tk-claude-connect-ws" class="tiny primary" title="register tierkit MCP server in workspace .mcp.json + append CLAUDE.md block">Connect (workspace)</button>
-        <button id="tk-claude-connect-global" class="tiny" title="register tierkit MCP server in ~/.claude.json (all projects)">Connect (global)</button>
-        <button id="tk-claude-disconnect" class="tiny" title="remove MCP entry + strip CLAUDE.md block (current scope)">Disconnect</button>
+        <button id="tk-claude-connect-ws" class="tiny primary" data-i18n="claudeConnectWs" data-i18n-title="claudeConnectWsTitle" title="register tierkit MCP server in workspace .mcp.json + append CLAUDE.md block">Connect (workspace)</button>
+        <button id="tk-claude-connect-global" class="tiny" data-i18n="claudeConnectGlobal" data-i18n-title="claudeConnectGlobalTitle" title="register tierkit MCP server in ~/.claude.json (all projects)">Connect (global)</button>
+        <button id="tk-claude-disconnect" class="tiny" data-i18n="claudeDisconnect" data-i18n-title="claudeDisconnectTitle" title="remove MCP entry + strip CLAUDE.md block (current scope)">Disconnect</button>
       </div>
       <div id="tk-claude-verify" class="dim" style="font-size:10.5px;margin-top:8px;display:none;padding:6px 8px;background:var(--bg-input);border-radius:4px;line-height:1.5">
         <b data-i18n="ctxGatewayVerifyTitle">How to verify:</b>
@@ -1648,6 +1648,12 @@ export const GUI_HTML = `<!doctype html>
       tkPermDefault: '기본 (모두 차단)',
       tkPermPlan: '계획 모드 (읽기 전용)',
       permDeniedHint: 'Bash 또는 MCP 도구가 권한 차단됨. 위 perm 드롭다운을 \\"모든 도구 자동 승인\\"으로 변경 후 다시 시도하세요.',
+      claudeConnectWs: 'Connect (워크스페이스)',
+      claudeConnectWsTitle: 'tierkit MCP 서버를 워크스페이스 .mcp.json에 등록 + CLAUDE.md 블록 추가',
+      claudeConnectGlobal: 'Connect (전역)',
+      claudeConnectGlobalTitle: 'tierkit MCP 서버를 ~/.claude.json에 등록 (모든 프로젝트)',
+      claudeDisconnect: '연결 해제',
+      claudeDisconnectTitle: 'MCP 엔트리 제거 + CLAUDE.md 블록 정리 (현재 범위)',
       noActivity: '아직 호출 기록 없음 — Roo/Cline/Continue 사용(또는 /v1/openai 호출) 시 여기 표시',
       noPlugins: '활성 플러그인 없음. + 새 플러그인으로 만들거나 디렉토리에서 install 하세요.',
       pluginIdLabel: '플러그인 id',
