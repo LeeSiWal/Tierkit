@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.17.0",
+  "version": "0.22.0",
   "private": true,
   "description": "%description%",
   "license": "MIT",
@@ -66,6 +66,10 @@
         "title": "%commands.focusSidebar%"
       },
       {
+        "command": "tierkit.openInPanel",
+        "title": "Tierkit: Open in main editor (mobile-friendly)"
+      },
+      {
         "command": "tierkit.health",
         "title": "%commands.health%"
       },
@@ -124,7 +128,7 @@
     }
   },
   "scripts": {
-    "build": "tsup && node scripts/copy-samples.mjs",
+    "build": "pnpm -F @tierkit/cli build && tsup && node scripts/copy-samples.mjs && node scripts/copy-cli.mjs",
     "dev": "tsup --watch",
     "test": "vitest run --passWithNoTests",
     "typecheck": "tsc --noEmit",
