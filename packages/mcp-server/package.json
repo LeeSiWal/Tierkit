@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/mcp-server",
-  "version": "0.22.1",
+  "version": "0.22.2",
   "type": "module",
   "main": "./dist/index.js",
   "exports": {

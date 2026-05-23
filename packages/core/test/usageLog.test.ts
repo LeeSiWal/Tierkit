@@ -6,6 +6,7 @@ import {
   appendUsage,
   readUsage,
   summarizeUsage,
+  aggregateByProfile,
   estimateCost,
   type UsageRecord,
 } from "../src/runtime/usageLog.js";
@@ -52,6 +53,33 @@ describe("usageLog", () => {
     await fs.writeFile(logPath, '{"ok":true,"profileId":"p","provider":"ollama","model":"m","tier":"local-device","inputTokens":1,"outputTokens":1,"costUsd":0,"latencyMs":10,"timestamp":"2026-05-15T00:00:00.000Z"}\nthis is not json\n');
     const r = await readUsage(logPath);
     expect(r).toHaveLength(1);
+  });
+
+  // Regression: usage.jsonl intentionally co-stores LlmCall records AND
+  // mcp-tool records (see trimUsageLog docstring). MCP-tool entries use `ts`,
+  // not `timestamp`, and lack profileId/inputTokens. readUsage's typed return
+  // is UsageRecord[], so it must drop foreign shapes — otherwise downstream
+  // consumers (aggregateByProfile, summarizeUsage) crash on `r.timestamp.startsWith`.
+  it("drops mcp-tool records and other non-LlmCall shapes", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-usage-hetero-"));
+    const logPath = path.join(tmp, "usage.jsonl");
+    const llm = '{"timestamp":"2026-05-15T00:00:00.000Z","profileId":"localFast","provider":"ollama","model":"m","tier":"local-device","inputTokens":1,"outputTokens":1,"costUsd":0,"latencyMs":10,"ok":true}';
+    const mcp = '{"ts":"2026-05-22T20:36:07.665Z","type":"mcp-tool","workspaceRoot":"/w","tool":"tierkit.get_file_digest","ok":true,"durationMs":7,"outputSummary":{"beforeTokens":22615,"afterTokens":600,"savedTokens":22015}}';
+    await fs.writeFile(logPath, `${llm}\n${mcp}\n${llm}\n`);
+    const r = await readUsage(logPath);
+    expect(r).toHaveLength(2);
+    expect(r.every((x) => typeof x.timestamp === "string")).toBe(true);
+    expect(r.every((x) => typeof x.profileId === "string")).toBe(true);
+  });
+
+  it("aggregateByProfile does not crash when log has mcp-tool entries", async () => {
+    tmp = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-usage-agg-"));
+    const logPath = path.join(tmp, "usage.jsonl");
+    const llm = '{"timestamp":"2026-05-24T00:00:00.000Z","profileId":"localFast","provider":"ollama","model":"m","tier":"local-device","inputTokens":1,"outputTokens":1,"costUsd":0,"latencyMs":10,"ok":true}';
+    const mcp = '{"ts":"2026-05-22T20:36:07.665Z","type":"mcp-tool","tool":"tierkit.get_file_digest","ok":true}';
+    await fs.writeFile(logPath, `${mcp}\n${llm}\n`);
+    const records = await readUsage(logPath);
+    expect(() => aggregateByProfile(records, new Date("2026-05-24T12:00:00Z"))).not.toThrow();
   });
 
   it("summarizes by profile + totals", async () => {

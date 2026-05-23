@@ -75,7 +75,12 @@ export async function readUsage(filePath: string): Promise<UsageRecord[]> {
     const out: UsageRecord[] = [];
     for (const line of lines) {
       try {
-        out.push(JSON.parse(line) as UsageRecord);
+        const o = JSON.parse(line) as Partial<UsageRecord> & { type?: string };
+        // usage.jsonl co-stores mcp-tool entries (uses `ts`, lacks profileId).
+        // readUsage's typed contract is UsageRecord[], so drop foreign shapes —
+        // otherwise summarizeUsage / aggregateByProfile crash on r.timestamp.
+        if (typeof o.timestamp !== "string" || typeof o.profileId !== "string") continue;
+        out.push(o as UsageRecord);
       } catch {
         // skip malformed lines — usage log is append-only telemetry, not source of truth
       }
