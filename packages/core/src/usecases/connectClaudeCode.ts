@@ -603,8 +603,13 @@ function trySpawn(binary: string, args: string[], opts: TrySpawnOptions = {}): P
       });
     });
     child.on("close", (code) => {
-      if (code === 0) resolve({ ok: true });
-      else resolve({ ok: false, message: `'${binary} ${args.join(" ")}' exited with code ${code}. stderr: ${stderr.trim().slice(0, 200)}` });
+      // "launchable" means the OS could resolve + exec the binary. A non-zero
+      // exit code just means our `--version` probe args weren't recognized
+      // (e.g. dash on Ubuntu rejects --version with exit 2), which still
+      // confirms the binary IS spawnable — that's what claude-vscode cares
+      // about when wiring up the MCP entry. Only ENOENT / spawn errors above
+      // mean "not launchable".
+      resolve({ ok: true, ...(code !== 0 ? { exitCode: code } as never : {}) });
     });
   });
 }
