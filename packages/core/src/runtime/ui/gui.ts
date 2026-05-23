@@ -254,7 +254,6 @@ export const GUI_HTML = `<!doctype html>
     margin: 14px auto 0;
     padding: 0 12px 12px;
     flex: 1;
-    min-width: 0;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -568,43 +567,6 @@ export const GUI_HTML = `<!doctype html>
     overflow: hidden;
   }
 
-  /* Chat tab: split into sidebar + main thread. The sidebar lists past sessions
-     and is collapsible to keep the chat thread roomy. */
-  .chat-layout {
-    display: flex;
-    flex: 1;
-    min-height: 0;
-    min-width: 0;
-    overflow: hidden;
-  }
-  .chat-sidebar {
-    flex: 0 1 220px;
-    min-width: 0;
-    border-right: 1px solid var(--border);
-    background: var(--bg-card);
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-  .chat-sidebar.collapsed { flex-basis: 36px; }
-  .chat-sidebar.collapsed .chat-sidebar-header > #tk-chat-new-session,
-  .chat-sidebar.collapsed #tk-chat-session-list { display: none; }
-  .chat-sidebar-header {
-    display: flex;
-    gap: 4px;
-    padding: 6px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  .chat-sidebar-header > button { flex: 0 0 auto; }
-  .chat-sidebar-header > #tk-chat-new-session { flex: 1 1 auto; min-width: 0; }
-  #tk-chat-session-list {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    overflow-x: hidden;
-    padding: 4px;
-  }
   .chat-session-row {
     padding: 6px 8px;
     margin-bottom: 2px;
@@ -621,13 +583,6 @@ export const GUI_HTML = `<!doctype html>
   .chat-session-row.selected { background: var(--bg-hover); border-left: 2px solid var(--accent); padding-left: 6px; }
   .chat-session-row .session-preview { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chat-session-row .session-meta { color: var(--fg-dim); font-family: var(--mono); font-size: 10px; }
-  /* On narrow viewports, the sidebar auto-collapses so the thread isn't squeezed. */
-  @media (max-width: 480px) {
-    .chat-sidebar { flex-basis: 36px; }
-    .chat-sidebar .chat-sidebar-header > #tk-chat-new-session,
-    .chat-sidebar #tk-chat-session-list { display: none; }
-  }
-
   /* Touch responsiveness (all viewports). Strips iOS 300ms tap-delay +
      double-tap zoom on interactive controls. Without touch-action:manipulation
      taps were getting eaten by webview gesture pipeline in code-server. */
@@ -807,17 +762,6 @@ export const GUI_HTML = `<!doctype html>
 <div class="tab-panel active" data-tab-panel="chat">
 <div id="host-banner" class="err-banner" style="display:none"></div>
 
-<div class="chat-layout">
-  <aside id="tk-chat-sidebar" class="chat-sidebar">
-    <div class="chat-sidebar-header">
-      <button id="tk-chat-sidebar-toggle" class="tiny" title="toggle">«</button>
-      <button id="tk-chat-new-session" class="tiny primary" title="start a new session">+ <span data-i18n="chatNewSession">New</span></button>
-    </div>
-    <div id="tk-chat-session-list">
-      <div class="empty dim" data-i18n="loading">loading…</div>
-    </div>
-  </aside>
-
 <div class="agent-shell">
   <div class="agent-card">
     <h2>
@@ -902,7 +846,6 @@ export const GUI_HTML = `<!doctype html>
     <div id="agent-attachments" hidden></div>
   </div>
 </div>
-</div><!-- /chat-layout -->
 </div><!-- /tab-panel:chat -->
 
 <main class="tab-panel" data-tab-panel="settings">
