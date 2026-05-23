@@ -259,6 +259,7 @@ export const GUI_HTML = `<!doctype html>
     flex-direction: column;
   }
   .agent-card {
+    position: relative;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 8px;
@@ -280,6 +281,42 @@ export const GUI_HTML = `<!doctype html>
     font-weight: 600;
   }
   .agent-card h2 .agent-status { margin-left: auto; font-size: 10px; }
+  /* v0.22: hamburger dropdown anchored to .agent-card. Floats over the thread
+     when open; hidden by default. Outside-click / Esc close handled by JS. */
+  .chat-sessions-dropdown {
+    position: absolute;
+    top: 38px;
+    right: 8px;
+    width: 280px;
+    max-width: calc(100% - 16px);
+    max-height: 50vh;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+  }
+  .chat-sessions-dropdown[hidden] { display: none; }
+  .chat-sessions-dropdown-header {
+    display: flex;
+    gap: 6px;
+    padding: 6px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .chat-sessions-dropdown-header > button { flex: 0 0 auto; }
+  .chat-sessions-dropdown-header > #tk-chat-new-session { flex: 1 1 auto; min-width: 0; }
+  .chat-sessions-dropdown #tk-chat-session-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 4px;
+  }
   .agent-thread {
     flex: 1;
     min-height: 80px;
@@ -775,12 +812,23 @@ export const GUI_HTML = `<!doctype html>
       <!-- v0.21.10: session-cumulative compression savings. Shows once the user
            has triggered at least one Tierkit MCP digest tool through chat. -->
       <span id="tk-chat-saved-meter" class="pill" style="font-size:10px;font-family:var(--mono);display:none;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);color:rgb(74,222,128)" title="cumulative tokens saved by Tierkit MCP compression this chat session">절감 0 tok</span>
-      <span class="h2-actions" hidden>
+      <span class="h2-actions">
         <button id="btn-agent-export" class="tiny" hidden>Export</button>
         <button id="btn-agent-import" class="tiny" hidden>Import</button>
-        <button id="btn-agent-clear" class="tiny" title="clear results" data-i18n="clearBtn">Clear</button>
+        <button id="btn-agent-clear" class="tiny" hidden title="clear results" data-i18n="clearBtn">Clear</button>
+        <button id="tk-chat-sessions-toggle" class="tiny" title="sessions menu" aria-expanded="false" aria-controls="tk-chat-sessions-dropdown">☰</button>
       </span>
     </h2>
+
+    <div id="tk-chat-sessions-dropdown" class="chat-sessions-dropdown" hidden role="menu" aria-labelledby="tk-chat-sessions-toggle">
+      <div class="chat-sessions-dropdown-header">
+        <button id="tk-chat-new-session" class="tiny primary" title="start a new session">+ <span data-i18n="chatNewSession">New session</span></button>
+        <button id="tk-chat-clear-thread" class="tiny" title="clear visible thread, keep session id"><span data-i18n="chatClearThread">Clear thread</span></button>
+      </div>
+      <div id="tk-chat-session-list">
+        <div class="empty dim" data-i18n="loading">loading…</div>
+      </div>
+    </div>
     <div id="agent-thread" class="agent-thread">
       <div class="agent-empty" data-i18n="agentEmpty" style="line-height:1.6">
         <b>Tierkit Chat = your Claude Code chat.</b><br>
@@ -1188,6 +1236,7 @@ export const GUI_HTML = `<!doctype html>
       tabChat: '채팅',
       tabSettings: '설정',
       chatNewSession: '새 세션',
+      chatClearThread: '대화 비우기',
       groupSavings: '절감',
       groupCurrentProject: '현재 프로젝트',
       groupCostRouting: '비용 라우팅',
@@ -1760,7 +1809,7 @@ export const GUI_HTML = `<!doctype html>
   })();
   // v0.14: on first activation (seenOnboarding !== true), force tab to 'chat'.
   // This is resolved later after config is loaded in the main init block.
-  // NOTE: must run AFTER $ is declared so loadChatSessions() (called from setActiveTab) can use it.
+  // NOTE: must run AFTER $ is declared so loadChatSessions() can use it.
   setActiveTab(loadActiveTab() || 'chat');
   function escapeHtml(s) { return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
   function fmtCost(n) { return '$' + (Number(n) || 0).toFixed(4); }
@@ -4820,6 +4869,7 @@ export const GUI_HTML = `<!doctype html>
         : String(e.message);
       toast(msg, 'err');
       loadChatSessions(); // sync the sidebar with reality
+      closeSessionsDropdown();
       return;
     }
 
@@ -4859,6 +4909,7 @@ export const GUI_HTML = `<!doctype html>
     }
     if (currentAssistantBubble) currentAssistantBubble.finalize({});
     loadChatSessions(); // refresh highlight
+    closeSessionsDropdown();
   }
 
   // Extract { savedTokens, savedRatio, beforeTokens, afterTokens } from a
@@ -4930,6 +4981,59 @@ export const GUI_HTML = `<!doctype html>
         toast(lang === 'ko' ? 'VS Code 내부에서만 동작' : 'VS Code only', 'err');
       }
     };
+  }
+
+  // ── Chat sessions hamburger dropdown ─────────────────────────────────────
+  const sessionsToggleBtn = $('tk-chat-sessions-toggle');
+  const sessionsDropdown = $('tk-chat-sessions-dropdown');
+  function closeSessionsDropdown() {
+    if (!sessionsDropdown || sessionsDropdown.hasAttribute('hidden')) return;
+    sessionsDropdown.setAttribute('hidden', '');
+    if (sessionsToggleBtn) sessionsToggleBtn.setAttribute('aria-expanded', 'false');
+  }
+  function openSessionsDropdown() {
+    if (!sessionsDropdown) return;
+    sessionsDropdown.removeAttribute('hidden');
+    if (sessionsToggleBtn) sessionsToggleBtn.setAttribute('aria-expanded', 'true');
+    loadChatSessions();
+  }
+  if (sessionsToggleBtn && sessionsDropdown) {
+    sessionsToggleBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (sessionsDropdown.hasAttribute('hidden')) openSessionsDropdown();
+      else closeSessionsDropdown();
+    };
+    document.addEventListener('click', (e) => {
+      if (sessionsDropdown.hasAttribute('hidden')) return;
+      const tgt = e.target;
+      if (!sessionsDropdown.contains(tgt) && tgt !== sessionsToggleBtn) {
+        closeSessionsDropdown();
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeSessionsDropdown();
+    });
+  }
+  const newSessionBtn = $('tk-chat-new-session');
+  if (newSessionBtn) {
+    newSessionBtn.onclick = () => { newChatSession(); closeSessionsDropdown(); };
+  }
+  const clearThreadBtn = $('tk-chat-clear-thread');
+  if (clearThreadBtn) {
+    clearThreadBtn.onclick = () => clearChatThread();
+  }
+
+  function clearChatThread() {
+    const thread = $('agent-thread');
+    if (!thread) return;
+    thread.innerHTML = '';
+    const empty = document.createElement('div');
+    empty.className = 'agent-empty';
+    empty.style.lineHeight = '1.6';
+    empty.innerHTML = i18n.agentEmpty || TK_INITIAL_AGENT_EMPTY_HTML;
+    thread.appendChild(empty);
+    closeSessionsDropdown();
+    // tkChatSessionId stays — next message continues the same claude session.
   }
 
   function newChatSession() {
