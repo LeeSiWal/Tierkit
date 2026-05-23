@@ -27,7 +27,10 @@ describe("executeCommandTool envelope", () => {
     expect(env.next).toBeUndefined();
   });
 
-  it("truncated:true has no next, only warnings (deterministic-continuation impossible)", async () => {
+  // Windows cmd.exe (used by shell:true) has an 8191-char command line limit;
+  // a 70KB printf literal trips ENAMETOOLONG before the shell even spawns.
+  // The truncation logic is platform-agnostic; verify it on POSIX only.
+  (process.platform === "win32" ? it.skip : it)("truncated:true has no next, only warnings (deterministic-continuation impossible)", async () => {
     // Generate enough output to exceed maxStdoutBytes default (64KB)
     const big = "a".repeat(70 * 1024);
     const res = await executeCommandTool.execute(
