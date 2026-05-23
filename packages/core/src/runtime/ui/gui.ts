@@ -1735,7 +1735,6 @@ export const GUI_HTML = `<!doctype html>
       p.classList.toggle('active', p.dataset.tabPanel === name);
     });
     saveActiveTab(name);
-    if (name === 'chat') loadChatSessions();
   }
   document.querySelectorAll('.tab-btn').forEach((b) => {
     b.addEventListener('click', () => setActiveTab(b.dataset.tab));
@@ -4931,26 +4930,6 @@ export const GUI_HTML = `<!doctype html>
         toast(lang === 'ko' ? 'VS Code 내부에서만 동작' : 'VS Code only', 'err');
       }
     };
-  }
-
-  // ── Chat sidebar toggle + new-session button ─────────────────────────────
-  const TK_SIDEBAR_LS_KEY = 'tk_chat_sidebar_collapsed';
-  const sidebarEl = $('tk-chat-sidebar');
-  const sidebarToggleBtn = $('tk-chat-sidebar-toggle');
-  if (sidebarEl && sidebarToggleBtn) {
-    if (localStorage.getItem(TK_SIDEBAR_LS_KEY) === '1') {
-      sidebarEl.classList.add('collapsed');
-      sidebarToggleBtn.textContent = '»';
-    }
-    sidebarToggleBtn.onclick = () => {
-      const collapsed = sidebarEl.classList.toggle('collapsed');
-      sidebarToggleBtn.textContent = collapsed ? '»' : '«';
-      try { localStorage.setItem(TK_SIDEBAR_LS_KEY, collapsed ? '1' : '0'); } catch { /* quota */ }
-    };
-  }
-  const newSessionBtn = $('tk-chat-new-session');
-  if (newSessionBtn) {
-    newSessionBtn.onclick = () => newChatSession();
   }
 
   function newChatSession() {
