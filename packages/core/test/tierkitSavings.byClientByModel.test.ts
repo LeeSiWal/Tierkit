@@ -37,7 +37,14 @@ describe("computeTierkitMcpSavings — byClient + byModel", () => {
     expect(r.byClient["codex"]?.savedTokens).toBe(450);
   });
 
-  it("groups Claude activities by model when jsonl turns exist", async () => {
+  // Skipped on Windows: encodeCwdForClaudeProjects only swaps "/" and "." which
+  // leaves backslashes and the "C:" drive letter in the synthetic project-dir
+  // name, producing a path Windows filesystems reject (":" is illegal in names).
+  // The production usecase is fine — Claude Code itself encodes the cwd before
+  // writing — but this integration test conflates the OS tmp dir with the
+  // POSIX-style encoded slug.
+  const skipOnWindows = process.platform === "win32" ? it.skip : it;
+  skipOnWindows("groups Claude activities by model when jsonl turns exist", async () => {
     const { ws, home } = await makeWorkspace();
     const projDir = path.join(home, ".claude", "projects", ws.replace(/[/.]/g, "-"));
     await fs.mkdir(projDir, { recursive: true });
