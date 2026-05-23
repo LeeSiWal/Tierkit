@@ -1684,6 +1684,12 @@ export const GUI_HTML = `<!doctype html>
       tkToolFile: '파일 digest…',
       tkToolDiff: 'diff digest',
       tkToolDiffStaged: 'staged diff digest',
+      descRequired: '설명을 입력하세요',
+      secretKeyValueRequired: '키와 값을 모두 입력하세요',
+      idAndModelRequired: 'id와 model 값을 모두 입력하세요',
+      apiKeyEnvRequired: '값을 입력했다면 API key env 이름도 필요합니다',
+      keyNameRequired: '키 이름을 입력하세요',
+      valueRequired: '값을 입력하세요',
       noActivity: '아직 호출 기록 없음 — Roo/Cline/Continue 사용(또는 /v1/openai 호출) 시 여기 표시',
       noPlugins: '활성 플러그인 없음. + 새 플러그인으로 만들거나 디렉토리에서 install 하세요.',
       pluginIdLabel: '플러그인 id',
@@ -2318,7 +2324,7 @@ export const GUI_HTML = `<!doctype html>
     $('gen-cancel').onclick = () => { host.innerHTML = ''; host.style.display = 'none'; };
     $('gen-go').onclick = async () => {
       const desc = ($('gen-desc').value || '').trim();
-      if (!desc) { toast('description required', 'err'); return; }
+      if (!desc) { toast(i18n.descRequired || 'description required', 'err'); return; }
       host.innerHTML = '<div class="empty">' + escapeHtml(i18n.genGenerating) + '</div>';
       try {
         const resp = await jpost('/v1/plugins/generate', { description: desc });
@@ -2950,7 +2956,7 @@ export const GUI_HTML = `<!doctype html>
     $('sk-save').onclick = async () => {
       const key = ($('sk-key').value || '').trim();
       const value = ($('sk-val').value || '').trim();
-      if (!key || !value) { toast('key + value required', 'err'); return; }
+      if (!key || !value) { toast(i18n.secretKeyValueRequired || 'key + value required', 'err'); return; }
       const resp = await jpost('/v1/secrets', { key, value });
       if (!resp.ok) { toast((resp.data && resp.data.message) || i18n.failed, 'err'); return; }
       toast(key + ' ✓ ' + i18n.keySaved, 'ok');
@@ -3688,9 +3694,9 @@ export const GUI_HTML = `<!doctype html>
         const apiKeyEnv = $('pa-apiKey') ? $('pa-apiKey').value.trim() : '';
         const apiKeyValue = $('pa-apiKeyValue') ? $('pa-apiKeyValue').value.trim() : '';
         const baseUrl = $('pa-baseUrl') ? $('pa-baseUrl').value.trim() : '';
-        if (!id || !model) { toast('id + model required', 'err'); return; }
+        if (!id || !model) { toast(i18n.idAndModelRequired || 'id + model required', 'err'); return; }
         if (apiKeyValue) {
-          if (!apiKeyEnv) { toast('API key env name required when value is set', 'err'); return; }
+          if (!apiKeyEnv) { toast(i18n.apiKeyEnvRequired || 'API key env name required when value is set', 'err'); return; }
           const secResp = await jpost('/v1/secrets', { key: apiKeyEnv, value: apiKeyValue });
           if (!secResp.ok) { toast((secResp.data && secResp.data.message) || i18n.failed, 'err'); return; }
         }
@@ -6890,7 +6896,7 @@ export const GUI_HTML = `<!doctype html>
     if (saveBtn) saveBtn.onclick = async () => {
       const name = (nameInput && nameInput.value.trim()) || '';
       const value = (valInput && valInput.value.trim()) || '';
-      if (!name) { toast('key name required', 'err'); return; }
+      if (!name) { toast(i18n.keyNameRequired || 'key name required', 'err'); return; }
       saveBtn.disabled = true;
       try {
         const resp = await jpost('/v1/secrets', { key: name, value });
@@ -7001,7 +7007,7 @@ export const GUI_HTML = `<!doctype html>
     form.appendChild(cancelBtn);
     saveBtn.onclick = async () => {
       const v = inp.value.trim();
-      if (!v) { toast('value required', 'err'); return; }
+      if (!v) { toast(i18n.valueRequired || 'value required', 'err'); return; }
       saveBtn.disabled = true;
       try {
         const resp = await jpost('/v1/secrets', { key, value: v });
