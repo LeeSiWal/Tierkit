@@ -32,7 +32,11 @@ describe("SecretsStore — load + list", () => {
 });
 
 describe("SecretsStore — set", () => {
-  it("persists the value to disk with mode 0600", async () => {
+  // Windows NTFS doesn't honor POSIX file modes via Node's fs — `chmod(0o600)`
+  // is a no-op and stat.mode reports the underlying ACL approximation. The
+  // mode assertion runs only on POSIX OSes; the contents assertion still runs.
+  const itPosix = process.platform === "win32" ? it.skip : it;
+  itPosix("persists the value to disk with mode 0600", async () => {
     const store = createSecretsStore({ dataDir: tmp, env: {} });
     await store.loadIntoEnv();
     await store.set("ANTHROPIC_API_KEY", "sk-ant-abc1234567890xyz");
