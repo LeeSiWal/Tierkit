@@ -46,6 +46,7 @@ export type ToolName = (typeof TOOL_NAMES)[number];
 
 interface ToolCallContext {
   workspaceRoot: string;
+  clientName?: string;
 }
 
 // ToolEnvelope covers both the legacy ad-hoc shape (propose_patch, apply_patch,
@@ -296,6 +297,7 @@ async function withActivityLog(
     inputSummary: summarizeInput(name, args),
     outputSummary: summarizeOutput(name, result),
     envelope: summarizeEnvelope(result),   // v0.16: envelope metadata
+    clientName: ctx.clientName,            // v0.23: per-client savings attribution
   }).catch(() => { /* swallow — never fail a tool call because logging failed */ });
 
   return {
@@ -321,7 +323,9 @@ export function createMcpServer(opts: CreateMcpServerOptions): Server {
   server.setRequestHandler(CallToolRequestSchema, async (req) => {
     const name = req.params.name as ToolName;
     const args = (req.params.arguments ?? {}) as Record<string, unknown>;
-    return withActivityLog(name, args, { workspaceRoot: opts.workspaceRoot });
+    const ci = server.getClientVersion();
+    const clientName = (ci?.name ?? "unknown").toString();
+    return withActivityLog(name, args, { workspaceRoot: opts.workspaceRoot, clientName });
   });
 
   return server;
