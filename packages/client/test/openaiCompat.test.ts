@@ -72,7 +72,7 @@ describe("OpenAI-compatible inbound endpoint", () => {
         messages: [{ role: "user", content: "hi" }],
       }),
     });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(404);
     const body = await res.json() as { error?: { code?: string } };
     expect(body.error?.code).toBe("unknown-profile");
   });
