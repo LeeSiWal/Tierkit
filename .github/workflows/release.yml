@@ -39,6 +39,12 @@ jobs:
         with:
           run_install: false
 
+      # ripgrep is required by buildCompressedContext (v0.18 Context Gateway)
+      # which is exercised in contextHttpEndpoints integration tests. Ubuntu
+      # runners do NOT include `rg` by default, contrary to older docs.
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+
       - name: Install
         run: pnpm install --frozen-lockfile
 
