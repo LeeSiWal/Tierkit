@@ -430,6 +430,64 @@ export const GUI_HTML = `<!doctype html>
     font-family: var(--mono);
     font-size: 11px;
   }
+  /* v0.22: interactive AskUserQuestion form rendered in place of the default
+     tool_use card when Claude's built-in AskUserQuestion tool fires inside
+     a Tierkit Chat turn. Submit pipes the answer through streamChat() so
+     Claude continues via --resume. */
+  .tk-aqq-card {
+    margin: 6px 0;
+    padding: 10px 12px;
+    border: 1px solid var(--accent);
+    border-radius: 6px;
+    background: rgba(122, 162, 247, 0.06);
+    font-size: 12px;
+  }
+  .tk-aqq-card .tk-aqq-title { font-weight: 600; margin-bottom: 8px; display: flex; align-items: center; gap: 6px; }
+  .tk-aqq-card .tk-aqq-q { margin: 8px 0; }
+  .tk-aqq-card .tk-aqq-q-text { font-weight: 600; margin-bottom: 4px; }
+  .tk-aqq-card .tk-aqq-q-header { font-size: 10px; text-transform: uppercase; color: var(--fg-dim); letter-spacing: 0.05em; margin-right: 4px; }
+  .tk-aqq-card label.tk-aqq-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 4px 6px;
+    margin: 2px 0;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .tk-aqq-card label.tk-aqq-option:hover { background: rgba(122, 162, 247, 0.08); }
+  .tk-aqq-card label.tk-aqq-option input { margin-top: 3px; flex-shrink: 0; }
+  .tk-aqq-card label.tk-aqq-option .tk-aqq-option-text { flex: 1; min-width: 0; }
+  .tk-aqq-card label.tk-aqq-option .tk-aqq-option-desc { display: block; font-size: 11px; color: var(--fg-dim); margin-top: 2px; }
+  .tk-aqq-card .tk-aqq-other {
+    margin: 4px 0 0 24px;
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+  .tk-aqq-card .tk-aqq-other input[type="text"] {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    padding: 3px 6px;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    border-radius: 4px;
+    box-sizing: border-box;
+  }
+  .tk-aqq-card .tk-aqq-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    align-items: center;
+  }
+  .tk-aqq-card .tk-aqq-submitted {
+    color: var(--ok);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
   .agent-composer {
     margin-top: 8px;
     display: flex;
@@ -5168,6 +5226,130 @@ export const GUI_HTML = `<!doctype html>
     try { const s = JSON.stringify(o); return s.length > 80 ? s.slice(0, 80) + '…' : s; } catch { return ''; }
   }
 
+  /**
+   * v0.22: render Anthropic's built-in AskUserQuestion tool_use as an
+   * interactive form (radio for single-select, checkbox for multi-select,
+   * plus a free-form "Other" input per question). On submit, format the
+   * answer as Markdown and pipe through streamChat() so Claude continues
+   * via --resume.
+   *
+   * Why this exists: claude -p closes stdin after the initial prompt, so
+   * AskUserQuestion's tool_use cannot receive a tool_result inline. The
+   * agent's turn ends with the tool failing. Re-sending the answer as a
+   * NEW message via --resume is the only honest path to bidirectional
+   * comms without rewriting chatWithClaude to interactive mode.
+   *
+   * @param {{ id?: string, input?: { questions?: Array<{ question: string, header?: string, multiSelect?: boolean, options?: Array<{ label: string, description?: string }> }> } }} d
+   * @param {HTMLElement} bodyEl — the agent-thread node to append into
+   */
+  function renderAskUserQuestion(d, bodyEl) {
+    const questions = (d && d.input && Array.isArray(d.input.questions)) ? d.input.questions : [];
+    if (questions.length === 0) return false; // caller falls back to generic card
+    const card = document.createElement('div');
+    card.className = 'tk-aqq-card';
+    card.dataset.toolId = d.id || '';
+    const toolId = d.id || 'aqq-' + Math.random().toString(36).slice(2, 10);
+    const titleLabel = lang === 'ko' ? '🤔 Claude가 묻습니다' : '🤔 Claude is asking';
+    const otherLabel = lang === 'ko' ? '기타:' : 'Other:';
+    const submitLabel = lang === 'ko' ? '답변 제출' : 'Submit answer';
+    const emptyAnswerLabel = lang === 'ko' ? '최소 하나는 선택하거나 기타에 입력해주세요.' : 'Pick at least one option or type in Other.';
+    const sentLabel = lang === 'ko' ? '✓ 전송됨' : '✓ Sent';
+
+    let html = '<div class="tk-aqq-title"><span>' + escapeHtmlMd(titleLabel) + '</span></div>';
+    for (let qi = 0; qi < questions.length; qi++) {
+      const q = questions[qi];
+      const qText = q && typeof q.question === 'string' ? q.question : '';
+      const header = q && typeof q.header === 'string' ? q.header : '';
+      const multi = !!(q && q.multiSelect);
+      const options = (q && Array.isArray(q.options)) ? q.options : [];
+      const inputType = multi ? 'checkbox' : 'radio';
+      const groupName = 'tk-aqq-' + toolId + '-' + qi;
+
+      html += '<div class="tk-aqq-q" data-q-index="' + qi + '">';
+      if (header) html += '<span class="tk-aqq-q-header">' + escapeHtmlMd(header) + '</span>';
+      html += '<div class="tk-aqq-q-text">' + escapeHtmlMd(qText) + (multi ? ' <span class="dim" style="font-weight:normal;font-size:10px">[복수 선택]</span>' : '') + '</div>';
+      for (let oi = 0; oi < options.length; oi++) {
+        const opt = options[oi] || {};
+        const optLabel = typeof opt.label === 'string' ? opt.label : '';
+        const optDesc = typeof opt.description === 'string' ? opt.description : '';
+        html += '<label class="tk-aqq-option">';
+        html += '<input type="' + inputType + '" name="' + escapeHtmlMd(groupName) + '" value="' + escapeHtmlMd(String(oi)) + '">';
+        html += '<span class="tk-aqq-option-text">' + escapeHtmlMd(optLabel);
+        if (optDesc) html += '<span class="tk-aqq-option-desc">' + escapeHtmlMd(optDesc) + '</span>';
+        html += '</span>';
+        html += '</label>';
+      }
+      // Always-present "Other" free-form input.
+      html += '<div class="tk-aqq-other"><span class="dim" style="font-size:11px">' + escapeHtmlMd(otherLabel) + '</span>';
+      html += '<input type="text" data-q-other="' + qi + '" placeholder="…">';
+      html += '</div>';
+      html += '</div>';
+    }
+    html += '<div class="tk-aqq-actions">';
+    html += '<button class="tiny primary" data-aqq-submit>' + escapeHtmlMd(submitLabel) + '</button>';
+    html += '</div>';
+
+    card.innerHTML = html;
+    bodyEl.appendChild(card);
+
+    const submitBtn = card.querySelector('[data-aqq-submit]');
+    if (submitBtn) {
+      submitBtn.addEventListener('click', () => {
+        // Collect answers per question.
+        const parts = [];
+        let totalSelected = 0;
+        for (let qi = 0; qi < questions.length; qi++) {
+          const q = questions[qi];
+          const qText = q && typeof q.question === 'string' ? q.question : '';
+          const multi = !!(q && q.multiSelect);
+          const options = (q && Array.isArray(q.options)) ? q.options : [];
+          const groupName = 'tk-aqq-' + toolId + '-' + qi;
+          const checked = card.querySelectorAll('input[name="' + groupName.replace(/"/g, '') + '"]:checked');
+          const selectedLabels = [];
+          checked.forEach((node) => {
+            const idx = parseInt(node.value, 10);
+            const opt = options[idx];
+            if (opt && typeof opt.label === 'string') selectedLabels.push(opt.label);
+          });
+          const otherInput = card.querySelector('input[data-q-other="' + qi + '"]');
+          const otherText = otherInput && typeof otherInput.value === 'string' ? otherInput.value.trim() : '';
+          if (otherText.length > 0) selectedLabels.push(otherText);
+          if (selectedLabels.length > 0) totalSelected += 1;
+          parts.push({ qText, selected: selectedLabels, multi });
+        }
+        if (totalSelected === 0) {
+          toast(emptyAnswerLabel, 'err');
+          return;
+        }
+        // Format as Markdown user message.
+        const lines = [];
+        for (let i = 0; i < parts.length; i++) {
+          const p = parts[i];
+          lines.push('**Q' + (i + 1) + ': ' + p.qText + '**');
+          if (p.selected.length === 0) {
+            lines.push('- (no answer)');
+          } else {
+            for (const s of p.selected) lines.push('- ' + s);
+          }
+          lines.push('');
+        }
+        const formatted = lines.join('\\n').trim();
+
+        // Disable the form and show "sent" state.
+        card.querySelectorAll('input, button').forEach((el) => { el.disabled = true; });
+        const actions = card.querySelector('.tk-aqq-actions');
+        if (actions) {
+          actions.innerHTML = '<span class="tk-aqq-submitted">' + escapeHtmlMd(sentLabel) + '</span>';
+        }
+
+        // Send via existing streamChat → /v1/claude-code/chat with current sessionId.
+        void streamChat(formatted);
+      });
+    }
+    scrollAgentBottom();
+    return true;
+  }
+
   function chatAssistantBubble() {
     const el = document.createElement('div');
     el.className = 'agent-msg agent-msg-assistant';
@@ -5217,6 +5399,12 @@ export const GUI_HTML = `<!doctype html>
         // Force a new text node next time so tool cards appear AFTER current text.
         textNode = null;
         textBuffer = '';
+
+        // v0.22: Anthropic's built-in AskUserQuestion → interactive form.
+        // Falls through to the generic tool_use card if the input is malformed.
+        if (d && d.name === 'AskUserQuestion' && d.input && Array.isArray(d.input.questions)) {
+          if (renderAskUserQuestion(d, body)) return;
+        }
 
         const card = document.createElement('details');
         card.style.cssText = 'margin:6px 0;border:1px solid var(--border);border-radius:4px;background:var(--bg-input);font-size:11.5px';
