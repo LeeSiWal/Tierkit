@@ -24,7 +24,7 @@ describe("listFilesTool envelope", () => {
   });
 
   it("truncates at maxEntries default 200 and emits next.cursor", async () => {
-    for (let i = 0; i < 250; i++) await fs.writeFile(path.join(workspace, `f${i}.ts`), "x");
+    await Promise.all(Array.from({ length: 250 }, (_, i) => fs.writeFile(path.join(workspace, `f${i}.ts`), "x")));
     const res = await listFilesTool.execute({}, ctx() as any);
     const env = JSON.parse(res.content);
     expect(env.truncated).toBe(true);
@@ -35,7 +35,7 @@ describe("listFilesTool envelope", () => {
   });
 
   it("paginates via cursor: 250 entries @ maxEntries:200 → 2 chunks", async () => {
-    for (let i = 0; i < 250; i++) await fs.writeFile(path.join(workspace, `f${String(i).padStart(3, "0")}.ts`), "x");
+    await Promise.all(Array.from({ length: 250 }, (_, i) => fs.writeFile(path.join(workspace, `f${String(i).padStart(3, "0")}.ts`), "x")));
     const r1 = JSON.parse((await listFilesTool.execute({}, ctx() as any)).content);
     const r2 = JSON.parse((await listFilesTool.execute({ cursor: r1.next.cursor }, ctx() as any)).content);
     expect(r2.data.entries.length).toBe(50);
