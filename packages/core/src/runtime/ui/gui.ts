@@ -1120,6 +1120,14 @@ export const GUI_HTML = `<!doctype html>
       <div class="metric"><span data-i18n="metricCloudCallsAvoided">MCP compression calls</span>: <span id="m-routing-calls-avoided">—</span></div>
       <div class="metric dim"><span data-i18n="labelBaseline">Priced against</span>: <span id="m-routing-baseline">—</span></div>
       <div class="metric dim" style="font-size:10.5px;margin-top:6px" id="m-routing-by-tool"></div>
+      <details id="m-routing-by-client" class="savings-breakdown" style="margin-top:10px">
+        <summary style="cursor:pointer;font-size:11.5px;font-weight:600" data-i18n="savingsByClient">By client</summary>
+        <div id="m-routing-by-client-rows" style="margin-top:4px"></div>
+      </details>
+      <details id="m-routing-by-model" class="savings-breakdown" style="margin-top:6px">
+        <summary style="cursor:pointer;font-size:11.5px;font-weight:600" data-i18n="savingsByModel">By Claude model</summary>
+        <div id="m-routing-by-model-rows" style="margin-top:4px"></div>
+      </details>
       <div id="m-routing-empty-hint" class="dim" style="font-size:10.5px;margin-top:6px" hidden></div>
     </div>
   </section>
@@ -1690,6 +1698,8 @@ export const GUI_HTML = `<!doctype html>
       apiKeyEnvRequired: '값을 입력했다면 API key env 이름도 필요합니다',
       keyNameRequired: '키 이름을 입력하세요',
       valueRequired: '값을 입력하세요',
+      savingsByClient: '클라이언트별',
+      savingsByModel: 'Claude 모델별',
       noActivity: '아직 호출 기록 없음 — Roo/Cline/Continue 사용(또는 /v1/openai 호출) 시 여기 표시',
       noPlugins: '활성 플러그인 없음. + 새 플러그인으로 만들거나 디렉토리에서 install 하세요.',
       pluginIdLabel: '플러그인 id',
@@ -2828,6 +2838,20 @@ export const GUI_HTML = `<!doctype html>
     }
   }
 
+  // v0.23: pretty-print Anthropic ids for the savings breakdown.
+  function prettyModel(id) {
+    if (!id || id === 'unknown') return lang === 'ko' ? '(알 수 없음)' : '(unknown)';
+    const m = String(id).match(/^claude-(opus|sonnet|haiku)-(\\d+)-(\\d+)/);
+    if (m) return m[1][0].toUpperCase() + m[1].slice(1) + ' ' + m[2] + '.' + m[3];
+    return id;
+  }
+  function prettyClient(name) {
+    if (!name || name === 'unknown') return lang === 'ko' ? '(알 수 없음)' : '(unknown)';
+    if (name === 'claude-code') return 'Claude Code';
+    if (name === 'codex') return 'Codex';
+    return name;
+  }
+
   // ── Card: routing savings (v0.17) ────────────────────────────────────────
   // Polls GET /v1/savings/today every 5s. When the baseline is not configured
   // or the resolved profile lacks cost data, shows '—' values + the hint row.
@@ -2884,6 +2908,35 @@ export const GUI_HTML = `<!doctype html>
       $('m-routing-by-tool').textContent = entries.length
         ? entries.map(([n, c]) => n.replace('tierkit.', '') + ' ×' + c).join(' · ')
         : '';
+      // v0.23: byClient + byModel breakdowns.
+      const byClient = r.byClient || {};
+      const byModel = r.byModel || {};
+      const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+      const noDataLabel = lang === 'ko' ? '데이터 없음' : 'no data yet';
+      function renderBreakdown(hostId, data, prettyFn) {
+        const host = $(hostId);
+        if (!host) return;
+        const rows = Object.entries(data)
+          .filter(([, v]) => v && v.savedTokens > 0)
+          .sort(([, a], [, b]) => b.savedTokens - a.savedTokens);
+        if (rows.length === 0) {
+          host.innerHTML = '<div class="dim" style="font-size:11px;padding:4px 0">' + escapeHtmlMd(noDataLabel) + '</div>';
+          return;
+        }
+        let html = '';
+        for (const [key, v] of rows) {
+          const usd = typeof v.estimatedSavedUsd === 'number' ? ' · $' + v.estimatedSavedUsd.toFixed(4) : '';
+          html += '<div class="row dense" style="font-size:11px"><span style="flex:1;min-width:0">' +
+            escapeHtmlMd(prettyFn(key)) + '</span>' +
+            '<span class="mono dim" style="font-size:10.5px">' + fmtTok(v.savedTokens) + ' tok · ' +
+            v.toolCallCount + ' ' + (lang === 'ko' ? '호출' : 'calls') + usd +
+            '</span></div>';
+        }
+        host.innerHTML = html;
+      }
+      renderBreakdown('m-routing-by-client-rows', byClient, prettyClient);
+      renderBreakdown('m-routing-by-model-rows', byModel, prettyModel);
+
       if (calls === 0) {
         $('m-routing-empty-hint').textContent = lang === 'ko'
           ? '아직 Claude가 Tierkit MCP 도구를 호출하지 않았습니다. Chat에서 메시지를 보내고 Claude가 압축 도구를 사용하면 여기 카운트가 올라갑니다.'
