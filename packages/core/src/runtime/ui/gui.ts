@@ -1403,6 +1403,17 @@ export const GUI_HTML = `<!doctype html>
       const k = el.getAttribute('data-i18n');
       if (t[k]) el.textContent = t[k];
     });
+    // v0.23: tooltip + placeholder support. Same locale dict, different
+    // attribute target. Lets us translate title= on icon-only buttons
+    // and placeholder= on input fields without faking them as inner text.
+    document.querySelectorAll('[data-i18n-title]').forEach((el) => {
+      const k = el.getAttribute('data-i18n-title');
+      if (t[k]) el.setAttribute('title', t[k]);
+    });
+    document.querySelectorAll('[data-i18n-placeholder]').forEach((el) => {
+      const k = el.getAttribute('data-i18n-placeholder');
+      if (t[k]) el.setAttribute('placeholder', t[k]);
+    });
     document.documentElement.setAttribute('lang', lang);
   }
   const RUNTIME = {
