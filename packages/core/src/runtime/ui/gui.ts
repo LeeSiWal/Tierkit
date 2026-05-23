@@ -925,11 +925,11 @@ export const GUI_HTML = `<!doctype html>
              used by the 📦 dropdown's manual Compress/Pack/Digest paths. -->
     <div style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--fg-dim);flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:4px;cursor:pointer" title="how claude handles tool permissions (Edit/Write/Bash) in this chat turn">
-        <span>perm:</span>
+        <span data-i18n="permLabel">perm:</span>
         <select id="tk-perm-mode" style="padding:2px 6px;font-size:11px">
-          <option value="acceptEdits" data-i18n="tkPermAcceptEdits">Accept edits (default)</option>
-          <option value="bypassPermissions" data-i18n="tkPermBypass">Bypass all (⚠ dangerous)</option>
-          <option value="default" data-i18n="tkPermDefault">Default (denies edits in -p)</option>
+          <option value="acceptEdits" data-i18n="tkPermAcceptEdits">Accept edits only (Bash blocked)</option>
+          <option value="bypassPermissions" data-i18n="tkPermBypass">Accept all tools (Edit + Bash + MCP, ⚠)</option>
+          <option value="default" data-i18n="tkPermDefault">Default (denies all in -p)</option>
           <option value="plan" data-i18n="tkPermPlan">Plan (read-only)</option>
         </select>
       </label>
@@ -1642,6 +1642,12 @@ export const GUI_HTML = `<!doctype html>
       enable: '활성',
       disable: '비활성',
       remove: '제거',
+      permLabel: '권한:',
+      tkPermAcceptEdits: 'Edit만 자동 승인 (Bash 차단)',
+      tkPermBypass: '모든 도구 자동 승인 (Edit + Bash + MCP, ⚠)',
+      tkPermDefault: '기본 (모두 차단)',
+      tkPermPlan: '계획 모드 (읽기 전용)',
+      permDeniedHint: 'Bash 또는 MCP 도구가 권한 차단됨. 위 perm 드롭다운을 \\"모든 도구 자동 승인\\"으로 변경 후 다시 시도하세요.',
       noActivity: '아직 호출 기록 없음 — Roo/Cline/Continue 사용(또는 /v1/openai 호출) 시 여기 표시',
       noPlugins: '활성 플러그인 없음. + 새 플러그인으로 만들거나 디렉토리에서 install 하세요.',
       pluginIdLabel: '플러그인 id',
@@ -4783,6 +4789,12 @@ export const GUI_HTML = `<!doctype html>
   // card per tool_use / tool_result so the user sees Claude's MCP activity.
   let tkChatSessionId = null;
   let tkChatAbortCtrl = null;
+  // v0.23: one-time hint per chat session when a tool is permission-blocked.
+  let tkChatPermHintShown = false;
+  function isPermissionDeniedOutput(s) {
+    if (!s || typeof s !== 'string') return false;
+    return /requires approval|was denied|permission.*denied|denied.*permission|requires.*permission|not allowed|user denied/i.test(s);
+  }
   // v0.21.6: cumulative cost across the whole chat session (resets only when
   // the user reloads the webview). Surfaced in the header pill so the user
   // can see in real time how much Claude Code has spent.
@@ -5107,6 +5119,7 @@ export const GUI_HTML = `<!doctype html>
 
   function newChatSession() {
     tkChatSessionId = null;
+    tkChatPermHintShown = false;
     const thread = $('agent-thread');
     if (thread) {
       thread.innerHTML = '';
@@ -5455,6 +5468,18 @@ export const GUI_HTML = `<!doctype html>
           return;
         }
         const outStr = typeof d.output === 'string' ? d.output : (() => { try { return JSON.stringify(d.output); } catch { return ''; } })();
+        // v0.23: permission-denial detection. When claude -p denies a tool call
+        // (Bash, run_command, MCP tool) because the current permissionMode
+        // doesn't auto-approve it, the user sees only "✗" with no guidance.
+        // Surface a one-time inline hint per chat session pointing them at
+        // the perm dropdown.
+        if (d.isError && isPermissionDeniedOutput(outStr) && !tkChatPermHintShown) {
+          tkChatPermHintShown = true;
+          const hint = document.createElement('div');
+          hint.style.cssText = 'margin:6px 0;padding:8px 10px;background:rgba(245,176,65,0.08);border:1px solid rgba(245,176,65,0.45);border-radius:4px;font-size:11px;color:var(--fg);line-height:1.4';
+          hint.textContent = i18n.permDeniedHint || 'Bash or an MCP tool was permission-blocked. Switch the "perm:" dropdown below to "Accept all tools" and retry.';
+          body.appendChild(hint);
+        }
         const firstLine = outStr.split(/\\r?\\n/)[0] || '';
         const preview = firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine;
 
