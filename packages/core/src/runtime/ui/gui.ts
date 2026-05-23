@@ -5435,6 +5435,14 @@ export const GUI_HTML = `<!doctype html>
       },
       addToolResult(d) {
         const matching = body.querySelector('[data-tool-id="' + (d.toolUseId || '').replace(/"/g, '') + '"]');
+        // v0.22: when the matched card is the interactive AskUserQuestion form,
+        // suppress the standard error append. The "Answer questions?" failure is
+        // expected — claude -p closed stdin so the tool can't return a result —
+        // and the form itself is the recovery path. Showing the raw error inside
+        // the form confuses the user (looks like submission failed).
+        if (matching && matching.classList && matching.classList.contains('tk-aqq-card')) {
+          return;
+        }
         const outStr = typeof d.output === 'string' ? d.output : (() => { try { return JSON.stringify(d.output); } catch { return ''; } })();
         const firstLine = outStr.split(/\\r?\\n/)[0] || '';
         const preview = firstLine.length > 100 ? firstLine.slice(0, 100) + '…' : firstLine;
