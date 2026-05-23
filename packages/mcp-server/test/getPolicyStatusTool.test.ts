@@ -23,8 +23,8 @@ describe("tierkit.get_policy_status", () => {
     expect(typeof r.hasLegacyIgnoreFile).toBe("boolean");
     expect(typeof r.hasGitignore).toBe("boolean");
     expect(r.respectGitignore).toBe(true);
-    // 7 tool names
-    expect(r.toolNames.length).toBe(7);
+    // 14 tool names (7 phase-3/4 + 7 phase-v0.18 digest)
+    expect(r.toolNames.length).toBe(14);
     expect(r.toolNames).toContain("tierkit.run_command");
     expect(r.toolNames).toContain("tierkit.get_policy_status");
     // version is a string (dynamic — will be "0.0.0-dev" in test env)

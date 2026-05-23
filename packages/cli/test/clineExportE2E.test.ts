@@ -41,7 +41,8 @@ function makeContext(cwd: string): { context: CliContext; stdout: StringSink; st
   };
 }
 
-describe("CLI e2e: export cline (superpowers-free)", () => {
+// v0.19: `tierkit export cline` command disabled (Plugin adapter export pivot).
+describe.skip("CLI e2e: export cline (superpowers-free)", () => {
   let projectRoot: string;
   afterEach(async () => {
     if (projectRoot) await fs.rm(projectRoot, { recursive: true, force: true });

@@ -90,6 +90,7 @@ export async function handleOpenAIChatCompletions(
     const profile = cfg.config.modelProfiles[req2.model];
     if (!profile) {
       return sendError(res, 404, `unknown profile: ${req2.model}`, "invalid_request_error", {
+        code: "unknown-profile",
         profileId: req2.model,
       });
     }

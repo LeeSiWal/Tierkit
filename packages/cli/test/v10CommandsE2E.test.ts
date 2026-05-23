@@ -47,7 +47,8 @@ describe("CLI e2e: v1.0 commands", () => {
     if (root) await fs.rm(root, { recursive: true, force: true });
   });
 
-  it("`plugin enable` / `plugin disable` modify activePlugins", async () => {
+  // v0.19: plugin commands disabled.
+  it.skip("`plugin enable` / `plugin disable` modify activePlugins", async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-v10-plugin-"));
     const cli = buildCli();
     expect(await cli.run(["init"], makeContext(root).context)).toBe(0);
@@ -76,7 +77,8 @@ describe("CLI e2e: v1.0 commands", () => {
     expect(cfgAfterDisable.activePlugins).not.toContain("superpowers-free");
   });
 
-  it("`plugin remove` deletes installed dir and registry entry", async () => {
+  // v0.19: plugin commands disabled.
+  it.skip("`plugin remove` deletes installed dir and registry entry", async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-v10-remove-"));
     const cli = buildCli();
     expect(await cli.run(["init"], makeContext(root).context)).toBe(0);

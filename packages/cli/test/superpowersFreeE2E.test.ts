@@ -42,7 +42,8 @@ const SUPERPOWERS_FREE_DIR = path.resolve(
   "../../plugin-superpowers/plugins/superpowers-free",
 );
 
-describe("CLI end-to-end: superpowers-free", () => {
+// v0.19: plugin install/list/validate/export commands disabled.
+describe.skip("CLI end-to-end: superpowers-free", () => {
   let projectRoot: string;
   afterEach(async () => {
     if (projectRoot) await fs.rm(projectRoot, { recursive: true, force: true });

@@ -43,8 +43,15 @@ describe("@tierkit/mcp-server — minimal handshake", () => {
     const names = tools.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       "tierkit.apply_patch",
+      "tierkit.build_context_pack",
       "tierkit.codebase_search",
+      "tierkit.compress_command",
+      "tierkit.get_diff_summary",
+      "tierkit.get_error_digest",
+      "tierkit.get_file_digest",
+      "tierkit.get_json_digest",
       "tierkit.get_policy_status",
+      "tierkit.get_test_digest",
       "tierkit.list_files",
       "tierkit.propose_patch",
       "tierkit.read_file",

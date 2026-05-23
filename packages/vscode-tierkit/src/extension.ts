@@ -26,7 +26,7 @@ import { GUI_HTML, startServer, createSecretsStore, loadConfig, type RunningServ
 import { RooAdapter } from "@tierkit/adapter-roo";
 import { ClineAdapter } from "@tierkit/adapter-cline";
 import { ContinueAdapter } from "@tierkit/adapter-continue";
-import { createAgentRouteExtension } from "@tierkit/agent";
+// v0.19 disabled: import { createAgentRouteExtension } from "@tierkit/agent";
 import { createMessageRouter } from "./messageRouter.js";
 
 let statusItem: vscode.StatusBarItem | undefined;
@@ -36,6 +36,17 @@ let effectiveBaseUrl: string | undefined;
 let sidebarRef: TierkitSidebarProvider | undefined;
 /** Diagnostic Output channel. Logs every step of auto-start so failures are debuggable. */
 let outputChannel: vscode.OutputChannel | undefined;
+/** v0.20.7: absolute path to the bundled Tierkit CLI shipped inside the .vsix
+ * (<context.extensionPath>/cli/index.js). Surfaced to the daemon at startup. */
+let bundledCliPath: string | undefined;
+/** v0.20.7: VS Code's Electron binary, capable of running JS as Node when
+ * spawned with ELECTRON_RUN_AS_NODE=1. Always reachable since the user
+ * already has VS Code installed. */
+let electronExecPath: string | undefined;
+/** v0.21.10: singleton "main editor" panel, opened via tierkit.openInPanel
+ * for users who prefer the full editor area over the cramped sidebar
+ * (mobile / tablet / Codespaces in a narrow window). */
+let mainPanel: vscode.WebviewPanel | undefined;
 
 interface BundledSample {
   id: string;
@@ -125,6 +136,88 @@ function log(line: string): void {
   outputChannel?.appendLine(`[${new Date().toISOString()}] ${line}`);
 }
 
+/**
+ * v0.19.2: hand a compressed brief / digest / pack to Claude Code.
+ *
+ * Findings from inspecting `anthropic.claude-code` 2.1.145 source:
+ *   - `claude-vscode.newConversation` IGNORES its arguments and just opens
+ *     a fresh empty chat — calling it actively DESTROYS the user's
+ *     current conversation context. Do not use it for handoff.
+ *   - `claude-vscode.insertAtMention` only inserts the active editor's
+ *     filename as @-mention; it does not accept arbitrary text either.
+ *   - There is no public command that programmatically inserts text into
+ *     the chat input. The webview is sealed.
+ *
+ * So the only honest handoff is:
+ *   1. Copy text to system clipboard (always).
+ *   2. Try `claude-vscode.focus` to bring the input into focus.
+ *   3. Toast the user with the next step (Cmd+V on Mac, Ctrl+V elsewhere).
+ *
+ * If Anthropic later exposes a `setInput(text)` style command, swap step 2
+ * for that and skip the Cmd+V hint. The Tierkit side won't need to change
+ * since we already centralize this in one function.
+ */
+async function sendToClaudeCode(text: string): Promise<void> {
+  if (!text || text.length === 0) {
+    void vscode.window.showWarningMessage("Tierkit: nothing to send (empty result).");
+    return;
+  }
+
+  // Step 1 — clipboard, always.
+  try {
+    await vscode.env.clipboard.writeText(text);
+  } catch (err) {
+    void vscode.window.showErrorMessage(
+      `Tierkit: failed to copy to clipboard — ${(err as Error).message}`,
+    );
+    return;
+  }
+
+  // Step 2 — focus the Claude Code input. Best-effort; the toast adapts.
+  let focused = false;
+  try {
+    await vscode.commands.executeCommand("claude-vscode.focus");
+    focused = true;
+  } catch {
+    /* extension not installed or focus refused */
+  }
+
+  // Step 3 — toast. Use platform-appropriate paste hint.
+  const isMac = process.platform === "darwin";
+  const paste = isMac ? "⌘V" : "Ctrl+V";
+  if (focused) {
+    void vscode.window.showInformationMessage(
+      `Tierkit: copied → Claude Code input focused. Press ${paste} to paste.`,
+    );
+  } else {
+    void vscode.window.showInformationMessage(
+      `Tierkit: copied to clipboard. Open Claude Code and press ${paste} to paste.`,
+    );
+  }
+}
+
+/**
+ * v0.20.1: ask the user to reload the VS Code window. Used after the
+ * connect flow finishes registering Tierkit as a Claude Code MCP server —
+ * Claude Code only re-reads MCP config at window startup, so a reload is
+ * the only way to make the new server show up without restarting the IDE
+ * by hand.
+ *
+ * We never silent-reload (would clobber the user's other workspaces and
+ * unsaved editor state). The user must click "Reload now".
+ */
+async function promptReloadWindow(reason: string): Promise<void> {
+  const choice = await vscode.window.showInformationMessage(
+    `Tierkit: ${reason}\n\nVS Code window must reload so Claude Code picks up the new MCP server. Reload now?`,
+    { modal: true },
+    "Reload now",
+    "Later",
+  );
+  if (choice === "Reload now") {
+    await vscode.commands.executeCommand("workbench.action.reloadWindow");
+  }
+}
+
 function configBaseUrl(): string {
   const config = vscode.workspace.getConfiguration("tierkit");
   return config.get<string>("baseUrl") ?? "http://127.0.0.1:4101";
@@ -144,6 +237,113 @@ function makeClient(): TierkitClient {
  * "no daemon here"). Used by maybeStartDaemon to decide whether to adopt an existing
  * daemon or start a fresh one.
  */
+/**
+ * v0.21.10: open Tierkit's full UI as a webview panel in the main editor
+ * area (vs the sidebar). Same HTML, same daemon, same message router — just
+ * a roomier surface. Singleton: if a panel is already open, focus it.
+ */
+function openTierkitPanel(context: vscode.ExtensionContext): void {
+  if (mainPanel) {
+    try { mainPanel.reveal(vscode.ViewColumn.Active); return; }
+    catch { /* panel was disposed; fall through to create */ mainPanel = undefined; }
+  }
+  mainPanel = vscode.window.createWebviewPanel(
+    "tierkit.panel",
+    "Tierkit",
+    vscode.ViewColumn.Active,
+    {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+      localResourceRoots: [],
+    },
+  );
+  mainPanel.iconPath = vscode.Uri.joinPath(vscode.Uri.file(context.extensionPath), "media", "tierkit.svg");
+  mainPanel.webview.html = wrapHtmlForWebview(GUI_HTML, baseUrl(), lastDaemonError);
+
+  // Wire the same router used by the sidebar so chat / fetch / streams work
+  // identically. The panel and sidebar are independent webviews — each has
+  // its own router instance — but they share daemon state, so opening both
+  // at once is fine.
+  const fetchProxyLocal = (url: string, init: { method: string; body?: string; signal: AbortSignal }) => fetchProxy(url, init);
+  const streamProxyLocal = (url: string, init: { method: string; body?: string; signal: AbortSignal }) => streamProxy(url, init);
+  const router = createMessageRouter({
+    getBaseUrl: () => baseUrl(),
+    fetchProxy: fetchProxyLocal,
+    streamProxy: streamProxyLocal,
+    log: (line) => log(`panel-router: ${line}`),
+  });
+  mainPanel.onDidDispose(() => {
+    router.disposeAll();
+    mainPanel = undefined;
+  });
+  mainPanel.webview.onDidReceiveMessage((msg) => {
+    if (typeof msg?.type !== "string") return;
+    if (msg.type === "tk:claude-code" && typeof msg.text === "string") {
+      void sendToClaudeCode(msg.text);
+      return;
+    }
+    if (msg.type === "tk:reload-vscode" && typeof msg.reason === "string") {
+      void promptReloadWindow(msg.reason);
+      return;
+    }
+    if (msg.type === "tk:open-path" && typeof msg.path === "string") {
+      void openAbsoluteOrRelativePath(msg.path);
+      return;
+    }
+    // v0.21.10: re-opening the panel from within the panel just re-focuses it.
+    if (msg.type === "tk:open-panel") {
+      try { mainPanel?.reveal(vscode.ViewColumn.Active); } catch { /* */ }
+      return;
+    }
+    if (msg.type.startsWith("tk:")) {
+      void router.handle(msg, (out) => mainPanel?.webview.postMessage(out));
+      return;
+    }
+    if (msg.type === "showOutput") outputChannel?.show(true);
+    else if (msg.type === "restartDaemon") void restartDaemon();
+    else if (msg.type === "previewDiff" && typeof msg.path === "string" && typeof msg.proposed === "string") {
+      void previewDiff(msg.path, msg.proposed);
+    } else if (msg.type === "openFile" && typeof msg.path === "string") {
+      void openFile(msg.path);
+    }
+  });
+}
+
+/**
+ * v0.20.7: Tell the running daemon about the paths it needs to wire up Claude
+ * Code MCP correctly. Sent once after the daemon comes up (or after a restart);
+ * the daemon stores them in memory and uses them on every POST /v1/claude-code/connect.
+ *
+ * Without this, the daemon would write `"command": "tierkit"` into the MCP
+ * entry and Claude Code would fail to spawn it on machines that don't have
+ * `tierkit` on the GUI-process PATH (which is most machines).
+ *
+ * Failure is non-fatal — the connect flow falls back to global-tierkit lookup
+ * and surfaces a clear diagnostic if that also fails.
+ */
+async function registerHostInfoWithDaemon(): Promise<void> {
+  if (!bundledCliPath || !electronExecPath) return;
+  const base = baseUrl();
+  try {
+    const res = await fetch(`${base}/v1/claude-code/host-info`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        cliPath: bundledCliPath,
+        nodeBinary: electronExecPath,
+      }),
+      signal: AbortSignal.timeout(2000),
+    });
+    if (!res.ok) {
+      log(`host-info: daemon returned ${res.status}`);
+      return;
+    }
+    log(`host-info: registered cliPath=${bundledCliPath} nodeBinary=${electronExecPath}`);
+  } catch (err) {
+    log(`host-info: failed to register — ${(err as Error).message}`);
+  }
+}
+
 async function probeTierkitDaemonAt(url: string): Promise<{ version: string } | null> {
   try {
     const res = await fetch(`${url}/v1/health`, { signal: AbortSignal.timeout(800) });
@@ -281,11 +481,11 @@ async function maybeStartDaemon(): Promise<void> {
       host: "127.0.0.1",
       port,
       adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
-      routeExtensions: [
-        // 0.4.2: no forced approve handler — the daemon route picks "auto" vs "interactive"
-        // per-request from the approvalMode body field set by the GUI's composer dropdown.
-        createAgentRouteExtension(),
-      ],
+      // v0.19: agent route extension (POST /v1/agent/run, /v1/agent/approval)
+      // disabled. The Chat tab no longer runs the agent loop — it's a thin shell
+      // around the v0.18 digest pipeline. Re-add `createAgentRouteExtension()`
+      // here to bring the agent endpoints back.
+      routeExtensions: [],
       ...(secretsStore ? { secrets: secretsStore } : {}),
       ...bootstrapOpt,
     });
@@ -300,7 +500,7 @@ async function maybeStartDaemon(): Promise<void> {
         host: "127.0.0.1",
         port: 0,
         adapters: { roo: new RooAdapter(), cline: new ClineAdapter(), continue: new ContinueAdapter() },
-        routeExtensions: [createAgentRouteExtension()],
+        routeExtensions: [],
         ...(secretsStore ? { secrets: secretsStore } : {}),
         ...bootstrapOpt,
       });
@@ -371,6 +571,32 @@ class TierkitSidebarProvider implements vscode.WebviewViewProvider {
 
     webviewView.webview.onDidReceiveMessage((msg) => {
       if (typeof msg?.type !== "string") return;
+      // v0.19.1: route to Claude Code's chat input. The Tierkit Compressor's
+      // entire point is to feed Claude Code, so this is the primary user flow.
+      if (msg.type === "tk:claude-code" && typeof msg.text === "string") {
+        void sendToClaudeCode(msg.text);
+        return;
+      }
+      // v0.20.1: ask the user to reload the VS Code window so Claude Code
+      // picks up the freshly-registered MCP server. There is no public Claude
+      // Code command to refresh MCP at runtime, so window reload is the only
+      // honest path. We never reload silently.
+      if (msg.type === "tk:reload-vscode" && typeof msg.reason === "string") {
+        void promptReloadWindow(msg.reason);
+        return;
+      }
+      // v0.20.2: open an arbitrary file path (absolute or workspace-relative)
+      // in a VS Code editor tab. Used by the Settings card's "Reveal config"
+      // buttons so the user can SEE the MCP entry we just wrote.
+      if (msg.type === "tk:open-path" && typeof msg.path === "string") {
+        void openAbsoluteOrRelativePath(msg.path);
+        return;
+      }
+      // v0.21.10: webview-triggered "open in main editor" command.
+      if (msg.type === "tk:open-panel") {
+        void vscode.commands.executeCommand("tierkit.openInPanel");
+        return;
+      }
       if (msg.type.startsWith("tk:")) {
         void router.handle(msg, (out) => webviewView.webview.postMessage(out));
         return;
@@ -475,6 +701,31 @@ async function openFile(relPath: string): Promise<void> {
   try { await vscode.window.showTextDocument(uri, { preview: true }); } catch { /* ignore */ }
 }
 
+/** Open a file by absolute path (e.g. ~/.claude.json) or workspace-relative
+ * path (e.g. .mcp.json). The webview can't access the filesystem directly,
+ * so this is the channel for "let the user inspect what we just wrote".
+ */
+async function openAbsoluteOrRelativePath(p: string): Promise<void> {
+  // Resolve ~ ourselves — vscode.Uri.file doesn't expand it.
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? "";
+  const expanded = p.startsWith("~") && home ? home + p.slice(1) : p;
+  let uri: vscode.Uri;
+  if (expanded.startsWith("/") || /^[A-Za-z]:[\\/]/.test(expanded)) {
+    uri = vscode.Uri.file(expanded);
+  } else {
+    const workspace = vscode.workspace.workspaceFolders?.[0];
+    if (!workspace) return;
+    uri = vscode.Uri.joinPath(workspace.uri, expanded);
+  }
+  try {
+    await vscode.window.showTextDocument(uri, { preview: true });
+  } catch (err) {
+    void vscode.window.showWarningMessage(
+      `Tierkit: could not open ${expanded} — ${(err as Error).message}`,
+    );
+  }
+}
+
 async function restartDaemon(): Promise<void> {
   log("restart: closing existing in-process server (if any)");
   if (serverHandle) {
@@ -490,6 +741,7 @@ async function restartDaemon(): Promise<void> {
   lastDaemonError = undefined;
   sidebarRef?.render();
   await maybeStartDaemon();
+  await registerHostInfoWithDaemon();
 }
 
 async function withClient<T>(action: (c: TierkitClient) => Promise<T>): Promise<T | undefined> {
@@ -554,10 +806,23 @@ export function activate(context: vscode.ExtensionContext): void {
   log(`Tierkit extension activating — VS Code ${vscode.version}, Node ${process.version}`);
   log(`workspace folders: ${JSON.stringify((vscode.workspace.workspaceFolders ?? []).map((f) => f.uri.fsPath))}`);
 
+  // v0.20.7: remember the bundled-CLI path + Electron path so the daemon can
+  // use them when wiring up Claude Code MCP. Saved here at activate-time
+  // because context.extensionPath isn't reachable from the daemon directly.
+  bundledCliPath = path.join(context.extensionPath, "cli", "index.js");
+  electronExecPath = process.execPath;
+  log(`bundled CLI: ${bundledCliPath}`);
+  log(`electron exec: ${electronExecPath}`);
+
   // ── Auto-start the daemon in-process. Bundled samples are loaded inside
   //     maybeStartDaemon (before startServer) so they can feed into the
   //     bootstrapPlugin option. Fire-and-forget; render() is called from inside. ──
-  void maybeStartDaemon().then(() => sidebarRef?.render());
+  void maybeStartDaemon().then(async () => {
+    sidebarRef?.render();
+    // After daemon is up, register host info so /v1/claude-code/connect can
+    // build MCP entries that target our bundled CLI via Electron-as-Node.
+    await registerHostInfoWithDaemon();
+  });
 
   // ── Sidebar dashboard webview ──
   sidebarRef = new TierkitSidebarProvider();
@@ -568,6 +833,15 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("tierkit.focusSidebar", () => {
       void vscode.commands.executeCommand("workbench.view.extension.tierkit");
+    }),
+    // v0.21.10: open the full Tierkit UI as a webview panel in the main editor
+    // area instead of the cramped sidebar. Particularly useful on tablets /
+    // small-window setups where the sidebar is too narrow for chat. Each
+    // invocation either focuses the existing panel (singleton per window) or
+    // opens a fresh one. Panel mode and sidebar mode coexist — both connect
+    // to the same daemon and share localStorage.
+    vscode.commands.registerCommand("tierkit.openInPanel", () => {
+      openTierkitPanel(context);
     }),
     vscode.commands.registerCommand("tierkit.showOutput", () => {
       outputChannel?.show(true);

@@ -8,6 +8,15 @@ import { proposePatchTool } from "./tools/proposePatch.js";
 import { applyPatchTool } from "./tools/applyPatch.js";
 import { runCommandTool } from "./tools/runCommand.js";
 import { getPolicyStatusTool } from "./tools/getPolicyStatus.js";
+import {
+  compressCommandTool,
+  getErrorDigestTool,
+  getTestDigestTool,
+  getJsonDigestTool,
+  getFileDigestTool,
+  getDiffSummaryTool,
+  buildContextPackTool,
+} from "./tools/digestTools.js";
 import { countHits } from "./redactOutput.js";
 
 export interface CreateMcpServerOptions {
@@ -23,6 +32,14 @@ export const TOOL_NAMES = [
   "tierkit.apply_patch",
   "tierkit.run_command",
   "tierkit.get_policy_status",
+  // v0.18 context-gateway digest tools
+  "tierkit.compress_command",
+  "tierkit.get_error_digest",
+  "tierkit.get_test_digest",
+  "tierkit.get_json_digest",
+  "tierkit.get_file_digest",
+  "tierkit.get_diff_summary",
+  "tierkit.build_context_pack",
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -98,6 +115,21 @@ async function dispatchTool(
       });
     case "tierkit.get_policy_status":
       return getPolicyStatusTool({ workspaceRoot: ctx.workspaceRoot });
+    // v0.18 digest tools — thin wrappers around @tierkit/core
+    case "tierkit.compress_command":
+      return compressCommandTool(args, { workspaceRoot: ctx.workspaceRoot });
+    case "tierkit.get_error_digest":
+      return getErrorDigestTool(args, { workspaceRoot: ctx.workspaceRoot });
+    case "tierkit.get_test_digest":
+      return getTestDigestTool(args, { workspaceRoot: ctx.workspaceRoot });
+    case "tierkit.get_json_digest":
+      return getJsonDigestTool(args, { workspaceRoot: ctx.workspaceRoot });
+    case "tierkit.get_file_digest":
+      return getFileDigestTool(args, { workspaceRoot: ctx.workspaceRoot });
+    case "tierkit.get_diff_summary":
+      return getDiffSummaryTool(args, { workspaceRoot: ctx.workspaceRoot });
+    case "tierkit.build_context_pack":
+      return buildContextPackTool(args, { workspaceRoot: ctx.workspaceRoot });
     default:
       return notImplemented(name);
   }
@@ -117,6 +149,21 @@ function summarizeInput(name: ToolName, args: Record<string, unknown>): unknown 
     case "tierkit.apply_patch":       return { patchId: args.patchId };
     case "tierkit.run_command":       return { commandLength: stringLen(args.command), hasTimeout: typeof args.timeoutMs === "number" };
     case "tierkit.get_policy_status": return null;
+    case "tierkit.compress_command":  return { commandLength: stringLen(args.command) };
+    case "tierkit.get_error_digest":  return { logLength: stringLen(args.log) };
+    case "tierkit.get_test_digest":   return { outputLength: stringLen(args.output) };
+    case "tierkit.get_json_digest":   return { jsonLength: stringLen(args.json) };
+    case "tierkit.get_file_digest":   return { path: pathBasename(args.path), forceRefresh: args.forceRefresh === true };
+    case "tierkit.get_diff_summary":  return { staged: args.staged === true };
+    case "tierkit.build_context_pack":return {
+      commandLength: stringLen(args.command),
+      fileCount: Array.isArray(args.files) ? args.files.length : 0,
+      includeDiff: args.includeDiff === true,
+      hasError: typeof args.errorLog === "string",
+      hasTest: typeof args.testOutput === "string",
+      hasJson: typeof args.jsonInput === "string",
+      hasRaw: typeof args.rawContext === "string",
+    };
     default:                          return null;
   }
 }
@@ -164,6 +211,21 @@ function summarizeOutput(name: ToolName, result: ToolEnvelope): unknown {
     // Non-envelope tools (propose_patch, apply_patch) still read top-level fields
     case "tierkit.propose_patch":     return { patchId: result.patchId, riskLevel: (result.risk as any)?.level };
     case "tierkit.apply_patch":       return { fileCount: Array.isArray(result.files) ? result.files.length : 0 };
+    // v0.18 digest envelopes — log compression stats only, never content.
+    case "tierkit.compress_command":
+    case "tierkit.get_error_digest":
+    case "tierkit.get_test_digest":
+    case "tierkit.get_json_digest":
+    case "tierkit.get_file_digest":
+    case "tierkit.get_diff_summary":
+    case "tierkit.build_context_pack": {
+      const data = result.data;
+      return {
+        beforeTokens: data?.stats?.beforeTokens,
+        afterTokens: data?.stats?.afterTokens,
+        savedTokens: data?.stats?.savedTokens,
+      };
+    }
     default:                          return null;
   }
 }

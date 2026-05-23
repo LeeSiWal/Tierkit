@@ -17,6 +17,12 @@
 # @tierkit/plugin-superpowers in node_modules.
 !samples/**
 
+# v0.20.7: Bundled self-contained Tierkit CLI (copied by scripts/copy-cli.mjs).
+# Used by Claude Code MCP auto-wire so the user doesn't need a global tierkit
+# install. The Extension passes <extensionPath>/cli/index.js to the daemon as
+# the MCP server's `command` target.
+!cli/**
+
 # Exclude sourcemaps from the published .vsix (keep dist/extension.js only).
 dist/**/*.map
 

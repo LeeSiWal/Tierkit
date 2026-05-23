@@ -41,7 +41,8 @@ function makeContext(cwd: string): { context: CliContext; stdout: StringSink; st
   };
 }
 
-describe("CLI e2e: export roo (superpowers-free)", () => {
+// v0.19: `tierkit export roo` command disabled.
+describe.skip("CLI e2e: export roo (superpowers-free)", () => {
   let projectRoot: string;
   afterEach(async () => {
     if (projectRoot) await fs.rm(projectRoot, { recursive: true, force: true });

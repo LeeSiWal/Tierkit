@@ -506,6 +506,75 @@ export {
   type McpActivityEntry,
 } from "./mcp/activityLog.js";
 
+// v0.18 Context Gateway — local digest pipeline (command, error, test, json, diff, file, pack)
+export {
+  type CompressionVerdict,
+  type CompressionStats,
+  type CompressedCommand,
+  type DigestErrorItem,
+  type ErrorDigest,
+  type TestFailureItem,
+  type TestDigest,
+  type JsonDigest,
+  type FileDigest,
+  type DiffSummary,
+  type CleanedContext,
+  type ContextPack,
+  type DigestBudget,
+  DEFAULT_DIGEST_BUDGET,
+  CONTEXT_PACK_OUTPUT_POLICY,
+  computeStats as computeDigestStats,
+  makeDigestId,
+  compressCommand,
+  type CompressCommandOptions,
+  compressErrorLog,
+  type CompressErrorLogOptions,
+  compressTestOutput,
+  type CompressTestOutputOptions,
+  compressJson,
+  type CompressJsonOptions,
+  cleanContext,
+  type CleanContextOptions,
+  summarizeGitDiff,
+  defaultDiffRunner,
+  type SummarizeGitDiffOptions,
+  getFileDigest,
+  getFileDigestCached,
+  invalidateFileDigest,
+  getFileDigestCacheStats,
+  clearFileDigestCache,
+  type GetFileDigestOptions,
+  type FileDigestCacheStats,
+  buildContextPack,
+  type BuildContextPackInput,
+  type BuildContextPackOptions,
+  makeRefineCallback,
+  type MakeRefineCallbackOptions,
+} from "./digest/index.js";
+
+// v0.20: Claude Code auto-wire (MCP config + CLAUDE.md instructions)
+export {
+  connectClaudeCode,
+  disconnectClaudeCode,
+  claudeCodeStatus,
+  type ConnectClaudeCodeInput,
+  type ConnectClaudeCodeResult,
+  type DisconnectClaudeCodeInput,
+  type DisconnectClaudeCodeResult,
+  type ClaudeCodeStatusInput,
+  type ClaudeCodeStatusResult,
+  type ConnectScope,
+  type InstructionsLevel,
+} from "./usecases/connectClaudeCode.js";
+
+// v0.21: Tierkit Chat as a streaming proxy over the claude CLI
+export {
+  chatWithClaude,
+  type ChatEvent,
+  type ChatWithClaudeOptions,
+  type ClaudePermissionMode,
+} from "./usecases/chatWithClaude.js";
+
 // v0.15 MCP Bridge — patch ticket store (shared by mcp-server, CLI, and daemon)
 export {
   // CRUD

@@ -71,7 +71,7 @@ function migrateOne(raw: Record<string, unknown>): { changed: boolean; raw: Reco
 
 async function writeAtomic(target: string, data: unknown): Promise<void> {
   const text = JSON.stringify(data, null, 2) + "\n";
-  const tmp = target + ".tmp";
+  const tmp = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   await fs.writeFile(tmp, text, "utf8");
   await fs.rename(tmp, target);
 }

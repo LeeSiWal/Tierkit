@@ -23,7 +23,7 @@ describe("tierkit mcp serve — subprocess handshake", () => {
     const client = new Client({ name: "test", version: "0.0.1" }, { capabilities: {} });
     await client.connect(transport);
     const tools = await client.listTools();
-    expect(tools.tools.length).toBe(7);
+    expect(tools.tools.length).toBe(14);
     await client.close();
     await fs.rm(workspace, { recursive: true, force: true });
   }, 15000);
