@@ -5248,12 +5248,19 @@ export const GUI_HTML = `<!doctype html>
     const card = document.createElement('div');
     card.className = 'tk-aqq-card';
     card.dataset.toolId = d.id || '';
-    const toolId = d.id || 'aqq-' + Math.random().toString(36).slice(2, 10);
+    // Restrict to a safe alphanumeric subset for use in HTML attribute values and
+    // CSS-style name attributes; Anthropic's tool_use ids match this pattern today
+    // (toulu_<base64-ish>), but a future change or malformed input shouldn't be
+    // able to inject attribute content.
+    const rawId = d.id || 'aqq-' + Math.random().toString(36).slice(2, 10);
+    const toolId = String(rawId).replace(/[^a-zA-Z0-9_-]/g, '');
     const titleLabel = lang === 'ko' ? '🤔 Claude가 묻습니다' : '🤔 Claude is asking';
     const otherLabel = lang === 'ko' ? '기타:' : 'Other:';
     const submitLabel = lang === 'ko' ? '답변 제출' : 'Submit answer';
     const emptyAnswerLabel = lang === 'ko' ? '최소 하나는 선택하거나 기타에 입력해주세요.' : 'Pick at least one option or type in Other.';
     const sentLabel = lang === 'ko' ? '✓ 전송됨' : '✓ Sent';
+    const multiBadge = lang === 'ko' ? '[복수 선택]' : '[multi-select]';
+    const noAnswerLabel = lang === 'ko' ? '(답변 없음)' : '(no answer)';
 
     let html = '<div class="tk-aqq-title"><span>' + escapeHtmlMd(titleLabel) + '</span></div>';
     for (let qi = 0; qi < questions.length; qi++) {
@@ -5267,7 +5274,7 @@ export const GUI_HTML = `<!doctype html>
 
       html += '<div class="tk-aqq-q" data-q-index="' + qi + '">';
       if (header) html += '<span class="tk-aqq-q-header">' + escapeHtmlMd(header) + '</span>';
-      html += '<div class="tk-aqq-q-text">' + escapeHtmlMd(qText) + (multi ? ' <span class="dim" style="font-weight:normal;font-size:10px">[복수 선택]</span>' : '') + '</div>';
+      html += '<div class="tk-aqq-q-text">' + escapeHtmlMd(qText) + (multi ? ' <span class="dim" style="font-weight:normal;font-size:10px">' + escapeHtmlMd(multiBadge) + '</span>' : '') + '</div>';
       for (let oi = 0; oi < options.length; oi++) {
         const opt = options[oi] || {};
         const optLabel = typeof opt.label === 'string' ? opt.label : '';
@@ -5304,7 +5311,7 @@ export const GUI_HTML = `<!doctype html>
           const multi = !!(q && q.multiSelect);
           const options = (q && Array.isArray(q.options)) ? q.options : [];
           const groupName = 'tk-aqq-' + toolId + '-' + qi;
-          const checked = card.querySelectorAll('input[name="' + groupName.replace(/"/g, '') + '"]:checked');
+          const checked = card.querySelectorAll('input[name="' + groupName + '"]:checked');
           const selectedLabels = [];
           checked.forEach((node) => {
             const idx = parseInt(node.value, 10);
@@ -5327,7 +5334,7 @@ export const GUI_HTML = `<!doctype html>
           const p = parts[i];
           lines.push('**Q' + (i + 1) + ': ' + p.qText + '**');
           if (p.selected.length === 0) {
-            lines.push('- (no answer)');
+            lines.push('- ' + noAnswerLabel);
           } else {
             for (const s of p.selected) lines.push('- ' + s);
           }
