@@ -928,7 +928,11 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         const inputUsdPerMillion = baseProfile?.cost?.type === "per-token"
           ? (baseProfile.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion
           : undefined;
-        const summary = await computeTierkitMcpSavings(opts.cwd, inputUsdPerMillion);
+        const summary = await computeTierkitMcpSavings(
+          opts.cwd,
+          inputUsdPerMillion,
+          opts.homeDir ? { homeDirOverride: opts.homeDir } : {},
+        );
         return sendJson(res, 200, {
           ok: true,
           baselineProfileId: baselineId,
