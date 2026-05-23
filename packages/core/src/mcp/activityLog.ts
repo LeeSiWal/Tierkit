@@ -18,6 +18,13 @@ export interface McpActivityInput {
     hasCursor: boolean;
     remainingLines?: number;
   };
+  /**
+   * v0.23: the MCP client's self-reported name (from initialize handshake).
+   * Sourced from server.getClientVersion()?.name. Common values: "claude-code",
+   * "codex", "Cursor". Used by tierkitSavings to bucket savings per client.
+   * Optional for forward compat with older activity log entries.
+   */
+  clientName?: string;
 }
 
 export interface McpActivityEntry extends McpActivityInput {
