@@ -21,6 +21,13 @@
  * delivering value with every chat turn.
  */
 import { readMcpActivity, type McpActivityEntry } from "../mcp/activityLog.js";
+import { attributeModelFromJsonls } from "./attributeModelFromJsonls.js";
+
+export interface ClientOrModelSummary {
+  toolCallCount: number;
+  savedTokens: number;
+  estimatedSavedUsd?: number;
+}
 
 export interface TierkitMcpSavingsSummary {
   /** Number of tierkit.* tool calls counted in the window. */
@@ -39,6 +46,16 @@ export interface TierkitMcpSavingsSummary {
   byTool: Record<string, number>;
   /** ISO start of the counting window (today, UTC midnight). */
   windowStart: string;
+  /** v0.23: per-client breakdown (Claude Code, Codex, …). Older log entries
+   *  without clientName bucket to "unknown". */
+  byClient: Record<string, ClientOrModelSummary>;
+  /** v0.23: per-Claude-model breakdown via jsonl cross-reference. Non-claude
+   *  clients are excluded — they appear only in byClient. */
+  byModel: Record<string, ClientOrModelSummary>;
+}
+
+export interface ComputeOptions {
+  homeDirOverride?: string;
 }
 
 const TIERKIT_TOOL_PREFIX = "tierkit.";
@@ -68,6 +85,7 @@ function isCompressionTool(name: string): boolean {
 export async function computeTierkitMcpSavings(
   workspaceRoot: string,
   baselineInputUsdPerMillion?: number,
+  options: ComputeOptions = {},
 ): Promise<TierkitMcpSavingsSummary> {
   const windowStart = new Date();
   windowStart.setUTCHours(0, 0, 0, 0);
@@ -78,11 +96,12 @@ export async function computeTierkitMcpSavings(
   let beforeTokensTotal = 0;
   let afterTokensTotal = 0;
   const byTool: Record<string, number> = {};
+  const forAttribution: Array<{ ts: string; clientName: string; savedTokens: number }> = [];
 
   for (const e of entries) {
     if (!e || typeof e.ts !== "string") continue;
     if (!e.tool || !e.tool.startsWith(TIERKIT_TOOL_PREFIX)) continue;
-    if (!e.ok) continue; // count only successful compressions
+    if (!e.ok) continue;
     const ts = Date.parse(e.ts);
     if (!Number.isFinite(ts) || ts < startMs) continue;
     if (!isCompressionTool(e.tool)) continue;
@@ -100,6 +119,11 @@ export async function computeTierkitMcpSavings(
     afterTokensTotal += after;
     toolCallCount += 1;
     byTool[e.tool] = (byTool[e.tool] ?? 0) + 1;
+    forAttribution.push({
+      ts: e.ts,
+      clientName: (e as { clientName?: string }).clientName ?? "unknown",
+      savedTokens: Math.max(0, before - after),
+    });
   }
 
   const savedTokensTotal = Math.max(0, beforeTokensTotal - afterTokensTotal);
@@ -107,6 +131,38 @@ export async function computeTierkitMcpSavings(
     typeof baselineInputUsdPerMillion === "number" && baselineInputUsdPerMillion > 0
       ? (savedTokensTotal * baselineInputUsdPerMillion) / 1_000_000
       : undefined;
+
+  const attributed = await attributeModelFromJsonls({
+    cwd: workspaceRoot,
+    ...(options.homeDirOverride ? { homeDirOverride: options.homeDirOverride } : {}),
+    activities: forAttribution,
+  });
+
+  const byClient: Record<string, ClientOrModelSummary> = {};
+  const byModel: Record<string, ClientOrModelSummary> = {};
+  const usdFor = (tokens: number): number | undefined =>
+    typeof baselineInputUsdPerMillion === "number" && baselineInputUsdPerMillion > 0
+      ? (tokens * baselineInputUsdPerMillion) / 1_000_000
+      : undefined;
+
+  for (const a of attributed) {
+    const cb = (byClient[a.clientName] ??= { toolCallCount: 0, savedTokens: 0 });
+    cb.toolCallCount += 1;
+    cb.savedTokens += a.savedTokens;
+    if (a.clientName.startsWith("claude")) {
+      const mb = (byModel[a.model] ??= { toolCallCount: 0, savedTokens: 0 });
+      mb.toolCallCount += 1;
+      mb.savedTokens += a.savedTokens;
+    }
+  }
+  for (const v of Object.values(byClient)) {
+    const usd = usdFor(v.savedTokens);
+    if (usd !== undefined) v.estimatedSavedUsd = usd;
+  }
+  for (const v of Object.values(byModel)) {
+    const usd = usdFor(v.savedTokens);
+    if (usd !== undefined) v.estimatedSavedUsd = usd;
+  }
 
   return {
     toolCallCount,
@@ -116,6 +172,8 @@ export async function computeTierkitMcpSavings(
     ...(estimatedSavedUsd !== undefined ? { estimatedSavedUsd } : {}),
     byTool,
     windowStart: windowStart.toISOString(),
+    byClient,
+    byModel,
   };
 }
 
