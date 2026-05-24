@@ -35,6 +35,20 @@ export interface McpActivityEntry extends McpActivityInput {
 
 const LOG_REL = ".tierkit/runtime/usage.jsonl";
 
+type ActivityListener = (workspaceRoot: string) => void;
+let activityListener: ActivityListener | null = null;
+
+/**
+ * Register a fire-and-forget callback that runs after each logMcpActivity
+ * append. Used by the runtime's savingsBroadcaster to push SSE events on
+ * every MCP tool call without activityLog (mcp/) importing runtime/.
+ *
+ * Pass null to clear.
+ */
+export function setActivityListener(fn: ActivityListener | null): void {
+  activityListener = fn;
+}
+
 export async function logMcpActivity(workspaceRoot: string, input: McpActivityInput): Promise<void> {
   const entry: McpActivityEntry = {
     ts: new Date().toISOString(),
@@ -46,6 +60,12 @@ export async function logMcpActivity(workspaceRoot: string, input: McpActivityIn
   await fs.mkdir(path.dirname(file), { recursive: true });
   // Append-only. JSONL: one line per entry.
   await fs.appendFile(file, JSON.stringify(entry) + "\n");
+  // Fire-and-forget. Listener exceptions must not propagate — broadcaster
+  // failure must not corrupt the MCP tool's response path.
+  if (activityListener) {
+    try { activityListener(workspaceRoot); }
+    catch (err) { console.error("[tierkit] activityListener threw:", err); }
+  }
 }
 
 export async function readMcpActivity(workspaceRoot: string): Promise<McpActivityEntry[]> {
