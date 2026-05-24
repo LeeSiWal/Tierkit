@@ -2860,94 +2860,100 @@ export const GUI_HTML = `<!doctype html>
   // tool calls (compress_command / get_*_digest / build_context_pack) and
   // multiplies savedTokens by the baseline profile's input USD/M to get a
   // real dollar number the user can feel as they chat.
+  // Pure DOM update — fed by both the /v1/tierkit/savings/today fetch path
+  // and the /v1/tierkit/savings/stream SSE path (Task 6). r is the same
+  // shape both routes return (the "today" route inlines the summary fields
+  // alongside ok/baselineProfileId/baselineProvider/inputUsdPerMillion).
+  function renderSavings(r) {
+    if (!r || r.ok === false) {
+      $('m-routing-input-tokens').textContent = '—';
+      $('m-routing-cost-saved').textContent = '—';
+      $('m-routing-calls-avoided').textContent = '—';
+      $('m-routing-baseline').textContent = '—';
+      $('m-routing-by-tool').textContent = '';
+      $('m-routing-empty-hint').hidden = true;
+      return;
+    }
+    const saved = Number(r.savedTokensTotal || 0);
+    const before = Number(r.beforeTokensTotal || 0);
+    const after = Number(r.afterTokensTotal || 0);
+    const calls = Number(r.toolCallCount || 0);
+    const usd = typeof r.estimatedSavedUsd === 'number' ? r.estimatedSavedUsd : null;
+    const k = saved >= 1000 ? (saved / 1000).toFixed(1) + 'k' : String(saved);
+    $('m-routing-input-tokens').textContent = k + ' tok';
+    $('m-routing-cost-saved').textContent = usd !== null ? '$' + usd.toFixed(4) : '—';
+    $('m-routing-calls-avoided').textContent = String(calls);
+
+    // v0.21.10: visual before/after bar. Width of "after" bar is proportional
+    // to the compression ratio so users see the squish at a glance.
+    const visual = $('m-routing-visual');
+    if (before > 0) {
+      visual.style.display = '';
+      const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k tok' : n + ' tok';
+      $('m-routing-before-label').textContent = fmt(before);
+      $('m-routing-after-label').textContent = fmt(after);
+      const ratio = before > 0 ? Math.min(100, Math.max(0, (after / before) * 100)) : 0;
+      $('m-routing-after-bar').style.width = ratio.toFixed(1) + '%';
+      const pct = (100 - ratio).toFixed(0);
+      $('m-routing-saved-summary').textContent =
+        (lang === 'ko' ? '▼ ' : '▼ ') + pct + '% (' + fmt(saved) + ' ' + (lang === 'ko' ? '절감' : 'saved') + (usd !== null ? ' · $' + usd.toFixed(4) : '') + ')';
+    } else {
+      visual.style.display = 'none';
+    }
+    const baseLabel = String(r.baselineProfileId || '—');
+    $('m-routing-baseline').textContent = (typeof r.inputUsdPerMillion === 'number')
+      ? baseLabel + ' ($' + r.inputUsdPerMillion + '/M input)'
+      : baseLabel;
+    // Per-tool breakdown so the user sees which digest tools Claude actually used.
+    const byTool = r.byTool || {};
+    const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1]);
+    $('m-routing-by-tool').textContent = entries.length
+      ? entries.map(([n, c]) => n.replace('tierkit.', '') + ' ×' + c).join(' · ')
+      : '';
+    // v0.23: byClient + byModel breakdowns.
+    const byClient = r.byClient || {};
+    const byModel = r.byModel || {};
+    const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+    const noDataLabel = lang === 'ko' ? '데이터 없음' : 'no data yet';
+    function renderBreakdown(hostId, data, prettyFn) {
+      const host = $(hostId);
+      if (!host) return;
+      const rows = Object.entries(data)
+        .filter(([, v]) => v && v.savedTokens > 0)
+        .sort(([, a], [, b]) => b.savedTokens - a.savedTokens);
+      if (rows.length === 0) {
+        host.innerHTML = '<div class="dim" style="font-size:11px;padding:4px 0">' + escapeHtmlMd(noDataLabel) + '</div>';
+        return;
+      }
+      let html = '';
+      for (const [key, v] of rows) {
+        const usd = typeof v.estimatedSavedUsd === 'number' ? ' · $' + v.estimatedSavedUsd.toFixed(4) : '';
+        html += '<div class="row dense" style="font-size:11px"><span style="flex:1;min-width:0">' +
+          escapeHtmlMd(prettyFn(key)) + '</span>' +
+          '<span class="mono dim" style="font-size:10.5px">' + fmtTok(v.savedTokens) + ' tok · ' +
+          v.toolCallCount + ' ' + (lang === 'ko' ? '호출' : 'calls') + usd +
+          '</span></div>';
+      }
+      host.innerHTML = html;
+    }
+    renderBreakdown('m-routing-by-client-rows', byClient, prettyClient);
+    renderBreakdown('m-routing-by-model-rows', byModel, prettyModel);
+
+    if (calls === 0) {
+      $('m-routing-empty-hint').textContent = lang === 'ko'
+        ? '아직 Claude가 Tierkit MCP 도구를 호출하지 않았습니다. Chat에서 메시지를 보내고 Claude가 압축 도구를 사용하면 여기 카운트가 올라갑니다.'
+        : 'No tierkit MCP tool calls yet today. Send a chat message; once Claude uses a compression tool, the counts will update here.';
+      $('m-routing-empty-hint').hidden = false;
+    } else {
+      $('m-routing-empty-hint').hidden = true;
+    }
+  }
+
   async function refreshSavings() {
     try {
       const r = await jget('/v1/tierkit/savings/today');
-      if (!r || r.ok === false) {
-        $('m-routing-input-tokens').textContent = '—';
-        $('m-routing-cost-saved').textContent = '—';
-        $('m-routing-calls-avoided').textContent = '—';
-        $('m-routing-baseline').textContent = '—';
-        $('m-routing-by-tool').textContent = '';
-        $('m-routing-empty-hint').hidden = true;
-        return;
-      }
-      const saved = Number(r.savedTokensTotal || 0);
-      const before = Number(r.beforeTokensTotal || 0);
-      const after = Number(r.afterTokensTotal || 0);
-      const calls = Number(r.toolCallCount || 0);
-      const usd = typeof r.estimatedSavedUsd === 'number' ? r.estimatedSavedUsd : null;
-      const k = saved >= 1000 ? (saved / 1000).toFixed(1) + 'k' : String(saved);
-      $('m-routing-input-tokens').textContent = k + ' tok';
-      $('m-routing-cost-saved').textContent = usd !== null ? '$' + usd.toFixed(4) : '—';
-      $('m-routing-calls-avoided').textContent = String(calls);
-
-      // v0.21.10: visual before/after bar. Width of "after" bar is proportional
-      // to the compression ratio so users see the squish at a glance.
-      const visual = $('m-routing-visual');
-      if (before > 0) {
-        visual.style.display = '';
-        const fmt = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k tok' : n + ' tok';
-        $('m-routing-before-label').textContent = fmt(before);
-        $('m-routing-after-label').textContent = fmt(after);
-        const ratio = before > 0 ? Math.min(100, Math.max(0, (after / before) * 100)) : 0;
-        $('m-routing-after-bar').style.width = ratio.toFixed(1) + '%';
-        const pct = (100 - ratio).toFixed(0);
-        $('m-routing-saved-summary').textContent =
-          (lang === 'ko' ? '▼ ' : '▼ ') + pct + '% (' + fmt(saved) + ' ' + (lang === 'ko' ? '절감' : 'saved') + (usd !== null ? ' · $' + usd.toFixed(4) : '') + ')';
-      } else {
-        visual.style.display = 'none';
-      }
-      const baseLabel = String(r.baselineProfileId || '—');
-      $('m-routing-baseline').textContent = (typeof r.inputUsdPerMillion === 'number')
-        ? baseLabel + ' ($' + r.inputUsdPerMillion + '/M input)'
-        : baseLabel;
-      // Per-tool breakdown so the user sees which digest tools Claude actually used.
-      const byTool = r.byTool || {};
-      const entries = Object.entries(byTool).sort((a, b) => b[1] - a[1]);
-      $('m-routing-by-tool').textContent = entries.length
-        ? entries.map(([n, c]) => n.replace('tierkit.', '') + ' ×' + c).join(' · ')
-        : '';
-      // v0.23: byClient + byModel breakdowns.
-      const byClient = r.byClient || {};
-      const byModel = r.byModel || {};
-      const fmtTok = (n) => n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
-      const noDataLabel = lang === 'ko' ? '데이터 없음' : 'no data yet';
-      function renderBreakdown(hostId, data, prettyFn) {
-        const host = $(hostId);
-        if (!host) return;
-        const rows = Object.entries(data)
-          .filter(([, v]) => v && v.savedTokens > 0)
-          .sort(([, a], [, b]) => b.savedTokens - a.savedTokens);
-        if (rows.length === 0) {
-          host.innerHTML = '<div class="dim" style="font-size:11px;padding:4px 0">' + escapeHtmlMd(noDataLabel) + '</div>';
-          return;
-        }
-        let html = '';
-        for (const [key, v] of rows) {
-          const usd = typeof v.estimatedSavedUsd === 'number' ? ' · $' + v.estimatedSavedUsd.toFixed(4) : '';
-          html += '<div class="row dense" style="font-size:11px"><span style="flex:1;min-width:0">' +
-            escapeHtmlMd(prettyFn(key)) + '</span>' +
-            '<span class="mono dim" style="font-size:10.5px">' + fmtTok(v.savedTokens) + ' tok · ' +
-            v.toolCallCount + ' ' + (lang === 'ko' ? '호출' : 'calls') + usd +
-            '</span></div>';
-        }
-        host.innerHTML = html;
-      }
-      renderBreakdown('m-routing-by-client-rows', byClient, prettyClient);
-      renderBreakdown('m-routing-by-model-rows', byModel, prettyModel);
-
-      if (calls === 0) {
-        $('m-routing-empty-hint').textContent = lang === 'ko'
-          ? '아직 Claude가 Tierkit MCP 도구를 호출하지 않았습니다. Chat에서 메시지를 보내고 Claude가 압축 도구를 사용하면 여기 카운트가 올라갑니다.'
-          : 'No tierkit MCP tool calls yet today. Send a chat message; once Claude uses a compression tool, the counts will update here.';
-        $('m-routing-empty-hint').hidden = false;
-      } else {
-        $('m-routing-empty-hint').hidden = true;
-      }
-    } catch (err) {
-      // Swallow — leave dashes; the next poll will retry.
-    }
+      renderSavings(r);
+    } catch { /* card stays at last-good state */ }
   }
 
   // ── Card: Usage summary ────────────────────────────────────────────────────
