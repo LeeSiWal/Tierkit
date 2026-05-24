@@ -32,7 +32,7 @@ describe("resolveSavingsBaseline", () => {
     expect(out.inputUsdPerMillion).toBeUndefined();
   });
 
-  it("defaults to claudeCode baseline when routingBaseline is unset", () => {
+  it("falls back from the default claudeCode baseline when it has no per-token cost", () => {
     const out = resolveSavingsBaseline(cfg({
       claudeCode: { provider: "claude-code" },
       claudeSonnet: { provider: "anthropic", cost: { type: "per-token", inputUsdPerMillion: 3, outputUsdPerMillion: 15 } },
