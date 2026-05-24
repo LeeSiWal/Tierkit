@@ -31,6 +31,9 @@ import { chatWithClaude } from "../usecases/chatWithClaude.js";
 import { listClaudeSessions } from "../usecases/listClaudeSessions.js";
 import { readClaudeSession, ReadClaudeSessionError } from "../usecases/readClaudeSession.js";
 import { computeTierkitMcpSavings, resolveSavingsBaseline } from "./tierkitSavings.js";
+import * as savingsBroadcaster from "./savingsBroadcaster.js";
+import { setActivityListener } from "../mcp/activityLog.js";
+import type { TierkitConfig } from "../config/TierkitConfig.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -214,8 +217,19 @@ async function listRecentContexts(workspaceRoot: string) {
  * security relies on the loopback bind. Do not change `host` to a non-loopback address
  * without adding authentication first.
  */
-export function startServer(opts: ServerOptions): Promise<RunningServer> {
+export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const env = opts.env ?? (process.env as Record<string, string | undefined>);
+
+  let cachedConfig: TierkitConfig | null = null;
+  // Pre-populate cachedConfig so the first SSE subscriber gets a real snapshot
+  // without waiting for a GET /v1/tierkit/savings/today poll. Skipped under
+  // TIERKIT_NO_BUNDLED_DEFAULTS=1 (test runs) to avoid triggering loadConfig
+  // migrations before test route handlers do their own first call, which would
+  // change the on-disk config and alter subsequent loadConfig results.
+  if (process.env.TIERKIT_NO_BUNDLED_DEFAULTS !== "1") {
+    try { cachedConfig = (await loadConfig(opts.cwd)).config; }
+    catch { /* config not yet present — broadcaster will see null and skip */ }
+  }
 
   // Tracks artifacts that currently have an in-flight compare. Per-daemon
   // (not module-global) so tests with independent daemons don't share state.
@@ -895,6 +909,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       // updates when the user chats with Claude through Tierkit Chat.
       if (route === "GET /v1/tierkit/savings/today") {
         const cfg = await loadConfig(opts.cwd);
+        cachedConfig = cfg.config;
         const { baselineId, baseProfile, inputUsdPerMillion } = resolveSavingsBaseline(cfg.config);
         const summary = await computeTierkitMcpSavings(
           opts.cwd,
@@ -908,6 +923,23 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
           inputUsdPerMillion,
           ...summary,
         });
+      }
+
+      if (route === "GET /v1/tierkit/savings/stream") {
+        res.statusCode = 200;
+        res.setHeader("content-type", "text/event-stream");
+        res.setHeader("cache-control", "no-cache");
+        res.setHeader("connection", "keep-alive");
+        res.flushHeaders?.();
+        // Refresh cachedConfig on each new subscriber so the initial snapshot
+        // is based on the latest on-disk config even in test environments where
+        // the preload was skipped.
+        try { cachedConfig = (await loadConfig(opts.cwd)).config; } catch { /* leave as-is */ }
+        await savingsBroadcaster.subscribe(res, opts.cwd);
+        req.on("close", () => {
+          try { res.end(); } catch { /* already closed */ }
+        });
+        return;
       }
 
       if (route === "GET /v1/savings/today") {
@@ -1883,6 +1915,13 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
     })();
   }
 
+  savingsBroadcaster.start({
+    getConfig: () => cachedConfig ?? ({ modelProfiles: {}, routingBaseline: "claudeCode" } as TierkitConfig),
+    workspaceRootForHeartbeat: opts.cwd,
+    ...(opts.homeDir ? { homeDirOverride: opts.homeDir } : {}),
+  });
+  setActivityListener((root) => { void savingsBroadcaster.broadcast(root); });
+
   return new Promise<RunningServer>((resolve, reject) => {
     server.once("error", reject);
     server.listen(opts.port, opts.host, async () => {
@@ -1907,6 +1946,8 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((resolveClose, rejectClose) => {
+            savingsBroadcaster.stop();
+            setActivityListener(null);
             server.close((err) => {
               // Also tear down any Ollama daemon WE auto-launched. If the user had Ollama
               // running before Tierkit started, this is a no-op — we only kill what we spawned.
