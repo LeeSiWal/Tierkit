@@ -17,14 +17,22 @@
   "keywords": [
     "tierkit",
     "ai",
+    "claude",
+    "claude code",
+    "mcp",
     "model routing",
+    "cost optimization",
+    "token savings",
+    "context compression",
     "ollama",
     "anthropic",
     "openai",
     "roo",
     "cline",
     "continue",
-    "local-first"
+    "aider",
+    "local-first",
+    "secret redaction"
   ],
   "main": "./dist/extension.js",
   "icon": "icon.png",

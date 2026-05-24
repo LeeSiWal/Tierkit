@@ -1,19 +1,29 @@
 # Tierkit (VS Code)
 
-> Local-first policy + routing layer for **Roo Code · Cline · Continue · aider** — and any OpenAI-compatible coding agent.
+> Local-first **cost optimizer + policy layer** for AI coding CLIs — Claude Code, Roo Code, Cline, Continue, aider — and any OpenAI-compatible coding agent.
 >
-> Roo/Cline/Continue 같은 코딩 에이전트 **뒤에 깔리는** 로컬 우선 정책·라우팅 레이어. 사이드바는 미션 컨트롤 (라우팅·활성 플러그인·실시간 활동·사용량·모델).
+> Claude Code · Roo · Cline · Continue 같은 AI 코딩 도구 **뒤에 깔리는** 로컬 우선 비용 최적화 + 정책 레이어. 사이드바에서 실시간 토큰 절감, 라우팅, 활성 플러그인, 사용량을 한눈에.
 
-[Tierkit](https://github.com/LeeSiWal/Tierkit) is a routing/policy daemon that sits between your existing coding agent (Roo, Cline, Continue, aider, …) and the actual model providers. It uniformly applies:
+[Tierkit](https://github.com/LeeSiWal/Tierkit) is a daemon that sits between your AI coding tools and the actual model providers. It uniformly applies:
 
+- **Token-saving MCP tools** — `compress_command`, `get_file_digest`, `get_diff_summary`, `get_error_digest`, `build_context_pack` — let Claude Code (and any MCP client) read large files / diffs / logs as compact summaries instead of full text. Savings counted live in the sidebar.
 - **Tier-based routing** (local / private-remote / public-cloud) chosen per-task by risk + cost
 - **Secret redaction** before any remote call
 - **Dangerous-command classifier** (`rm -rf /` is blocked before execution)
 - **Budget + workflow session gates** (strict mode requires plan approval before execute)
 - **Plugin rules** injected into every model call's system prompt
 - **Tool-call shim** that makes OpenAI structured tool calling work with weak local models (Cline-style XML/JSON parsing under the hood)
+- **Built-in Tierkit Chat** — proxies the `claude` CLI through the sidebar so you can chat without leaving VS Code
 
 This extension is the VS Code companion. The daemon **auto-starts in-process** on activation — open a folder, the daemon runs.
+
+## What's new in 0.22
+
+- **0.22.3** — Savings card pushes via Server-Sent Events. Sub-second updates after any MCP tool call; no more 5-second polling lag.
+- **0.22.2** — Fixed `/v1/usage` endpoint crash when the activity log mixed LlmCall + MCP-tool records.
+- **0.22.x** — `byClient` + `byModel` savings breakdown (see exactly which Claude model / which MCP client drove your savings).
+
+See [CHANGELOG.md](./CHANGELOG.md) for the full history.
 
 ---
 
@@ -67,31 +77,41 @@ You should see the request appear in the sidebar within 5 seconds.
 ## Mission Control sidebar
 
 ```
-┌──────────────────────────────────────┐
-│ Tierkit  v0.1  guided  ↻              │
-├──────────────────────────────────────┤
-│ Connected tools                [Sync]│
-│   roo       routed to Tierkit  [⤴]  │
-│   cline     not installed     [Connect]│
-│   continue  routed to Tierkit       │
-├──────────────────────────────────────┤
-│ Active plugins              [+ New] │
-│   ▣ superpowers-balanced  guided    │
-├──────────────────────────────────────┤
-│ Recent activity      (refreshes 5s) │
-│   14:23:01  localCoder              │
-│             856ms · 1.2k↑/450↓      │
-├──────────────────────────────────────┤
-│ Today's usage                       │
-│   24 calls · 18k tokens · $0.00     │
-├──────────────────────────────────────┤
-│ Model profiles                [+ Add]│
-│   localCoder    ollama        test  │
-│   claudeSonnet  anthropic ⚠   test  │
-└──────────────────────────────────────┘
+┌────────────────────────────────────────┐
+│ Tierkit  v0.22.3   guided   ↻          │
+├────────────────────────────────────────┤
+│ Savings — today (live via SSE)         │
+│   ▼ 91% · 22.0k tok saved · $0.066     │
+│   ▰▰▰▰▰▰▰▰▰▱  88 MCP calls avoided    │
+│   by client: claude-code (×85)         │
+│   by model:  claude-sonnet-4-6 (×72)   │
+├────────────────────────────────────────┤
+│ Connected tools                  [Sync]│
+│   claude-code  ✓ MCP connected         │
+│   roo          routed to Tierkit  [⤴] │
+│   cline        not installed   [Connect]│
+│   continue     routed to Tierkit       │
+├────────────────────────────────────────┤
+│ Tierkit Chat (claude CLI proxy)        │
+│   ▸ type a message…                    │
+├────────────────────────────────────────┤
+│ Active plugins                  [+ New]│
+│   ▣ superpowers-balanced  guided       │
+├────────────────────────────────────────┤
+│ Recent activity        (refreshes 5s)  │
+│   14:23:01  tierkit.get_file_digest    │
+│             7ms · 22k→0.6k tokens      │
+├────────────────────────────────────────┤
+│ Today's usage                          │
+│   24 calls · 18k tokens · $0.00        │
+├────────────────────────────────────────┤
+│ Model profiles                  [+ Add]│
+│   localCoder    ollama          test   │
+│   claudeSonnet  anthropic  ⚠    test   │
+└────────────────────────────────────────┘
 ```
 
-Auto-refreshes every 5s for activity + usage. Click `[Connect]`/`[Add]`/`[New]` for inline forms. No chat input — Tierkit is the policy layer behind agents, not an agent itself.
+The Savings card updates the moment Claude (or any MCP client) calls a Tierkit compression tool — no polling lag. Other cards (activity, usage, health) auto-refresh every 5s. Click `[Connect]` / `[Add]` / `[New]` for inline forms.
 
 ---
 
@@ -148,14 +168,24 @@ The **"Tierkit" Output channel** (View → Output → Tierkit) logs every auto-s
 
 # 한국어 사용법
 
-**Tierkit**은 Roo Code · Cline · Continue · aider 같은 **코딩 에이전트 뒤에 깔리는 정책·라우팅 레이어**예요. 에이전트를 대체하지 않고 그들의 모델 호출을 가로채서 통일된 정책 적용:
+**Tierkit**은 Claude Code · Roo · Cline · Continue · aider 같은 **AI 코딩 도구 뒤에 깔리는 비용 최적화 + 정책 레이어**예요. 도구를 대체하지 않고 그들의 모델 호출과 MCP 도구 호출을 가로채서 토큰을 줄이고 통일된 정책을 적용:
 
+- **토큰 절감 MCP 도구** — `compress_command`, `get_file_digest`, `get_diff_summary`, `get_error_digest`, `build_context_pack` 등. Claude Code가 큰 파일/diff/로그를 압축된 요약으로 읽도록 해서 입력 토큰을 줄임. 사이드바에 절감량 실시간 표시
 - **계층별 라우팅** (로컬 · 프라이빗 원격 · 퍼블릭 클라우드) 위험도+비용 자동 선택
 - **시크릿 자동 마스킹** (.env, API 키, PEM 패턴)
 - **위험 명령 차단** (`rm -rf /` 등)
 - **예산 + 워크플로 세션 게이트**
 - **Tierkit 플러그인의 룰** 자동으로 system prompt 주입
 - **Tool-call shim** — 약한 로컬 모델 (qwen2.5-coder:7b 등)도 OpenAI 구조화 도구 호출이 작동하도록 자동 XML/JSON 변환
+- **Tierkit Chat 내장** — `claude` CLI를 사이드바에서 직접 호출해 VS Code를 떠나지 않고 대화
+
+## 0.22 신기능
+
+- **0.22.3** — Savings 카드가 SSE로 push됨. MCP 도구 호출 후 ~500ms 내 자동 갱신 (수동 새로고침 불필요)
+- **0.22.2** — `/v1/usage` 엔드포인트가 activity 로그의 혼합 레코드를 처리하지 못해 크래시되던 버그 수정
+- **0.22.x** — `byClient` / `byModel` 절감 분해 (어떤 Claude 모델, 어떤 MCP 클라이언트가 절감을 만들었는지)
+
+전체 이력: [CHANGELOG.md](./CHANGELOG.md)
 
 ## 5분 사용법
 

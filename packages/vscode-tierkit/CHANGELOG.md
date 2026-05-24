@@ -1,5 +1,279 @@
 # Changelog
 
+## 0.22.3 — 2026-05-24
+
+**Push-based Savings card via Server-Sent Events.**
+
+The Savings card now updates within ~500 ms of any MCP compression tool call, instead of waiting up to 5 s for the next poll. Implemented as a new `GET /v1/tierkit/savings/stream` SSE endpoint, a `savingsBroadcaster` hub with subscriber set + 30 s heartbeat, and a webview-side `subscribeSavings()` reconnecter that handles daemon restarts with a 3 s backoff.
+
+- feat(core): `activityLog.setActivityListener` post-append hook (async-safe)
+- feat(core): `savingsBroadcaster` hub for SSE push
+- feat(core): `GET /v1/tierkit/savings/stream` SSE endpoint
+- feat(gui): subscribe to the stream; drop `refreshSavings` from the 5 s polling tuple
+- refactor(core): extract `resolveSavingsBaseline` + `renderSavings(summary)` helpers
+
+## 0.22.2 — 2026-05-24
+
+**Fix: GUI Usage breakdown crashed on mixed-shape `usage.jsonl` rows.**
+
+`readUsage` was throwing on MCP-tool entries that lack `timestamp`/`profileId` fields when the By-client / By-model panels tried to aggregate them. Those entries are intentional co-residents in the log (see `trimUsageLog` docstring); the reader now skips entries missing required LLM-call fields instead of crashing.
+
+- fix(core): `readUsage` drops mcp-tool entries that lack `timestamp`/`profileId`
+- test(core): two regression tests for mixed-shape usage.jsonl files
+
+## 0.22.1 — 2026-05-23
+
+**Savings card breakdown + full Korean i18n coverage.**
+
+The Savings card now shows per-client and per-model collapsible sections, attributed via a new `attributeModelFromJsonls` helper that scans Claude session files. `McpActivityInput.clientName` threads client identity from the MCP server through to the activity log so the breakdown can group by tool caller.
+
+- feat(core): `McpActivityInput.clientName` + `attributeModelFromJsonls`
+- feat(core): `tierkitSavings` `byClient` + `byModel` aggregation
+- feat(mcp-server): capture `clientInfo.name` into activity log
+- feat(ui): savings card collapsible byClient + byModel sections
+- feat(ui): clearer permission labels + inline denial hint
+- i18n(ui): Korean for Connect Claude Code buttons, Settings, Chat, and all JS-emitted toasts
+
+## 0.22.0 — 2026-05-23
+
+**Chat sessions sidebar + interactive AskUserQuestion form.**
+
+The Chat tab gains a hamburger (☰) dropdown anchored to the agent card with `+ New session`, `Clear thread`, and the session list. Selecting an entry replays the session into the thread via `loadChatSessionMessages`. Sessions are sourced from a new `GET /v1/claude-code/sessions[/:id]` HTTP endpoint backed by `listClaudeSessions` / `readClaudeSession` usecases. Separately, Anthropic's built-in `AskUserQuestion` tool now renders as an inline form (radio/checkbox/Other input) inside the chat bubble; submitting pipes the answer through `streamChat()` to resume the same Claude Code session.
+
+- feat(core): `listClaudeSessions` + `readClaudeSession` usecases
+- feat(http): `GET /v1/claude-code/sessions[/:id]` endpoints
+- feat(ui): chat-tab hamburger dropdown (+ New, Clear, session list)
+- feat(ui): interactive `AskUserQuestion` form with radio/checkbox/Other
+- fix(daemon): Ollama-discovery cache (positive + negative TTL) + in-flight probe coalescing
+- fix(core): migration `.tmp` files now use PID/timestamp suffix to prevent concurrent-write races
+
+## 0.17.0 — 2026-05-22
+
+**Telemetry completion + routing-based Savings card + GUI per-tool envelope rendering + Windows hardening.**
+
+### Track A — Telemetry completion
+
+Streaming `claude` calls (`/v1/openai/chat/completions` with `stream: true`) now write a `UsageRecord` to `usage.jsonl` on stream end. This was the root cause of `claudeCode` never appearing in the activity panel. Aborted streams write `ok: false, failureCode: "stream-aborted"`.
+
+The Savings card is rebuilt on top of the routing baseline: today's local-device calls × baseline-profile cost = "Cloud tokens saved" / "Estimated cost saved", polled every 5 s. Baseline is configurable via the optional `routingBaseline` key in `tierkit.config.json` (default `"claudeCode"`). `usage.jsonl` auto-trims at 10 MB → 5 MB in place.
+
+### Track B — GUI per-tool envelope rendering
+
+Raw JSON tool dumps replaced with per-tool views: line-numbered code blocks for `read_file`, icon-tree for `list_files`, highlighted-match snippets for `search_files`/`codebase_search`, terminal-style output for `run_command`. Generic failure card with 16-entry hint table. `[Copy cursor]` button on truncated results.
+
+### Track C — Windows hardening + cross-OS CI
+
+- `runChild()` `quoteForWindowsShell()` helper for paths with spaces
+- Junction-point fixture for workspace-boundary escape tests (Windows-only)
+- `tierkit doctor` warns when a subscription-CLI profile's `transport.command` contains spaces
+- GitHub Actions CI matrix: ubuntu, macOS, windows
+
+### Track D — Tidy
+
+- MCP server advertises `TIERKIT_VERSION` instead of literal `"0.15.0"`
+- `read_file` returns `stale-cursor` (not `not-found`) when the file behind a cursor was deleted
+
+## 0.16.0 — 2026-05-22
+
+**Tool Result Envelope + Windows unlock + subscription-CLI timeout policy.**
+
+**BREAKING for direct MCP/tool-result consumers:** Long-output tools now return a structured `tool-result-envelope.v1` JSON object instead of ad-hoc payloads. Agents must inspect `truncated` and `next.suggestedCall` to paginate past truncation. Affected: Agent `read_file`, `list_files`, `search_files`, `execute_command`; MCP `tierkit.read_file`, `tierkit.list_files`, `tierkit.codebase_search`, `tierkit.run_command`.
+
+Envelope adds `cursor`-based pagination for `read_file` and `list_files` (default 300 lines / 200 entries per page, hard-capped at 1000). `run_command` surfaces `warnings` and stream-prefixed size fields instead of a cursor. `search_files` warns on overly-broad patterns.
+
+**Windows:** subscription CLI + viability probe now resolve `.cmd` shims via `runChild()` helper (`shell: true` on win32). Caller env is propagated to child processes via `mergeEnv()`.
+
+**Timeout policy:** `claudeCode.timeoutMs` default bumped 180 000 → 300 000 ms (5 min) to cover Windows first-call auth latency. `tierkit doctor` surfaces a hint when recent `cli-timeout` entries appear in `usage.jsonl`.
+
+## 0.15.0 — 2026-05-21
+
+**Tierkit MCP Bridge — Claude Code and any MCP client can now use Tierkit tools natively.**
+
+New `@tierkit/mcp-server` package and `tierkit mcp serve --workspace <path>` CLI command. Claude Code / Claude Desktop configure it as a standard `mcpServers` stdio entry. Ships 7 gated tools:
+
+| Tool | Description |
+|---|---|
+| `tierkit.read_file` | Line-paginated read with path denylist + secret redaction |
+| `tierkit.list_files` | Workspace-bounded listing with ignore-source precedence |
+| `tierkit.codebase_search` | Keyword search with snippet redaction + denylist drop |
+| `tierkit.propose_patch` | Risk-scored ephemeral patch ticket (never mutates files) |
+| `tierkit.apply_patch` | Freshness + approval gated; sha256-verifies payload before writing |
+| `tierkit.run_command` | Sandbox + classifier + redaction + timeout |
+| `tierkit.get_policy_status` | Snapshot of workspace policy state |
+
+- Ephemeral patch ticket model: `propose_patch` writes a 24h TTL ticket; `apply_patch` accepts only `patchId` — raw write_file / raw-diff paths not exposed
+- `tierkit mcp patch {list,approve,reject}` CLI commands work without a running daemon
+- MCP activity log appended to `.tierkit/runtime/usage.jsonl` per tool call
+- GUI: "Connect Claude Code (MCP)" onboarding card + suggested `mcpServers` JSON snippet; "Pending MCP patches" card with approve/reject buttons
+- `GET /v1/mcp/config` returns suggested `mcpServers` JSON; `POST /v1/mcp/patches/:id/{approve,reject}` convenience endpoints
+
+## 0.14.2 — 2026-05-21
+
+**Fix: agent loop no longer hangs when `claudeCode` returns XML narrative.**
+
+When the active profile uses a subprocess transport, the `AgentLoop` now enters single-shot mode: it skips XML tool-call parsing, emits the raw text response with a `SINGLE_SHOT_FOOTER`, then completes on turn 1. A `cli-timeout` in single-shot mode surfaces as an explicit `subscription-cli-timeout` error with an actionable message — no silent fallback. `claudeCode.timeoutMs` default bumped 120 000 → 180 000 ms.
+
+- fix(agent): single-shot mode for subprocess providers; infinite-loop eliminated
+- fix(agent): CLI timeout surfaces as explicit error in single-shot mode
+- fix(ui): activity log shows model suffix in parentheses when it differs from profile id
+
+## 0.14.0 — 2026-05-21
+
+**Zero-CLI onboarding + native `claude` streaming.**
+
+The GUI's first-activation flow now shows an onboarding checklist card (dismissable after `seenOnboarding` is set) with an inline Quick check trace, a profile inline editor with chip UI for `roles`/`goodAt`/`notGoodAt`, a secrets card with masked display and add-custom form, and the chat tab opens by default until onboarding is dismissed.
+
+`ClaudeCodeProvider` gains a true `streamArgs()` path (`--output-format stream-json --verbose`) with `parseStreamLine()` handling both `assistant-message` and `content_block_delta` shapes. This removes the `⚠ stream-degraded` warning chip for `claude` users and eliminates the extra round-trip latency.
+
+- feat(http): `GET /v1/environment` endpoint (Ollama probe, claude CLI viability, envVars, taskTypes)
+- feat(core): `PATCH /v1/config/profile/:id` extended to patch `roles`/`goodAt`/`notGoodAt`
+- feat(providers): native stream-json parsing for `ClaudeCodeProvider`; NDJSON fallback for base-class
+
+Also includes 0.14.1 fix: onboarding Quick check now correctly reads the `/v1/route/explain` response shape (`candidates[]` with `selected: boolean`) introduced in 0.13.2.
+
+## 0.13.2 — 2026-05-21
+
+**Routing escalation hardening — local 7B models no longer win code-review and plan tasks.**
+
+Four related fixes stemming from a user-test incident where `claudeCode` never won the candidate chain for review-style requests:
+
+1. `inferCapabilities` — generic 7B–13B Ollama models (gemma, mistral 7b, llama3 8b, command-r) now declare `notGoodAt: [code-generation, refactor, code-review, plan]` and `goodAt: [summarize, translate]`.
+2. `migrateAddMissingRouterMetaFields` — on every config load, backfills missing `notGoodAt`/`goodAt`/`displayName` on workspace profiles that share provider+model with a bundled default. Existing v0.12 `tierkit.config.json` files upgrade automatically; user-set values are never overwritten.
+3. `claudeCode.kind` corrected to `public-cloud` (data flows to Anthropic's cloud). Adds `defaultMode: "review-only"`.
+4. `POST /v1/route/explain` HTTP endpoint mirrors the CLI `tierkit route explain` command. Returns `{ taskType, score, reasons, tier, ceiling, candidates[] }` with per-candidate viability so users can diagnose routing from the GUI without the CLI installed.
+
+## 0.13.1 — 2026-05-21
+
+**Fix: local 7B models no longer hijack code-review tasks.**
+
+`notGoodAt: [code-review, plan, refactor]` added to `localCoder` (qwen2.5-coder:7b); `RiskScorer.scoreRisk` now accepts an optional `taskType` and adds +20 for `code-review`, +15 for `plan`/`refactor`. For Roo's "review this project" style requests, the router now escalates to `claudeCode` (when available) or returns a clear empty-chain error instead of silently delivering a weak local-model review.
+
+## 0.13.0 — 2026-05-21
+
+**Subscription CLI Provider (Claude Code) — flat-rate before per-token.**
+
+**BREAKING:** Pinned profiles (`model: "claude-code"`, etc.) now fail loud with 4xx/502/504 + structured error body on viability failure — no silent fallback. `model: "auto"` keeps the full escalation chain. Upgrade the `tierkit.config.json` `pinned` flag or switch to `auto` if you relied on implicit fallback.
+
+The router ordering is now `free → flat-rate → per-token` within each tier. A bundled `claudeCode` profile is seeded as `defaultDisabled: true`; enable it via the GUI or `disabledProfileIds` config after verifying `claude` is on PATH.
+
+- feat(providers): `SubscriptionCliProvider` abstract base + `ClaudeCodeProvider` with permissive JSON parser
+- feat(viability): subprocess probe (`cli-not-found` / `cli-healthcheck-failed`)
+- feat(router): `paymentModel` as primary sort key within tier
+- feat(http): SSE stream degrade for subprocess providers (single-delta + `tierkit.warning` envelope field)
+- feat(gui): per-row viability badge, Test button with first-time confirm + result panel, BREAKING banner
+- feat(gui): `model-test` badge in Recent Activity; `≈` for estimated tokens; `⚠` for stream-degraded calls
+- feat(tooling): `pnpm bump <version>` syncs all package.json files; tsup hard-fails on core↔extension version mismatch
+
+## 0.12.3 — 2026-05-20
+
+**Fix: chronic Models UI bugs — toggle, delete, and duplicate profiles now work correctly.**
+
+Three parallel mechanisms expressing "profile is disabled" (`profile.enabled` field, `disabledProfileIds` array, `modelProfiles[id]: null` suppression) caused prior fixes to regress. v0.12.3 unifies state into a single source of truth.
+
+- New helper `isProfileDisabled(cfg, id)` — reads only `disabledProfileIds`; all callers updated
+- New helper `canonicalIdentity(profile)` — `(provider|baseUrl|model)` triple for dedup
+- `migrateLegacyEnabledField` — strips `enabled: false/true`, folds `false` into `disabledProfileIds` (runs on every `loadConfig`, idempotent, atomic)
+- `migrateCanonicalDuplicates` — writes `null` suppression for duplicate profiles sharing the same canonical identity
+- Ollama auto-discovery skips models already covered by an explicit config with the same canonical identity
+- `DELETE /v1/config/profile/:id` returns `400 cannot-delete-non-editable` for bundled/discovered profiles
+- GUI: Delete button hidden for bundled + discovered rows; `dedupeByCanonicalIdentity()` as defense-in-depth
+
+## 0.12.2 — 2026-05-20
+
+**UI Validation Flow — run the context-compression measurement loop from the sidebar.**
+
+A new "Current project — validation" card in the Cost Control sidebar makes the `build → compare → verdict` loop runnable with zero terminal. Sessions stay in-memory; verdicts persist to a sidecar `verdict.json` next to each `artifact.json` for later aggregation.
+
+Five new HTTP endpoints:
+
+| Endpoint | Description |
+|---|---|
+| `POST /v1/context/build` | Build a compressed context artifact |
+| `GET /v1/context/:id` | Read artifact + verdict |
+| `GET /v1/context/recent` | Last 20 artifacts sorted by date |
+| `POST /v1/context/:id/compare` | SSE stream — baseline vs compressed two-call compare |
+| `POST /v1/context/:id/verdict` | Save `same \| better \| worse \| unusable` verdict + notes |
+
+The compare SSE stream emits `phase`, `delta`, `side-result`, `compare-done`, and `error` events. A cost-confirmation modal requires explicit acknowledgment before the two paid calls fire. The verdict form is disabled until a quality rating is chosen and notes are under 2 000 characters.
+
+## 0.12.1 — 2026-05-19
+
+**Three small post-0.12.0 fixes; no feature changes.**
+
+- fix(ui): token bar now renders for `free`/`flat-rate` profiles that have `monthlyInputTokenLimit` set (was only shown for `per-token`)
+- fix(cli): `--version` flag now reads `TIERKIT_VERSION` from package barrel; future bumps propagate automatically
+- fix(core): Case A budget-exceeded message softened to "No eligible profile remained after per-profile budget policy checks."
+
+## 0.12.0 — 2026-05-19
+
+**Cost-aware routing v2 — payment model dimension + per-profile budget caps.**
+
+Adds a `paymentModel` dimension (`"free" | "flat-rate" | "per-token"`) to model profiles and enforces per-profile USD + input-token budget caps before each call. Per-profile gate runs first in the candidate chain; exhausted candidates fall back; exhausted global cap is a hard stop.
+
+- `PerProfileBudget`: `dailyUsdLimit?`, `monthlyUsdLimit?`, `dailyInputTokenLimit?`, `monthlyInputTokenLimit?` — keyed under `BudgetPolicy.perProfile`
+- `/v1/usage` gains additive `profiles` field (`today` + `month` per profile)
+- `tierkit usage --by-profile` table with Status column (OK / Warning / Near limit / Blocked)
+- `tierkit doctor` 3 new checks: free/flat-rate USD-limit warning, near-threshold, blocked
+- `tierkit route run` differentiates Case A (per-profile fallback exhausted) vs Case B (global cap)
+- GUI Cost routing card: per-profile budget bars (per-token only), flat-rate metadata row, aggregate spending row, all-capped banner
+
+## 0.11.1 — 2026-05-19
+
+**Repositioning: Tierkit reframed as a local-first cost optimizer.**
+
+Docs, copy, and UI information architecture updated to lead with cost reduction rather than plugin runtime. Zero runtime behavior change; all CLI commands, HTTP endpoints, and `tierkit.config.json` schema unchanged.
+
+- GUI sidebar groups renamed: Savings / Current project / Cost routing / Integrations / Advanced
+- CLI `--help` categories: Savings / Cost routing / Integrations / Diagnostics / Advanced
+- README leads with `tierkit context build` / `compare`
+- All package descriptions updated to cost-optimizer framing
+- VS Code marketplace listing (`package.nls.json`) updated
+
+## 0.11.0 — 2026-05-19
+
+**Context compression — 4 CLI commands for LLM-free workspace compression.**
+
+Deterministic (no LLM required) context compression pipeline. Extracts keywords, collects candidates via ripgrep, ranks by term hit score + path bonus + recency, builds a file skeleton (regex per language) + hotspot excerpts, writes a `prompt.md` + `artifact.json` to `.tierkit/runtime/context-artifacts/<id>/`.
+
+- `tierkit context build "<task>"` — build compressed prompt from workspace
+- `tierkit context show <id> [--json]` — inspect artifact summary or raw JSON
+- `tierkit context send <id> --profile <p>` — send compressed prompt through `runRoute`
+- `tierkit context compare <id> --profile <p> [--yes]` — two paid calls (baseline raw vs compressed), prints side-by-side savings table
+- `contextCompression` optional config section in `tierkit.config.json`
+- Auto-creates `.tierkit/.gitignore` with `*` on first artifact write
+
+## 0.10.1 — 2026-05-18
+
+**Per-profile ON/OFF toggle + persistent delete + Ollama re-discover button.**
+
+- Per-profile enable toggle: new `PATCH /v1/config/profile/:id` endpoint + `TierkitConfig.disabledProfileIds[]` field. `ModelRouter` filters `enabled: false` from the candidate chain.
+- Fix: deleted profiles no longer reappear after daemon restart. Auto-discovered Ollama profiles now respect `null` suppression markers in config.
+- Fix: `+ Add` form pre-fills the profile id field so Save doesn't silently fail when users treat the placeholder as the value.
+- Discover button: on-demand Ollama re-probe via new `POST /v1/models/discover` endpoint (busts the 30 s discovery cache).
+
+## 0.10.0 — 2026-05-18
+
+**Version unification across the monorepo. Includes all features shipped since 0.9.6.**
+
+Bumps the VS Code extension and all 9 npm packages from 0.9.x / 0.1.0 to a shared `0.10.0` baseline.
+
+### Phase 1 — Model management UI
+- Add/delete model profiles from the sidebar; paste API keys inline; Gemini preset (OpenAI-compatible endpoint)
+- `auto-ceiling` dropdown + `goodAt[]` input on the profile form
+
+### Phase 2 — Cross-tier auto-fallback + routing
+- Task classifier (English + Korean rule-based)
+- `ResponseQualityEvaluator` (empty / refusal / truncated / repetition detection)
+- `goodAt[]` field on `ModelProfile`; `autoEscalationCeiling`, `budgetAwareDowngrade`, `responseQualityCheck` config
+- Auto-resolver: classify → route → downgrade → viability; used by `executeLlmCall` for `model: "auto"`
+- `PATCH /v1/config/routing` — update auto-routing policy
+- `tierkit route explain` exposes `taskType` + escalation chain
+
+### Phase 3 — LLM-generated plugins
+- `POST /v1/plugins/generate` + `POST /v1/plugins/generate/install` endpoints
+- GUI "Describe & generate" flow: describe the plugin in natural language → preview manifest → install
+- `generatePlugin` usecase with one-retry on validation failure
+
 ## 0.9.6 — 2026-05-17
 
 **Fix: only one of the four superpowers samples actually installed after upgrading.**

@@ -1,5 +1,5 @@
 {
-  "description": "로컬 우선 하이브리드 모델 라우팅 툴킷. 확장 활성화 시 Tierkit 런타임이 자동으로 실행되며, 사이드바에서 작업 실행 · 세션 관리 · 명령어 검사 · 사용량 확인이 가능합니다.",
+  "description": "AI 코딩 CLI를 위한 로컬 우선 비용 최적화 도구. Tierkit 데몬을 실행하고 실시간 토큰 절감량, 압축 vs 베이스라인 품질, 비용 라우팅을 VS Code 사이드바에 표시합니다.",
   "viewContainer.title": "Tierkit",
   "view.dashboard.name": "대시보드",
   "configuration.title": "Tierkit",
