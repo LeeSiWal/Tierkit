@@ -22,6 +22,7 @@
  */
 import { readMcpActivity, type McpActivityEntry } from "../mcp/activityLog.js";
 import { attributeModelFromJsonls } from "./attributeModelFromJsonls.js";
+import type { TierkitConfig } from "../config/TierkitConfig.js";
 
 export interface ClientOrModelSummary {
   toolCallCount: number;
@@ -180,3 +181,52 @@ export async function computeTierkitMcpSavings(
 // Re-export for downstream consumers if they need it (kept for symmetry with
 // other runtime usage helpers).
 export type { McpActivityEntry };
+
+export interface ResolvedSavingsBaseline {
+  baselineId: string;
+  baseProfile: { provider?: string; cost?: { type: string; inputUsdPerMillion?: number } } | undefined;
+  inputUsdPerMillion: number | undefined;
+}
+
+/**
+ * Pick the model profile whose input $/M will be used to convert savedTokens
+ * into a dollar number for the Savings card. Same heuristic as the
+ * /v1/tierkit/savings/today route (v0.21.6): if the routing baseline is
+ * flat-rate or free, fall back to a priced profile of the same provider family
+ * (claude → claude-*, openai → openai-*) before falling back across families.
+ */
+export function resolveSavingsBaseline(config: TierkitConfig): ResolvedSavingsBaseline {
+  const profiles = config.modelProfiles ?? {};
+  const requestedId = config.routingBaseline ?? "claudeCode";
+  const claudeProviders = new Set(["anthropic", "claude-code"]);
+  const openaiProviders = new Set(["openai", "openai-compatible"]);
+  const requestedProv = profiles[requestedId]?.provider ?? "claude-code";
+  const requestedFam = claudeProviders.has(requestedProv) ? "claude"
+    : openaiProviders.has(requestedProv) ? "openai" : "other";
+  const famOf = (p: { provider?: string } | undefined): string => {
+    const prov = p?.provider ?? "";
+    if (claudeProviders.has(prov)) return "claude";
+    if (openaiProviders.has(prov)) return "openai";
+    return "other";
+  };
+  let baselineId = requestedId;
+  let baseProfile = profiles[baselineId];
+  if (!baseProfile?.cost || baseProfile.cost.type !== "per-token") {
+    const priced = Object.entries(profiles)
+      .filter(([, p]) => p?.cost?.type === "per-token");
+    priced.sort(([, a], [, b]) => {
+      const af = famOf(a) === requestedFam ? 0 : 1;
+      const bf = famOf(b) === requestedFam ? 0 : 1;
+      if (af !== bf) return af - bf;
+      const ac = (a.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
+      const bc = (b.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
+      return bc - ac;
+    });
+    const cand = priced[0];
+    if (cand) { baselineId = cand[0]; baseProfile = cand[1]; }
+  }
+  const inputUsdPerMillion = baseProfile?.cost?.type === "per-token"
+    ? (baseProfile.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion
+    : undefined;
+  return { baselineId, baseProfile, inputUsdPerMillion };
+}

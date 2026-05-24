@@ -30,7 +30,7 @@ import {
 import { chatWithClaude } from "../usecases/chatWithClaude.js";
 import { listClaudeSessions } from "../usecases/listClaudeSessions.js";
 import { readClaudeSession, ReadClaudeSessionError } from "../usecases/readClaudeSession.js";
-import { computeTierkitMcpSavings } from "./tierkitSavings.js";
+import { computeTierkitMcpSavings, resolveSavingsBaseline } from "./tierkitSavings.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -895,39 +895,7 @@ export function startServer(opts: ServerOptions): Promise<RunningServer> {
       // updates when the user chats with Claude through Tierkit Chat.
       if (route === "GET /v1/tierkit/savings/today") {
         const cfg = await loadConfig(opts.cwd);
-        const profiles = cfg.config.modelProfiles ?? {};
-        const requestedId = cfg.config.routingBaseline ?? "claudeCode";
-        const claudeProviders = new Set(["anthropic", "claude-code"]);
-        const openaiProviders = new Set(["openai", "openai-compatible"]);
-        const requestedProv = profiles[requestedId]?.provider ?? "claude-code";
-        const requestedFam = claudeProviders.has(requestedProv) ? "claude"
-          : openaiProviders.has(requestedProv) ? "openai" : "other";
-        const famOf = (p: { provider?: string } | undefined): string => {
-          const prov = p?.provider ?? "";
-          if (claudeProviders.has(prov)) return "claude";
-          if (openaiProviders.has(prov)) return "openai";
-          return "other";
-        };
-        // Same baseline-selection heuristic as /v1/savings/today.
-        let baselineId = requestedId;
-        let baseProfile = profiles[baselineId];
-        if (!baseProfile?.cost || baseProfile.cost.type !== "per-token") {
-          const priced = Object.entries(profiles)
-            .filter(([, p]) => p?.cost?.type === "per-token");
-          priced.sort(([, a], [, b]) => {
-            const af = famOf(a) === requestedFam ? 0 : 1;
-            const bf = famOf(b) === requestedFam ? 0 : 1;
-            if (af !== bf) return af - bf;
-            const ac = (a.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
-            const bc = (b.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion ?? 0;
-            return bc - ac;
-          });
-          const cand = priced[0];
-          if (cand) { baselineId = cand[0]; baseProfile = cand[1]; }
-        }
-        const inputUsdPerMillion = baseProfile?.cost?.type === "per-token"
-          ? (baseProfile.cost as { inputUsdPerMillion?: number }).inputUsdPerMillion
-          : undefined;
+        const { baselineId, baseProfile, inputUsdPerMillion } = resolveSavingsBaseline(cfg.config);
         const summary = await computeTierkitMcpSavings(
           opts.cwd,
           inputUsdPerMillion,
