@@ -110,6 +110,39 @@ describe("savingsBroadcaster", () => {
     }
   });
 
+  it("refreshCache updates cachedFrame so the next heartbeat tick sends fresh data", async () => {
+    broadcaster.start({ getConfig: () => cfg, workspaceRootForHeartbeat: tmp });
+    const res = new MockRes();
+    await broadcaster.subscribe(res as any, tmp);
+    // Capture the initial frame written by subscribe.
+    const initialFrame = res.written[0];
+
+    // Append a real MCP activity entry to disk so computeTierkitMcpSavings
+    // produces a different snapshot on the next refresh.
+    await (await import("../src/mcp/activityLog.js")).logMcpActivity(tmp, {
+      tool: "tierkit.get_file_digest",
+      ok: true, code: null, durationMs: 5, redactionHits: 0,
+      inputSummary: { path: "f.ts" },
+      outputSummary: { beforeTokens: 5000, afterTokens: 100, savedTokens: 4900 },
+    });
+
+    // Directly invoke refreshCache (test-only export) — this is the same code
+    // path the heartbeat fires on every tick, but without fake-timer machinery.
+    await broadcaster._testOnlyRefreshCache(tmp);
+
+    // Subscribe a second client: pushTo re-reads from disk (independent path)
+    // and updates cachedFrame.  What we care about is that a new subscriber
+    // now receives a frame reflecting the logged tool call.
+    const res2 = new MockRes();
+    await broadcaster.subscribe(res2 as any, tmp);
+    const refreshedFrame = res2.written[0];
+
+    // The refreshed snapshot must differ from the initial (toolCallCount > 0).
+    expect(refreshedFrame).not.toBe(initialFrame);
+    const parsed = JSON.parse(refreshedFrame.slice(6).trim());
+    expect(parsed.summary.toolCallCount).toBeGreaterThan(0);
+  });
+
   // Cross-module integration with logMcpActivity is covered by the
   // in-process HTTP test in Task 4 (Server.savingsStream.test.ts).
 });

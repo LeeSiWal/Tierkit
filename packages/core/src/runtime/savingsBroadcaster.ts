@@ -69,10 +69,11 @@ export async function subscribe(res: ServerResponse, workspaceRoot: string): Pro
  * Subscribers whose write throws are removed.
  */
 export async function broadcast(workspaceRoot: string): Promise<void> {
-  if (!opts) return;
+  const capturedOpts = opts;
+  if (!capturedOpts) return;
   let payload: string;
   try {
-    payload = await buildPayload(workspaceRoot);
+    payload = await buildPayload(capturedOpts, workspaceRoot);
   } catch (err) {
     console.error("[tierkit] savingsBroadcaster.broadcast: computeTierkitMcpSavings threw:", err);
     return;
@@ -108,19 +109,21 @@ function flushCachedFrame(): void {
 
 /** Rebuild the payload and update the cache asynchronously. */
 async function refreshCache(workspaceRoot: string): Promise<void> {
-  if (!opts) return;
+  const capturedOpts = opts;
+  if (!capturedOpts) return;
   try {
-    const payload = await buildPayload(workspaceRoot);
+    const payload = await buildPayload(capturedOpts, workspaceRoot);
     cachedFrame = `data: ${payload}\n\n`;
   } catch (err) {
-    console.error("[tierkit] savingsBroadcaster.refreshCache threw:", err);
+    console.error("[tierkit] savingsBroadcaster.refreshCache: computeTierkitMcpSavings threw:", err);
   }
 }
 
 async function pushTo(res: ServerResponse, workspaceRoot: string): Promise<void> {
-  if (!opts) return;
+  const capturedOpts = opts;
+  if (!capturedOpts) return;
   let payload: string;
-  try { payload = await buildPayload(workspaceRoot); }
+  try { payload = await buildPayload(capturedOpts, workspaceRoot); }
   catch (err) {
     console.error("[tierkit] savingsBroadcaster.pushTo: computeTierkitMcpSavings threw:", err);
     subscribers.delete(res);
@@ -132,13 +135,13 @@ async function pushTo(res: ServerResponse, workspaceRoot: string): Promise<void>
   catch { subscribers.delete(res); }
 }
 
-async function buildPayload(workspaceRoot: string): Promise<string> {
-  const cfg = opts!.getConfig();
+async function buildPayload(o: StartOptions, workspaceRoot: string): Promise<string> {
+  const cfg = o.getConfig();
   const { baselineId, baseProfile, inputUsdPerMillion } = resolveSavingsBaseline(cfg);
   const summary = await computeTierkitMcpSavings(
     workspaceRoot,
     inputUsdPerMillion,
-    opts!.homeDirOverride ? { homeDirOverride: opts!.homeDirOverride } : {},
+    o.homeDirOverride ? { homeDirOverride: o.homeDirOverride } : {},
   );
   return JSON.stringify({
     type: "savings-snapshot",
@@ -156,4 +159,10 @@ async function buildPayload(workspaceRoot: string): Promise<string> {
 // the subscriber set size from outside the module.
 export function _subscriberCount(): number {
   return subscribers.size;
+}
+
+// Test-only: directly invoke refreshCache so tests can verify it updates
+// cachedFrame without needing to advance fake timers across real fs I/O.
+export function _testOnlyRefreshCache(workspaceRoot: string): Promise<void> {
+  return refreshCache(workspaceRoot);
 }
