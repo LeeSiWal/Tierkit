@@ -35,7 +35,7 @@ export interface McpActivityEntry extends McpActivityInput {
 
 const LOG_REL = ".tierkit/runtime/usage.jsonl";
 
-type ActivityListener = (workspaceRoot: string) => void;
+type ActivityListener = (workspaceRoot: string) => void | Promise<void>;
 let activityListener: ActivityListener | null = null;
 
 /**
@@ -43,7 +43,10 @@ let activityListener: ActivityListener | null = null;
  * append. Used by the runtime's savingsBroadcaster to push SSE events on
  * every MCP tool call without activityLog (mcp/) importing runtime/.
  *
- * Pass null to clear.
+ * Pass null to clear. Only one listener is supported; a second call replaces
+ * the first. Both synchronous and async listeners are safe — the call site
+ * wraps in Promise.resolve().catch() so a rejected async listener becomes a
+ * console.error, not an unhandled rejection.
  */
 export function setActivityListener(fn: ActivityListener | null): void {
   activityListener = fn;
@@ -61,10 +64,14 @@ export async function logMcpActivity(workspaceRoot: string, input: McpActivityIn
   // Append-only. JSONL: one line per entry.
   await fs.appendFile(file, JSON.stringify(entry) + "\n");
   // Fire-and-forget. Listener exceptions must not propagate — broadcaster
-  // failure must not corrupt the MCP tool's response path.
-  if (activityListener) {
-    try { activityListener(workspaceRoot); }
-    catch (err) { console.error("[tierkit] activityListener threw:", err); }
+  // failure must not corrupt the MCP tool's response path. Wrap in
+  // Promise.resolve so async listeners' rejections are caught too instead
+  // of becoming unhandled rejections.
+  const listener = activityListener;
+  if (listener) {
+    Promise.resolve()
+      .then(() => listener(workspaceRoot))
+      .catch((err) => { console.error("[tierkit] activityListener threw:", err); });
   }
 }
 
