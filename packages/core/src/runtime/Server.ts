@@ -1946,9 +1946,12 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         port,
         close: () =>
           new Promise<void>((resolveClose, rejectClose) => {
-            savingsBroadcaster.stop();
-            setActivityListener(null);
             server.close((err) => {
+              // Stop the broadcaster and listener AFTER all in-flight requests
+              // have drained — otherwise a request handler in mid-await can
+              // re-add a subscriber to a just-cleared set, leaking it.
+              savingsBroadcaster.stop();
+              setActivityListener(null);
               // Also tear down any Ollama daemon WE auto-launched. If the user had Ollama
               // running before Tierkit started, this is a no-op — we only kill what we spawned.
               void shutdownSpawnedOllama();

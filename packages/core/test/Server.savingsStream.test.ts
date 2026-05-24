@@ -25,9 +25,6 @@ describe("/v1/tierkit/savings/stream", () => {
     cwd = await fs.mkdtemp(path.join(os.tmpdir(), "tierkit-sse-"));
     await fs.mkdir(path.join(cwd, ".tierkit", "runtime"), { recursive: true });
     await writeMinimalConfig(cwd);
-    // TIERKIT_NO_BUNDLED_DEFAULTS=1 mirrors what other tests in this suite do
-    // to avoid racing first-boot migrations.
-    process.env.TIERKIT_NO_BUNDLED_DEFAULTS = "1";
     running = await startServer({ port: 0, host: "127.0.0.1", cwd, homeDir: cwd });
     url = `http://${running.address}:${running.port}`;
   });
@@ -75,10 +72,14 @@ describe("/v1/tierkit/savings/stream", () => {
       outputSummary: { beforeTokens: 1000, afterTokens: 100, savedTokens: 900 },
     });
 
+    let timeoutId: NodeJS.Timeout | undefined;
     const second = await Promise.race([
       readOneEvent(),
-      new Promise<never>((_, rej) => setTimeout(() => rej(new Error("timeout waiting for second event")), 3000)),
+      new Promise<never>((_, rej) => {
+        timeoutId = setTimeout(() => rej(new Error("timeout waiting for second event")), 3000);
+      }),
     ]);
+    if (timeoutId) clearTimeout(timeoutId);
     expect(second.type).toBe("savings-snapshot");
 
     ac.abort();
