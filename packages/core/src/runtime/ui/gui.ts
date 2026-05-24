@@ -2956,6 +2956,31 @@ export const GUI_HTML = `<!doctype html>
     } catch { /* card stays at last-good state */ }
   }
 
+  // SSE subscription: replaces the 5s polling for the Savings card.
+  // transport.stream() proxies via the extension host so VS Code webview CSP
+  // doesn't block the loopback EventSource. The proxy yields one chunk per
+  // SSE data: line — payload.type === "savings-snapshot" carries the same
+  // shape as the /v1/tierkit/savings/today JSON response.
+  async function subscribeSavings() {
+    while (true) {
+      try {
+        for await (const chunk of transport.stream('/v1/tierkit/savings/stream', { method: 'GET' })) {
+          let payload;
+          try { payload = JSON.parse(chunk.data); }
+          catch { continue; }
+          if (payload && payload.type === 'savings-snapshot' && payload.summary) {
+            renderSavings(payload.summary);
+          }
+        }
+      } catch (err) {
+        // Connection broke — daemon restart, network blip, whatever. Wait a
+        // few seconds and reconnect. The first message after reconnect is a
+        // full snapshot, so we're guaranteed to catch up.
+        await new Promise((resolve) => setTimeout(resolve, 3000));
+      }
+    }
+  }
+
   // ── Card: Usage summary ────────────────────────────────────────────────────
   async function refreshUsage() {
     try {
@@ -7186,8 +7211,10 @@ export const GUI_HTML = `<!doctype html>
   setInterval(renderMcpPatches, 5000);
 
   refreshAll();
-  // Auto-refresh activity + usage every 5s — the user wants to see Roo's calls appear live.
-  setInterval(() => { refreshActivity(); refreshUsage(); refreshSavings(); refreshHealth(); }, 5_000);
+  void subscribeSavings();
+  // Auto-refresh activity + usage + health every 5s. Savings is handled by
+  // the SSE stream above and is intentionally absent here.
+  setInterval(() => { refreshActivity(); refreshUsage(); refreshHealth(); }, 5_000);
 })();
 </script>
 
