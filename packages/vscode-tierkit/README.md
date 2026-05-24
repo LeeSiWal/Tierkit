@@ -304,4 +304,6 @@ tierkit plugin enable my-team-rules
 
 ## License
 
-MIT
+MIT — Copyright (c) 2026 이제성 (Lee Je-sung / LeeSiWal). See [LICENSE](./LICENSE) for the full text.
+
+All bundled `samples/superpowers-*` plugins ship under the same MIT license.
