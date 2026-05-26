@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.25.1 — 2026-05-27
+
+### Gateway Sidebar Status
+
+- Gateway status refresh now times out and falls back to an explicit unavailable state instead of leaving the sidebar stuck on `Loading...`.
+- Sidebar now renders read-only Measured Compact Context status when the daemon reports `measuredCompact`.
+- No official token reduction number is displayed unless future request-level Anthropic Token Counting API measurement is actually implemented.
+
+### Gateway 사이드바 상태 표시
+
+- Gateway 상태 갱신이 응답을 받지 못하면 `Loading...`에 고착되지 않고 명시적인 unavailable 상태로 전환됩니다.
+- daemon이 `measuredCompact` 상태를 보고하면 사이드바가 read-only Measured Compact Context 상태를 표시합니다.
+- 실제 request-level Anthropic Token Counting API 측정 구현 전에는 공식 token reduction 숫자를 표시하지 않습니다.
+
 ## 0.25.0 — 2026-05-27
 
 ### MCP Compact Context Groundwork
