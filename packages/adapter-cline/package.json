@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/adapter-cline",
-  "version": "0.22.3",
+  "version": "0.22.4",
   "description": "Tierkit integration for Cline. Routes Cline's model calls through Tierkit's cost layer or exports policy as `.clinerules/`.",
   "license": "MIT",
   "type": "module",

@@ -46,7 +46,9 @@ export interface TierkitMcpSavingsSummary {
   /** Breakdown by tool name → call count. Useful so the user sees which
    *  digest tools Claude actually used. */
   byTool: Record<string, number>;
-  /** ISO start of the counting window (today, UTC midnight). */
+  /** ISO start of the counting window (today, local midnight). The instant is
+   *  serialized as a UTC ISO string for transport, but represents 00:00 in the
+   *  daemon's local timezone so KST users don't see the card reset at 09:00. */
   windowStart: string;
   /** v0.23: per-client breakdown (Claude Code, Codex, …). Older log entries
    *  without clientName bucket to "unknown". */
@@ -89,8 +91,12 @@ export async function computeTierkitMcpSavings(
   baselineInputUsdPerMillion?: number,
   options: ComputeOptions = {},
 ): Promise<TierkitMcpSavingsSummary> {
+  // Local-midnight, NOT UTC midnight. The daemon runs as a loopback process
+  // on the user's machine, so "today" should mean their day, not Greenwich's.
+  // Using setUTCHours caused KST users' savings to reset at 09:00 every day
+  // (when UTC rolled over) — see test/tierkitSavings.timezone.test.ts.
   const windowStart = new Date();
-  windowStart.setUTCHours(0, 0, 0, 0);
+  windowStart.setHours(0, 0, 0, 0);
   const startMs = windowStart.getTime();
 
   const entries = await readMcpActivity(workspaceRoot);

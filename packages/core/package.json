@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/core",
-  "version": "0.22.3",
+  "version": "0.22.4",
   "description": "Tierkit core — context compression, secret redaction, cost-aware model routing, quality comparison, plugin runtime. Tool- and CLI-framework-agnostic.",
   "license": "MIT",
   "type": "module",

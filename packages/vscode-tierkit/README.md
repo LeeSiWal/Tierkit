@@ -19,11 +19,32 @@ This extension is the VS Code companion. The daemon **auto-starts in-process** o
 
 ## What's new in 0.22
 
+- **0.22.4** — Savings "today" window respects the daemon's local timezone (was UTC midnight — KST users used to see the card reset at 09:00). Long profile/model IDs in the sidebar wrap correctly instead of overflowing. New "System requirements" section below.
 - **0.22.3** — Savings card pushes via Server-Sent Events. Sub-second updates after any MCP tool call; no more 5-second polling lag.
 - **0.22.2** — Fixed `/v1/usage` endpoint crash when the activity log mixed LlmCall + MCP-tool records.
 - **0.22.x** — `byClient` + `byModel` savings breakdown (see exactly which Claude model / which MCP client drove your savings).
 
 See [CHANGELOG.md](./CHANGELOG.md) for the full history.
+
+---
+
+## System requirements
+
+**Gateway only** (MCP compression, routing, plugin rules, Tierkit Chat via the `claude` CLI):
+
+- VS Code 1.84+ · Node 20.10+ (bundled) · macOS / Windows / Linux
+- 4 GB RAM · 200 MB disk
+- Outbound HTTPS only if you opt into a cloud provider profile (`claudeSonnet`, `gpt4o`, …)
+
+**With a local LLM via Ollama** (this is where the cost savings actually show):
+
+| Model | RAM | Disk | Comfortably runs on |
+|---|---|---|---|
+| `qwen2.5-coder:7b` | 8 GB+ | ~5 GB | Apple Silicon M1+, NVIDIA GPU with 8 GB+ VRAM, or any modern x86 with 16 GB RAM |
+| `qwen2.5-coder:14b` | 16 GB+ | ~9 GB | Apple Silicon M2 Pro / M3 Pro+, NVIDIA RTX 3080 / 4070+ |
+| `qwen3-coder:30b` | 32 GB+ | ~19 GB | Apple Silicon M2 Max / M3 Max+ (unified memory ≥ 32 GB), NVIDIA RTX 4090 / A100 |
+
+No GPU? The smaller models still run on CPU — expect 10–30 s per response. Cloud profiles work with zero local compute.
 
 ---
 
@@ -181,9 +202,28 @@ The **"Tierkit" Output channel** (View → Output → Tierkit) logs every auto-s
 
 ## 0.22 신기능
 
+- **0.22.4** — Savings "오늘" 윈도우가 PC의 로컬 타임존을 따름 (이전에는 UTC 자정 기준이라 KST 사용자는 매일 오전 9시에 카드가 0으로 리셋되는 버그). 긴 프로파일/모델 ID도 사이드바를 벗어나지 않고 줄바꿈됨. 아래 "추천 사양" 섹션 추가.
 - **0.22.3** — Savings 카드가 SSE로 push됨. MCP 도구 호출 후 ~500ms 내 자동 갱신 (수동 새로고침 불필요)
 - **0.22.2** — `/v1/usage` 엔드포인트가 activity 로그의 혼합 레코드를 처리하지 못해 크래시되던 버그 수정
 - **0.22.x** — `byClient` / `byModel` 절감 분해 (어떤 Claude 모델, 어떤 MCP 클라이언트가 절감을 만들었는지)
+
+## 추천 사양
+
+**게이트웨이 전용** (MCP 압축 · 라우팅 · 플러그인 룰 · `claude` CLI 프록시):
+
+- VS Code 1.84+ · Node 20.10+ (확장에 번들) · macOS / Windows / Linux
+- RAM 4 GB · 디스크 200 MB
+- 인터넷은 클라우드 프로파일 사용할 때만 (`claudeSonnet`, `gpt4o` 등)
+
+**로컬 LLM (Ollama)까지** — 비용 절감 효과가 본격적으로 보이는 구성:
+
+| 모델 | RAM | 디스크 | 무난한 환경 |
+|---|---|---|---|
+| `qwen2.5-coder:7b` | 8 GB 이상 | ~5 GB | Apple Silicon M1+, NVIDIA GPU 8 GB+ VRAM, x86 16 GB+ |
+| `qwen2.5-coder:14b` | 16 GB 이상 | ~9 GB | Apple Silicon M2 Pro / M3 Pro+, NVIDIA RTX 3080 / 4070+ |
+| `qwen3-coder:30b` | 32 GB 이상 | ~19 GB | Apple Silicon M2 Max / M3 Max+ (통합 메모리 32 GB+), NVIDIA RTX 4090 / A100 |
+
+GPU 없어도 작은 모델은 CPU로 돌아감 — 응답에 10~30초 걸린다고 보면 됨. 클라우드 프로파일은 로컬 자원 0으로 동작.
 
 전체 이력: [CHANGELOG.md](./CHANGELOG.md)
 

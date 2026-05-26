@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.4 — 2026-05-26
+
+**Savings "today" window now uses local midnight + sidebar overflow fix + recommended-spec docs.**
+
+The Savings card was computing "today" with `setUTCHours(0,0,0,0)`, which meant KST users saw the card reset every day at 09:00 local time (when UTC rolled over). Activity made earlier in the local day but after UTC midnight was excluded from the window. Fixed by switching to `setHours(0,0,0,0)` — the daemon runs as a loopback process on the user's machine, so "today" should mean their local day.
+
+- fix(core): `computeTierkitMcpSavings` window aligns to local midnight, not UTC midnight
+- test(core): new `tierkitSavings.timezone.test.ts` covers KST scenario (forces `TZ=Asia/Seoul`)
+- fix(gui): long profile / model IDs (e.g. `ollama-qooba-qwen3-coder-30b-a3b-instruct-q3-k-m`) no longer push the per-profile cost row past the sidebar edge; ID wraps on character boundaries, cost stays glued via nested `white-space:nowrap`
+- fix(gui): same overflow fix applied to the byClient / byModel breakdown rows
+- docs(vscode): new "System requirements" section in README with gateway-only vs local-LLM tiers (qwen2.5-coder 7b / 14b / qwen3-coder 30b)
+
 ## 0.22.3 — 2026-05-24
 
 **Push-based Savings card via Server-Sent Events.**

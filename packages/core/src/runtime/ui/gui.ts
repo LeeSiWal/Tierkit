@@ -2928,11 +2928,18 @@ export const GUI_HTML = `<!doctype html>
       let html = '';
       for (const [key, v] of rows) {
         const usd = typeof v.estimatedSavedUsd === 'number' ? ' · $' + v.estimatedSavedUsd.toFixed(4) : '';
-        html += '<div class="row dense" style="font-size:11px"><span style="flex:1;min-width:0">' +
-          escapeHtmlMd(prettyFn(key)) + '</span>' +
-          '<span class="mono dim" style="font-size:10.5px">' + fmtTok(v.savedTokens) + ' tok · ' +
-          v.toolCallCount + ' ' + (lang === 'ko' ? '호출' : 'calls') + usd +
-          '</span></div>';
+        const keyLabel = escapeHtmlMd(prettyFn(key));
+        // overflow-wrap:anywhere on the key cell lets long model/client IDs
+        // wrap on character boundaries instead of pushing the row past the
+        // sidebar edge. The stats cell stays nowrap so "12.3k tok · 4 calls"
+        // never splits across lines.
+        html += '<div class="row dense" style="font-size:11px;align-items:flex-start;gap:8px">' +
+          '<span title="' + keyLabel + '" style="flex:1;min-width:0;overflow-wrap:anywhere">' +
+            keyLabel + '</span>' +
+          '<span class="mono dim" style="font-size:10.5px;white-space:nowrap;flex-shrink:0">' +
+            fmtTok(v.savedTokens) + ' tok · ' + v.toolCallCount + ' ' + (lang === 'ko' ? '호출' : 'calls') + usd +
+          '</span>' +
+          '</div>';
       }
       host.innerHTML = html;
     }
@@ -2994,13 +3001,14 @@ export const GUI_HTML = `<!doctype html>
       if (entries.length === 0) {
         byp.innerHTML = '';
       } else {
-        // Render inline as wrapping pills. white-space:nowrap on each item keeps the
-        // "id $0.025" atom intact, but display:inline-block + the parent's flex-wrap
-        // (usage-hero) means rows of pills wrap cleanly in a narrow sidebar.
+        // Render inline as wrapping pills. Long profile IDs (e.g. ollama-qooba-
+        // qwen3-coder-30b-a3b-instruct-q3-k-m) can exceed the sidebar width, so
+        // overflow-wrap:anywhere lets the ID break on character boundaries while
+        // the "$0.025" cost stays glued to its label via a nested nowrap span.
         byp.innerHTML = entries
           .map(([id, v]) =>
-            '<span class="mono" style="color:var(--accent);margin-right:10px;display:inline-block;white-space:nowrap">' +
-              escapeHtml(id) + ' <span class="dim">' + fmtCost(v.costUsd) + '</span>' +
+            '<span class="mono" style="color:var(--accent);margin-right:10px;display:inline-block;max-width:100%;overflow-wrap:anywhere" title="' + escapeHtml(id) + '">' +
+              escapeHtml(id) + ' <span class="dim" style="white-space:nowrap">' + fmtCost(v.costUsd) + '</span>' +
             '</span>',
           )
           .join('');
