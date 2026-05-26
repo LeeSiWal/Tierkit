@@ -28,6 +28,9 @@ import { ClineAdapter } from "@tierkit/adapter-cline";
 import { ContinueAdapter } from "@tierkit/adapter-continue";
 // v0.19 disabled: import { createAgentRouteExtension } from "@tierkit/agent";
 import { createMessageRouter } from "./messageRouter.js";
+import { isAllowedWebviewCommand } from "./webviewCommandAllowlist.js";
+import { readGatewayModeFromConfig, withGatewayMode } from "./gatewayModeConfig.js";
+import { controlBaseUrlFromConfiguredBaseUrl } from "./gatewayControlUrl.js";
 
 let statusItem: vscode.StatusBarItem | undefined;
 let serverHandle: RunningServer | undefined;
@@ -293,6 +296,11 @@ function openTierkitPanel(context: vscode.ExtensionContext): void {
     // v0.21.10: re-opening the panel from within the panel just re-focuses it.
     if (msg.type === "tk:open-panel") {
       try { mainPanel?.reveal(vscode.ViewColumn.Active); } catch { /* */ }
+      return;
+    }
+    // Phase 1: webview-dispatched VS Code commands (allowlisted).
+    if (msg.type === "tk:cmd" && isAllowedWebviewCommand(msg.command)) {
+      void vscode.commands.executeCommand(msg.command);
       return;
     }
     if (msg.type.startsWith("tk:")) {
@@ -595,6 +603,11 @@ class TierkitSidebarProvider implements vscode.WebviewViewProvider {
       // v0.21.10: webview-triggered "open in main editor" command.
       if (msg.type === "tk:open-panel") {
         void vscode.commands.executeCommand("tierkit.openInPanel");
+        return;
+      }
+      // Phase 1: webview-dispatched VS Code commands (allowlisted).
+      if (msg.type === "tk:cmd" && isAllowedWebviewCommand(msg.command)) {
+        void vscode.commands.executeCommand(msg.command);
         return;
       }
       if (msg.type.startsWith("tk:")) {
@@ -1046,6 +1059,191 @@ export function activate(context: vscode.ExtensionContext): void {
         vscode.l10n.t("Tierkit: added profile {0} ({1})", r.id, r.scope),
       );
       sidebarRef?.render();
+    }),
+
+    // Phase 1: toggle gateway mode — discriminated reachability, no-fallback-after-PATCH.
+    vscode.commands.registerCommand("tierkit.toggleGatewayMode", async () => {
+      const workspace = vscode.workspace.workspaceFolders?.[0];
+      if (!workspace) {
+        void vscode.window.showWarningMessage(vscode.l10n.t("Open a folder first."));
+        return;
+      }
+      const configuredBaseUrl =
+        vscode.workspace.getConfiguration("tierkit").get<string>("baseUrl") ?? "http://127.0.0.1:4101";
+      const controlBaseUrl = controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl);
+      const cfgPath = path.join(workspace.uri.fsPath, "tierkit.config.json");
+
+      // Discriminated reachability — corrections 30 & 23.
+      type Reach =
+        | { kind: "reachable"; gatewayMode: "off" | "on" }
+        | { kind: "transport-failure" }
+        | { kind: "rejected"; status: number; detail: string };
+
+      const probeDaemon = async (): Promise<Reach> => {
+        let res: Response;
+        try {
+          res = await fetch(`${controlBaseUrl}/v1/gateway/status`);
+        } catch {
+          return { kind: "transport-failure" };
+        }
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          return { kind: "rejected", status: res.status, detail };
+        }
+        let body: { gatewayMode?: unknown };
+        try { body = (await res.json()) as { gatewayMode?: unknown }; }
+        catch (err) { return { kind: "rejected", status: res.status, detail: (err as Error).message }; }
+        if (body.gatewayMode !== "on" && body.gatewayMode !== "off") {
+          return { kind: "rejected", status: res.status, detail: "Gateway status response contained an invalid gatewayMode." };
+        }
+        return { kind: "reachable", gatewayMode: body.gatewayMode };
+      };
+
+      const reach = await probeDaemon();
+
+      if (reach.kind === "rejected") {
+        void vscode.window.showErrorMessage(
+          vscode.l10n.t("Tierkit daemon rejected the gateway status request.") +
+            (reach.detail ? ` ${reach.detail}` : ""),
+        );
+        return;
+      }
+
+      if (reach.kind === "transport-failure") {
+        // Pre-mutation transport failure → offline file fallback is allowed (correction 23).
+        let cfg: Record<string, unknown>;
+        try {
+          cfg = JSON.parse(await fs.readFile(cfgPath, "utf8")) as Record<string, unknown>;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            cfg = { version: "0.1" };
+          } else {
+            void vscode.window.showErrorMessage(`tierkit.config.json: ${(err as Error).message}`);
+            return;
+          }
+        }
+        let current: "off" | "on";
+        try {
+          current = readGatewayModeFromConfig(cfg);
+        } catch {
+          void vscode.window.showErrorMessage(
+            vscode.l10n.t("tierkit.config.json runtime.gatewayMode has an invalid value. Fix it manually and re-toggle."),
+          );
+          return;
+        }
+        const next: "off" | "on" = current === "on" ? "off" : "on";
+        const updated = withGatewayMode(cfg, next);
+        const tmp = `${cfgPath}.tmp-${process.pid}-${Date.now()}`;
+        await fs.writeFile(tmp, JSON.stringify(updated, null, 2) + "\n");
+        await fs.rename(tmp, cfgPath);
+        void vscode.commands.executeCommand("tierkit.restartDaemon");
+        void vscode.window.showInformationMessage(
+          next === "on"
+            ? vscode.l10n.t("Gateway: on (offline file fallback applied; daemon will pick this up on restart).")
+            : vscode.l10n.t("Gateway: off (offline file fallback applied)."),
+        );
+        sidebarRef?.render();
+        return;
+      }
+
+      // reach.kind === "reachable" — daemon owns the write from here on.
+      const next: "off" | "on" = reach.gatewayMode === "on" ? "off" : "on";
+
+      let patchRes: Response;
+      try {
+        patchRes = await fetch(`${controlBaseUrl}/v1/config/runtime`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gatewayMode: next }),
+        });
+      } catch {
+        // correction 31: PATCH attempted, response lost. Daemon may have already
+        // committed. NEVER auto-fallback — show indeterminate-state error.
+        void vscode.window.showErrorMessage(
+          vscode.l10n.t("The gateway update request did not complete cleanly. Check the current status (sidebar) before trying again."),
+        );
+        sidebarRef?.render();
+        return;
+      }
+
+      if (!patchRes.ok) {
+        const detail = await patchRes.text().catch(() => "");
+        void vscode.window.showErrorMessage(
+          vscode.l10n.t("Tierkit daemon rejected the gateway mode update.") +
+            (detail ? ` ${detail}` : ""),
+        );
+        return;
+      }
+
+      void vscode.window.showInformationMessage(
+        next === "on"
+          ? vscode.l10n.t("Gateway: on. Use 'Launch Claude Code through Tierkit' to start a routed session.")
+          : vscode.l10n.t("Gateway: off."),
+      );
+      sidebarRef?.render();
+    }),
+
+    // Task 9: launch Claude Code with the Tierkit gateway.
+    vscode.commands.registerCommand("tierkit.launchClaudeCodeWithGateway", async () => {
+      const cfg = vscode.workspace.getConfiguration("tierkit");
+      const configuredBaseUrl = cfg.get<string>("baseUrl") ?? "http://127.0.0.1:4101";
+      const { classifyReadiness, gatewayLaunchCommand } = await import("./gatewayLaunchCore.js");
+      const { openGatewayTerminal } = await import("./gatewayTerminal.js");
+      const controlBaseUrl = controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl);
+
+      const readReadiness = async () => {
+        try {
+          const r = await fetch(`${controlBaseUrl}/v1/gateway/status`);
+          if (!r.ok) return classifyReadiness(null);
+          return classifyReadiness((await r.json()) as { gatewayMode?: "off" | "on"; routesEnabled?: boolean });
+        } catch {
+          return classifyReadiness(null);
+        }
+      };
+
+      let state = await readReadiness();
+
+      if (state.kind === "mode-off") {
+        void vscode.window.showInformationMessage(
+          vscode.l10n.t('Enable "Route Claude Code through Tierkit" before launching a routed session.'),
+        );
+        return;
+      }
+
+      if (state.kind === "unreachable") {
+        void vscode.window.setStatusBarMessage(vscode.l10n.t("Tierkit Gateway: starting daemon…"), 3000);
+        await vscode.commands.executeCommand("tierkit.restartDaemon");
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline && state.kind !== "ready") {
+          await new Promise((r) => setTimeout(r, 300));
+          state = await readReadiness();
+          if (state.kind === "mode-off") {
+            void vscode.window.showInformationMessage(
+              vscode.l10n.t('Enable "Route Claude Code through Tierkit" before launching a routed session.'),
+            );
+            return;
+          }
+        }
+      }
+
+      if (state.kind !== "ready") {
+        const directLabel = vscode.l10n.t("Launch direct");
+        const pick = await vscode.window.showWarningMessage(
+          vscode.l10n.t("Tierkit Gateway unreachable. Launch Claude Code directly (no gateway)?"),
+          { modal: false }, directLabel, vscode.l10n.t("Cancel"),
+        );
+        if (pick === directLabel) {
+          const t = vscode.window.createTerminal({
+            name: "Claude Code (direct)",
+            env: { ANTHROPIC_BASE_URL: undefined as unknown as string },
+          });
+          t.show();
+          t.sendText(gatewayLaunchCommand(process.env), true);
+        }
+        return;
+      }
+
+      await openGatewayTerminal(controlBaseUrl);
     }),
   );
 }

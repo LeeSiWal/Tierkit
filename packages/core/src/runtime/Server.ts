@@ -7,7 +7,11 @@ import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
 import { compareCompressedContext } from "../usecases/compareCompressedContext.js";
 import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
 import { readVerdict, writeVerdict, VerdictStoreError } from "./verdictStore.js";
-import { forwardMessages, streamMessages, forwardCountTokens } from "./anthropicGateway.js";
+import { forwardMessages, streamMessages, forwardCountTokens, observeAuthHeaders } from "./anthropicGateway.js";
+import { appendGatewayLog, gatewayLogPath } from "./gatewayLog.js";
+import { isLoopbackRemoteAddress } from "./loopback.js";
+import { resolveRuntimeDataDir } from "./runtimePaths.js";
+import { buildGatewayStatus } from "./gatewayStatus.js";
 import {
   buildContextPack,
   clearFileDigestCache,
@@ -35,6 +39,7 @@ import { computeTierkitMcpSavings, resolveSavingsBaseline } from "./tierkitSavin
 import * as savingsBroadcaster from "./savingsBroadcaster.js";
 import { setActivityListener } from "../mcp/activityLog.js";
 import type { TierkitConfig } from "../config/TierkitConfig.js";
+import { TierkitConfigSchema } from "../config/TierkitConfig.js";
 import { checkCommand } from "../usecases/checkCommand.js";
 import { checkPath } from "../usecases/checkPath.js";
 import { redactSecrets } from "../security/SecretRedactor.js";
@@ -1792,47 +1797,158 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         return;
       }
 
-      // Anthropic Gateway Phase 0 spike (branch only — not shipped to users yet):
+      if (route === "GET /v1/gateway/status") {
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
+        const cfg = await loadConfig(opts.cwd);
+        return sendJson(res, 200, buildGatewayStatus({
+          gatewayMode: cfg.config.runtime.gatewayMode,
+          resolvedDataDir: resolveRuntimeDataDir(cfg.config.runtime.dataDir, opts.cwd),
+        }));
+      }
+
+      if (route === "GET /v1/doctor/gateway") {
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
+        const { doctorGateway } = await import("../usecases/doctorGateway.js");
+        return sendJson(res, 200, { checks: await doctorGateway({ cwd: opts.cwd }) });
+      }
+
+      if (route === "PATCH /v1/config/runtime") {
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
+
+        const body = await readJsonBody<{ gatewayMode?: "off" | "on" }>(req);
+        const incoming = body ?? {};
+        const allowedKeys = new Set(["gatewayMode"]);
+        for (const k of Object.keys(incoming)) {
+          if (!allowedKeys.has(k)) return sendJson(res, 400, { error: "unknown_field", field: k });
+        }
+        if (incoming.gatewayMode !== "off" && incoming.gatewayMode !== "on") {
+          return sendJson(res, 400, { error: "invalid_gatewayMode" });
+        }
+
+        const cfgPath = path.join(opts.cwd, "tierkit.config.json");
+        let current: Record<string, unknown> = { version: "0.1" };
+        try {
+          current = JSON.parse(await fs.readFile(cfgPath, "utf8")) as Record<string, unknown>;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+        }
+        const runtime = (current.runtime as Record<string, unknown> | undefined) ?? {};
+
+        let nextConfig: ReturnType<typeof TierkitConfigSchema.parse>;
+        try {
+          nextConfig = TierkitConfigSchema.parse({
+            ...current,
+            runtime: { ...runtime, gatewayMode: incoming.gatewayMode },
+          });
+        } catch (err) {
+          return sendJson(res, 400, { error: "invalid_resulting_config", detail: (err as Error).message });
+        }
+
+        const tmp = `${cfgPath}.tmp-${process.pid}-${Date.now()}`;
+        await fs.writeFile(tmp, JSON.stringify(nextConfig, null, 2) + "\n");
+        await fs.rename(tmp, cfgPath);
+        return sendJson(res, 200, { runtime: { gatewayMode: nextConfig.runtime.gatewayMode } });
+      }
+
+      // Anthropic Gateway Phase 1: gated on gatewayMode === "on".
       // Transparent passthrough so Claude Code can be pointed at Tierkit via
-      // ANTHROPIC_BASE_URL=http://127.0.0.1:4101. No compression, no redaction,
-      // no UI, no auto-wire — those land in Phase 1+ after the spike's RFC
-      // answers the three open validation questions. See
-      // docs/RFC-anthropic-gateway.md.
+      // ANTHROPIC_BASE_URL=http://127.0.0.1:4101. Logs every request to the
+      // safe gateway log (no raw tokens). See docs/RFC-anthropic-gateway.md.
       if (route === "POST /v1/messages") {
+        const cfg = await loadConfig(opts.cwd);
+        if (cfg.config.runtime.gatewayMode !== "on") return sendJson(res, 404, { error: "not_found" });
+
+        const startedAt = Date.now();
+        const auth = observeAuthHeaders(req.headers);
         const body = await readRawBody(req);
         const wantsStream = isStreamingMessagesBody(body);
+        const logPath = gatewayLogPath(resolveRuntimeDataDir(cfg.config.runtime.dataDir, opts.cwd));
+
+        const logFinal = async (status: number): Promise<void> => {
+          try {
+            await appendGatewayLog(logPath, {
+              ts: new Date(startedAt).toISOString(),
+              path: "/v1/messages",
+              stream: wantsStream,
+              status,
+              durationMs: Date.now() - startedAt,
+              auth: {
+                authorizationScheme: normalizeAuthorizationScheme(auth.authorizationScheme),
+                authorizationFingerprint: auth.authorizationFingerprint,
+                apiKeyPresent: auth.hasApiKey,
+                apiKeyFingerprint: auth.apiKeyFingerprint,
+              },
+            });
+          } catch (err) {
+            console.error("[anthropic-gateway] log write failed:", (err as Error).message);
+          }
+        };
+
         try {
           if (wantsStream) {
             await streamMessages(req, body, res);
+            await logFinal(res.statusCode);
             return;
           }
           const r = await forwardMessages(req, body);
+          await logFinal(r.status);
           for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
           res.statusCode = r.status;
           res.end(r.body);
           return;
         } catch (err) {
-          // If we already started streaming (headers or chunks sent), we cannot
-          // pivot to a JSON 502 — the client would see a mixed-protocol response.
-          // Destroy the socket instead; Claude Code surfaces this as a network
-          // error, which is the honest signal.
+          // correction 32: if the stream has already sent headers, the client has
+          // observed res.statusCode (usually 200). Logging 502 would diverge from
+          // what actually happened on the wire. Record the observed status and
+          // destroy the stream. Before headers, return + log 502.
           if (res.headersSent) {
+            await logFinal(res.statusCode);
             res.destroy(err as Error);
             return;
           }
+          await logFinal(502);
           return sendJson(res, 502, { type: "error", error: { type: "upstream_error", message: (err as Error).message } });
         }
       }
 
       if (route === "POST /v1/messages/count_tokens") {
+        const cfg = await loadConfig(opts.cwd);
+        if (cfg.config.runtime.gatewayMode !== "on") return sendJson(res, 404, { error: "not_found" });
+
+        const startedAt = Date.now();
+        const auth = observeAuthHeaders(req.headers);
         const body = await readRawBody(req);
+        const logPath = gatewayLogPath(resolveRuntimeDataDir(cfg.config.runtime.dataDir, opts.cwd));
+
+        const logFinal = async (status: number): Promise<void> => {
+          try {
+            await appendGatewayLog(logPath, {
+              ts: new Date(startedAt).toISOString(),
+              path: "/v1/messages/count_tokens",
+              stream: false,
+              status,
+              durationMs: Date.now() - startedAt,
+              auth: {
+                authorizationScheme: normalizeAuthorizationScheme(auth.authorizationScheme),
+                authorizationFingerprint: auth.authorizationFingerprint,
+                apiKeyPresent: auth.hasApiKey,
+                apiKeyFingerprint: auth.apiKeyFingerprint,
+              },
+            });
+          } catch (err) {
+            console.error("[anthropic-gateway] log write failed:", (err as Error).message);
+          }
+        };
+
         try {
           const r = await forwardCountTokens(req, body);
+          await logFinal(r.status);
           for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
           res.statusCode = r.status;
           res.end(r.body);
           return;
         } catch (err) {
+          await logFinal(502);
           return sendJson(res, 502, { type: "error", error: { type: "upstream_error", message: (err as Error).message } });
         }
       }
@@ -2036,6 +2152,11 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       });
     });
   });
+}
+
+function normalizeAuthorizationScheme(raw: string | null): "Bearer" | "Other" | null {
+  if (raw === null) return null;
+  return raw === "Bearer" ? "Bearer" : "Other";
 }
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {

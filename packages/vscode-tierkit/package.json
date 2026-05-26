@@ -112,6 +112,15 @@
       {
         "command": "tierkit.addModelProfile",
         "title": "%commands.addModelProfile%"
+      },
+      {
+        "command": "tierkit.toggleGatewayMode",
+        "title": "%commands.toggleGatewayMode%"
+      },
+      {
+        "command": "tierkit.launchClaudeCodeWithGateway",
+        "title": "%command.launchClaudeCodeWithGateway%",
+        "category": "Tierkit"
       }
     ],
     "configuration": {

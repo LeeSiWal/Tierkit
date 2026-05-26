@@ -103,6 +103,25 @@ Not in this RFC's scope, but recorded for planning:
 - Anthropic API surface beyond `/v1/messages` and `/v1/messages/count_tokens` (e.g. `/v1/models` discovery — gated by `CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1`, default off)
 - OAuth admin endpoints (`/api/oauth/*`, `/v1/sessions/*`) — hardcoded to api.anthropic.com by Claude Code, not affected by `ANTHROPIC_BASE_URL`
 
+## Phase 2 entry gate (added during Phase 1)
+
+Phase 2 work (request/response transformation, including any context-handling
+or measurement features) MUST NOT begin until:
+
+1. Phase 1 has dogfood for ≥ 1 week with `tierkit doctor gateway` reporting
+   ok across all checks on a real workstation.
+2. The per-request safe log shows zero 5xx in the trailing 7 days:
+   `jq 'select(.status >= 500)' .tierkit/runtime/anthropic-gateway.jsonl | wc -l == 0`.
+3. The Direct fallback flow has been triggered at least once and resolved cleanly.
+
+Phase 2 design constraints inherited from Phase 1:
+- Body transformation hooks land inside `forwardMessages` / `streamMessages`
+  in `anthropicGateway.ts`. Phase 1's `Server.ts` route plumbing does not change.
+- Strengthening the streaming-completion logging contract requires changes to
+  `anthropicGateway.ts`; Phase 2 candidate.
+- The safe log `authorizationScheme` enum stays `["Bearer", "Other"]` unless
+  Phase 2 deliberately extends it (and updates the redaction tests).
+
 ## References
 
 - Plan: `docs/superpowers/plans/2026-05-26-anthropic-gateway-spike.md`

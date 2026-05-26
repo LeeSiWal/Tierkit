@@ -1,0 +1,475 @@
+# Anthropic Gateway — Architecture (Phase 1)
+
+This document captures the engineering view of the Phase 1 implementation. It
+complements `RFC-anthropic-gateway.md` (validation history + Phase 2 entry
+gate) and `ANTHROPIC_GATEWAY.md` (end-user how-to).
+
+## Purpose
+
+Phase 1 productizes the Phase 0 passthrough as a safe, local-first connection
+feature in Tierkit. The goal is **not** body transformation or efficiency
+claims — those are deferred to Phase 2. Phase 1 ships:
+
+- a config flag (`runtime.gatewayMode`)
+- a sidebar toggle to flip it
+- a scoped integrated-terminal launcher
+- loopback-only control endpoints
+- a value-constrained safe per-request log
+- a diagnostic CLI + sidebar card
+- explicit Direct fallback when the gateway is unreachable
+
+## Architectural principles
+
+These are the invariants the implementation enforces. Every Phase 2 change
+must preserve them unless deliberately broken by a new RFC.
+
+1. **Local-first control plane.** `GET /v1/gateway/status`,
+   `PATCH /v1/config/runtime`, `GET /v1/doctor/gateway` reject non-loopback
+   callers with HTTP 403 via `isLoopbackRemoteAddress(req.socket.remoteAddress)`.
+2. **Pure / side-effect split.** Files that import `vscode` are thin wrappers
+   around pure modules. Pure modules are unit-tested without the VS Code
+   runtime, which keeps coverage high without needing a webview harness.
+3. **Value-constrained safe log.** `appendGatewayLog()` accepts `unknown` and
+   projects only allow-listed fields. The schema enforces enums (`path`,
+   `authorizationScheme`), regex fingerprints, and `superRefine()`
+   invariants on the auth block. The function is `async` so schema or
+   byte-guard failures surface as rejected promises.
+4. **Deterministic log writes.** Non-stream: `await logFinal(status)` before
+   `res.end(body)`. Stream: log after `streamMessages` resolves. Stronger
+   pre-client-completion stream guarantees are explicitly Phase 2.
+5. **Streaming-aware error status.** Pre-headers transport error → respond
+   502 and log 502. Mid-stream upstream failure → log `res.statusCode` (the
+   wire-observed status, usually 200), destroy the stream. Logging 502
+   mid-stream would diverge from what the client actually saw.
+6. **Discriminated reachability.** The toggle command classifies the probe
+   result as `reachable | transport-failure | rejected`. Offline file
+   fallback runs **only** on `transport-failure`. HTTP rejection or
+   malformed body is `rejected`, not `transport-failure`.
+7. **No-fallback-after-PATCH.** Once a `PATCH /v1/config/runtime` was
+   attempted and the response was lost, the daemon may have committed the
+   write; the extension shows an indeterminate-state error and refuses to
+   write the file. Avoids double-toggling.
+8. **Authorization scheme normalization.** Server normalizes any non-Bearer
+   raw scheme to `"Other"` before logging, so no exotic header value causes
+   silent log loss.
+9. **Untouched surfaces.** `anthropicGateway.ts` (Phase 0 spike) and the
+   ordinary `tierkit doctor` are not modified by Phase 1. Phase 2 picks up
+   `anthropicGateway.ts` when body transformation lands.
+
+## Component map
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Claude Code (external client)                                   │
+│   ANTHROPIC_BASE_URL → http://127.0.0.1:4101                    │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼ (data plane, POST)
+┌─────────────────────────────────────────────────────────────────┐
+│ packages/core/src/runtime/Server.ts                             │
+│                                                                 │
+│   POST /v1/messages              ─┐  gated on gatewayMode==="on"│
+│   POST /v1/messages/count_tokens ─┘  log writer wired in        │
+│                                                                 │
+│   GET   /v1/gateway/status       ─┐                             │
+│   PATCH /v1/config/runtime       ─┤ loopback-only control plane │
+│   GET   /v1/doctor/gateway       ─┘                             │
+└────────────┬─────────────────────────────────┬──────────────────┘
+             │                                 │
+             ▼                                 ▼
+┌──────────────────────────────┐  ┌──────────────────────────────┐
+│ anthropicGateway.ts          │  │ gatewayLog.ts                │
+│   forwardMessages            │  │   appendGatewayLog(unknown)  │
+│   streamMessages             │  │     ↳ projectAndValidate     │
+│   forwardCountTokens         │  │     ↳ byte guard             │
+│   observeAuthHeaders         │  │     ↳ writeQueue (serial)    │
+│                              │  │     ↳ maybeTrim (5MB / 7d)   │
+│ (untouched in Phase 1)       │  │                              │
+└──────────────────────────────┘  └──────────────────────────────┘
+             ▲                                 ▲
+             │                                 │
+┌────────────┴───────────────────┐  ┌──────────┴─────────────────┐
+│ doctorGateway.ts               │  │ TierkitConfigSchema        │
+│   gateway-mode                 │  │   runtime.gatewayMode:     │
+│   gateway-daemon (loopback URL)│  │     z.enum(["off","on"])   │
+│   gateway-routes               │  │     .default("off")        │
+│   gateway-log-path             │  └────────────────────────────┘
+│   gateway-claude-code          │
+│   gateway-credential-mode      │
+└────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ VS Code extension (packages/vscode-tierkit)                     │
+│                                                                 │
+│  pure (no `vscode` import):                                     │
+│    gatewayControlUrl.ts        controlBaseUrlFromConfiguredBaseUrl │
+│    gatewayModeConfig.ts        readGatewayModeFromConfig /      │
+│                                withGatewayMode                  │
+│    gatewayLaunchCore.ts        buildGatewayEnv /                │
+│                                gatewayLaunchCommand /           │
+│                                classifyReadiness /              │
+│                                nextGatewayMode                  │
+│    webviewCommandAllowlist.ts  isAllowedWebviewCommand          │
+│                                                                 │
+│  vscode-impure:                                                 │
+│    gatewayTerminal.ts          openGatewayTerminal              │
+│    extension.ts                tierkit.toggleGatewayMode        │
+│                                tierkit.launchClaudeCodeWithGateway │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│ Sidebar UI (packages/core/src/runtime/ui/gui.ts)                │
+│                                                                 │
+│   "Route Claude Code through Tierkit"  — toggle card            │
+│   "Anthropic Gateway — diagnostics"    — diagnostic card        │
+│                                                                 │
+│   posts {type:"tk:cmd", command:...} via existing vsApi handle  │
+│   (NO acquireVsCodeApi() — single source-of-truth in transport) │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## HTTP API surface
+
+| Route | Loopback-only | Body | Gated on `gatewayMode` |
+|-------|---------------|------|------------------------|
+| `POST /v1/messages` | no | Anthropic Messages | yes (404 when off) |
+| `POST /v1/messages/count_tokens` | no | Anthropic count tokens | yes (404 when off) |
+| `GET /v1/gateway/status` | **yes** | `{gatewayMode, routesEnabled, messagesPath, countTokensPath, logPath}` | n/a |
+| `PATCH /v1/config/runtime` | **yes** | `{gatewayMode?}` (field allowlist) | n/a |
+| `GET /v1/doctor/gateway` | **yes** | `{checks: DoctorCheck[]}` | n/a |
+
+Control endpoints return `403 {error:"local_only"}` for non-loopback callers.
+`PATCH /v1/config/runtime` validates the full resulting config via
+`TierkitConfigSchema.parse()` before atomic tmp+rename write.
+
+### Loopback canonicalization (correction 34)
+
+The extension and CLI doctor canonicalize the user-configured baseUrl to a
+loopback control URL via the pure helper `controlBaseUrlFromConfiguredBaseUrl`.
+Supported bind addresses:
+
+- `127.0.0.1`, `::1` — direct loopback
+- `0.0.0.0`, `::` — wildcard binds, rewritten to loopback
+- LAN-only binds (e.g. `192.168.1.50`) — **not supported**; documented as out
+  of scope. `tierkit doctor gateway` will report `gateway-daemon: fail` for
+  these, which is the intended signal.
+
+## Safe log schema
+
+```jsonc
+{
+  "ts": "2026-05-26T12:00:00.000Z",           // ISO datetime
+  "path": "/v1/messages",                       // enum
+  "stream": true,                               // boolean
+  "status": 200,                                // integer
+  "durationMs": 1234,                           // nonNegative integer
+  "auth": {
+    "authorizationScheme": "Bearer",            // "Bearer" | "Other" | null
+    "authorizationFingerprint": "abcdef123456", // /^[0-9a-f]{12}$/ | null
+    "apiKeyPresent": false,                     // boolean, NO default
+    "apiKeyFingerprint": null                   // /^[0-9a-f]{12}$/ | null
+  }
+}
+```
+
+`superRefine()` invariants on the auth block:
+
+- `authorizationScheme === null` **iff** `authorizationFingerprint === null`
+- `apiKeyPresent === false` **iff** `apiKeyFingerprint === null`
+
+A record violating an invariant rejects. The byte guard (5 MB per record)
+runs BEFORE the write is enqueued, so an oversized input never blocks
+subsequent valid writes.
+
+Writes are serialized via a module-level promise queue. Rotation triggers on
+file size > 5 MB or first-line timestamp older than 7 days. Atomic rewrite
+via tmp file + rename.
+
+What is **never** in the log: request body, response body, raw
+`Authorization` / `x-api-key` value, `system` prompt, `messages[]`,
+`tool_result` content.
+
+## Toggle flow (state machine)
+
+```
+                       ┌─────────────────────────────┐
+                       │ user clicks sidebar toggle  │
+                       └─────────────┬───────────────┘
+                                     │
+              controlBaseUrl = controlBaseUrlFromConfiguredBaseUrl(...)
+                                     │
+                                     ▼
+                       ┌─────────────────────────────┐
+                       │ GET /v1/gateway/status      │
+                       │ (loopback-canonicalized)    │
+                       └─────────────┬───────────────┘
+                                     │
+              ┌──────────────────────┼──────────────────────┐
+              │                      │                      │
+              ▼                      ▼                      ▼
+       ┌────────────┐       ┌─────────────────┐    ┌──────────────┐
+       │ reachable  │       │ transport-      │    │ rejected     │
+       │ {kind, gw} │       │ failure         │    │ {status,body}│
+       └─────┬──────┘       └─────┬───────────┘    └──────┬───────┘
+             │                    │                       │
+       next = flip(gw)            │ read tierkit.config   │ showError(detail)
+             │                    │   readGatewayModeFromConfig
+             │                    │     (throw on malformed)
+             ▼                    │ next = flip(current)  │
+   ┌─────────────────────┐        │ withGatewayMode →     │
+   │ PATCH /v1/config/   │        │   atomic tmp+rename   │
+   │   runtime           │        │ executeCommand("tierkit.restartDaemon")
+   │   {gatewayMode:next}│        ▼                       │
+   └─────┬──────────┬────┘   ┌──────────────────┐         │
+   ok    │          │ throw  │ render + info    │         │
+         │          │        └──────────────────┘         │
+         ▼          ▼                                     ▼
+  showInfo    showError(indeterminate-state)       return — NO file write
+  render      render                          NO file write either way
+                                              (Phase 1 hard rule)
+```
+
+Hard rules:
+
+- **rejected ≠ transport-failure.** A 4xx/5xx response or malformed body is
+  not a transport failure; show error, never write the file.
+- **post-PATCH ambiguity.** After PATCH was attempted and threw, the daemon
+  may have committed. Never auto-mutate; show indeterminate-state error.
+- **offline write is constrained.** Only `runtime.gatewayMode` is changed.
+  Pre-existing malformed values reject (don't silently coerce).
+
+## Launch flow (state machine)
+
+```
+              ┌────────────────────────────────────┐
+              │ Launch Claude Code through Tierkit │
+              └─────────────────┬──────────────────┘
+                                │
+                                ▼
+              ┌────────────────────────────────────┐
+              │ probe /v1/gateway/status →         │
+              │ classifyReadiness(body)            │
+              └─────┬───────────┬───────────┬──────┘
+                    │           │           │
+              ┌─────┴─────┐ ┌───┴──────┐ ┌──┴──────────┐
+              │  ready    │ │ mode-off │ │ unreachable │
+              └─────┬─────┘ └────┬─────┘ └──────┬──────┘
+                    │            │              │
+                    │       showInfo          statusbar "starting…"
+                    │       return          tierkit.restartDaemon
+                    │                       poll 300ms × ≤3000ms
+                    │                         if mode-off observed:
+                    │                           showInfo, return
+                    │                         if ready: break
+                    │                                │
+                    │                                ▼
+                    │                          still not ready?
+                    │                                │
+                    │                                ▼
+                    │                     warning: "Launch direct?"
+                    │                          │            │
+                    │                     cancel        "Launch direct"
+                    │                          │            │
+                    │                       return     Terminal:
+                    │                                    name "Claude Code (direct)"
+                    │                                    env: { ANTHROPIC_BASE_URL: undefined }
+                    │                                    sendText(gatewayLaunchCommand(process.env))
+                    ▼
+            openGatewayTerminal(controlBaseUrl)
+              vscode.window.createTerminal({
+                  name: "Claude Code (Tierkit)",
+                  env: { ...process.env, ANTHROPIC_BASE_URL: controlBaseUrl }
+              })
+              sendText(gatewayLaunchCommand(process.env))
+```
+
+Key properties:
+
+- `mode-off` never triggers a daemon restart (correction 14).
+- Both the gateway and direct terminals honor `TIERKIT_CLAUDE_CODE_BIN` via
+  `gatewayLaunchCommand(process.env)` (correction 18).
+- The direct terminal STRIPS `ANTHROPIC_BASE_URL` so it is truly direct even
+  when the VS Code process inherited the variable.
+- The shell profile is **never** mutated; env injection is scoped to the
+  integrated terminal.
+
+## Module boundaries (pure vs side-effect)
+
+| File | Imports `vscode`? | Notes |
+|------|-------------------|-------|
+| `packages/vscode-tierkit/src/gatewayControlUrl.ts` | no | Pure; unit-tested standalone |
+| `packages/vscode-tierkit/src/gatewayModeConfig.ts` | no | Pure |
+| `packages/vscode-tierkit/src/gatewayLaunchCore.ts` | no | Pure |
+| `packages/vscode-tierkit/src/webviewCommandAllowlist.ts` | no | Pure |
+| `packages/vscode-tierkit/src/gatewayTerminal.ts` | **yes** | Wraps pure core; one VS Code call (`createTerminal`) |
+| `packages/vscode-tierkit/src/extension.ts` | **yes** | Command registration; orchestrates pure helpers |
+
+Unit tests for the pure files run in vitest without any VS Code mock; they
+form the bulk of the extension's behavioral coverage. `extension.ts` is
+tested manually via `MANUAL_gateway_flows.md`.
+
+## Webview ↔ extension bridge
+
+Sidebar HTML can post arbitrary messages, so the extension's
+`onDidReceiveMessage` gates `tk:cmd` payloads through
+`isAllowedWebviewCommand(...)` before executing. Only two commands are
+admitted in Phase 1:
+
+- `tierkit.toggleGatewayMode`
+- `tierkit.launchClaudeCodeWithGateway`
+
+Arbitrary VS Code commands (e.g. `workbench.action.terminal.kill`) are
+rejected.
+
+The webview-side `postTierkitCommand(commandName)` helper reuses the
+already-acquired `vsApi` handle stored in the page-scope transport object.
+There is **no** second `acquireVsCodeApi()` call — VS Code's webview API
+contract permits exactly one per page, and a second call throws.
+
+## CLI surface
+
+```
+tierkit doctor gateway
+```
+
+Runs the six `doctorGateway` checks (mode, daemon, routes, log-path,
+claude-code binary detection, credential-mode classification) and prints
+each as `[OK|WARN|FAIL] label — detail`. Exits 1 if any FAIL.
+
+The check runs locally only — it probes the loopback control URL via
+`loopbackControlUrl(host, port)`. A daemon bound to a non-loopback host
+is intentionally unreachable from this check; that is the documented
+Phase 1 behavior.
+
+`tierkit doctor` (ordinary) is **not** modified.
+
+## File inventory
+
+### Created in Phase 1
+
+```
+packages/core/
+  src/runtime/gatewayLog.ts                    (safe log writer)
+  src/runtime/gatewayStatus.ts                 (pure status builder)
+  src/runtime/loopback.ts                      (isLoopbackRemoteAddress, loopbackControlUrl)
+  src/runtime/runtimePaths.ts                  (resolveRuntimeDataDir)
+  src/usecases/doctorGateway.ts                (6 checks)
+  test/configGatewayMode.test.ts
+  test/gatewayLog.test.ts
+  test/gatewayLog.redaction.test.ts
+  test/gatewayStatus.test.ts
+  test/loopback.test.ts
+  test/runtimePaths.test.ts
+  test/doctorGateway.test.ts
+  test/Server.gatewayStatus.test.ts
+  test/Server.gatewayMode.test.ts
+  test/Server.patchRuntime.test.ts
+  test/Server.doctorGateway.test.ts
+
+packages/cli/
+  src/commands/DoctorGatewayCommand.ts
+  test/doctorGatewayCommand.test.ts
+
+packages/vscode-tierkit/
+  src/gatewayControlUrl.ts
+  src/gatewayModeConfig.ts
+  src/gatewayLaunchCore.ts
+  src/gatewayTerminal.ts
+  src/webviewCommandAllowlist.ts
+  test/gatewayControlUrl.test.ts
+  test/gatewayModeConfig.test.ts
+  test/gatewayLaunchCore.test.ts
+  test/webviewCommandAllowlist.test.ts
+  test/MANUAL_gateway_flows.md
+
+docs/
+  ANTHROPIC_GATEWAY.md          (EN, user-facing)
+  ANTHROPIC_GATEWAY.ko.md       (KR, user-facing)
+  ARCHITECTURE-anthropic-gateway.md  (this file)
+```
+
+### Modified in Phase 1
+
+```
+packages/core/src/config/TierkitConfig.ts   (+ runtime.gatewayMode)
+packages/core/src/runtime/Server.ts         (+ 3 control routes, gated proxy routes, log wiring)
+packages/core/src/index.ts                  (+ doctorGateway export)
+packages/core/src/runtime/ui/gui.ts         (+ toggle card + diagnostics card)
+packages/cli/src/cli.ts                     (+ DoctorGatewayCommand register)
+packages/vscode-tierkit/src/extension.ts    (+ toggle command + launch command + tk:cmd allowlist)
+packages/vscode-tierkit/package.json        (+ 2 commands)
+packages/vscode-tierkit/package.nls.json
+packages/vscode-tierkit/package.nls.ko.json
+README.md                                   (+ Anthropic Gateway feature bullet)
+docs/RFC-anthropic-gateway.md               (+ Phase 2 entry gate)
+```
+
+### Explicitly untouched
+
+```
+packages/core/src/runtime/anthropicGateway.ts  (Phase 0 spike code)
+packages/core/src/usecases/doctor.ts           (ordinary tierkit doctor)
+```
+
+## Out of scope (Phase 2 and beyond)
+
+| Feature | Reason |
+|---------|--------|
+| Body transformation / compression / dedupe / pagination | Phase 2 — hooks live inside `anthropicGateway.ts` |
+| Per-call efficiency claims (numeric or otherwise) | No measurement = no claim |
+| `~/.zshrc` / persistent shell profile mutation | Too invasive |
+| Forcing or removing user's Anthropic credential | Auth choice preserved |
+| `POST /v1/models` discovery | Already gated by Claude Code |
+| Local-LLM routing | Phase 3 |
+| OAuth admin endpoints | Hardcoded by Claude Code |
+| Pre-client-completion stream logging guarantee | Requires `anthropicGateway.ts` change |
+| Stream-abort outcome field | Phase 2 (correction 32 records `res.statusCode` instead) |
+| Reaching a daemon bound only to a specific LAN interface | Loopback canonicalization covers wildcard/loopback only |
+
+## Phase 2 entry gate
+
+Phase 2 work must not begin until:
+
+1. Phase 1 has been dogfooded for ≥ 1 week with `tierkit doctor gateway`
+   reporting ok across all checks on a real workstation.
+2. The per-request safe log shows zero 5xx in the trailing 7 days:
+   `jq 'select(.status >= 500)' .tierkit/runtime/anthropic-gateway.jsonl | wc -l == 0`.
+3. The Direct fallback flow has been triggered at least once and resolved cleanly.
+
+Inherited design constraints for Phase 2:
+
+- Body transformation hooks land inside `forwardMessages` / `streamMessages`
+  in `anthropicGateway.ts`. Phase 1's `Server.ts` route plumbing does not
+  change.
+- Strengthening the streaming-completion logging contract requires changes
+  to `anthropicGateway.ts`.
+- The safe log `authorizationScheme` enum stays `["Bearer", "Other"]` unless
+  Phase 2 deliberately extends it (and updates the redaction tests).
+
+## Language audit
+
+Forbidden in user-facing strings (README, EN/KR docs, sidebar HTML,
+`package.json::contributes`, `package.nls*.json`, `extension.ts` dialogs,
+`DoctorGatewayCommand.ts`, manual test plan):
+
+```
+savings, save, saves, saved, cost, cheaper, efficient,
+절감, 절약, 비용, 효율, numeric token-count claims
+```
+
+Preferred vocabulary: route, connection, passthrough, diagnostic, status,
+연결, 라우팅, 진단.
+
+The audit is diff-based against the Phase 0 base
+(`worktree-anthropic-gateway-spike`) and runs as Task 13 Step 2. It fails
+the build if a forbidden term is added to any of the listed files.
+
+## References
+
+- `docs/RFC-anthropic-gateway.md` — Phase 0 spike RFC + Phase 2 entry-gate
+- `docs/ANTHROPIC_GATEWAY.md` — user-facing how-to (EN)
+- `docs/ANTHROPIC_GATEWAY.ko.md` — user-facing how-to (KR)
+- `docs/superpowers/plans/2026-05-26-anthropic-gateway-phase1.md` — rev6
+  implementation plan (35 corrections)
+- `packages/vscode-tierkit/test/MANUAL_gateway_flows.md` — 13-case manual
+  test plan

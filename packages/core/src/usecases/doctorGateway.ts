@@ -1,0 +1,92 @@
+import fs from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { loadConfig } from "../config/loadConfig.js";
+import type { DoctorCheck } from "./doctor.js";
+import { gatewayLogPath } from "../runtime/gatewayLog.js";
+import { resolveRuntimeDataDir } from "../runtime/runtimePaths.js";
+import { loopbackControlUrl } from "../runtime/loopback.js";
+
+export interface DoctorGatewayInput { cwd?: string; }
+
+export async function doctorGateway(input: DoctorGatewayInput = {}): Promise<DoctorCheck[]> {
+  const cwd = input.cwd ?? process.cwd();
+  const checks: DoctorCheck[] = [];
+  const cfgResult = await loadConfig(cwd);
+  const runtime = cfgResult.config.runtime;
+  const baseUrl = loopbackControlUrl(runtime.host, runtime.port);
+  const resolvedDataDir = resolveRuntimeDataDir(runtime.dataDir, cwd);
+
+  if (runtime.gatewayMode === "on") {
+    checks.push({ id: "gateway-mode", label: "runtime.gatewayMode", status: "ok", detail: "on" });
+  } else {
+    checks.push({
+      id: "gateway-mode",
+      label: "runtime.gatewayMode",
+      status: "warn",
+      detail: `gatewayMode is "off" (default). Toggle "Route Claude Code through Tierkit" in the sidebar, or set runtime.gatewayMode: "on" in tierkit.config.json.`,
+    });
+  }
+
+  if (runtime.gatewayMode === "on") {
+    const reach = await probeDaemon(baseUrl);
+    if (reach.ok) {
+      checks.push({ id: "gateway-daemon", label: `daemon @ ${baseUrl}`, status: "ok" });
+      checks.push(await probeStatusEndpoint(baseUrl));
+    } else {
+      checks.push({ id: "gateway-daemon", label: `daemon @ ${baseUrl}`, status: "fail", detail: reach.detail });
+    }
+  }
+
+  checks.push(await checkLogWritable(resolvedDataDir));
+  checks.push(checkClaudeBinary());
+  checks.push(checkCredentialMode());
+  return checks;
+}
+
+async function probeDaemon(baseUrl: string): Promise<{ ok: boolean; detail?: string }> {
+  try {
+    const res = await fetch(`${baseUrl}/v1/health`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return { ok: false, detail: `daemon responded ${res.status}` };
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, detail: `unreachable: ${(err as Error).message}` };
+  }
+}
+
+async function probeStatusEndpoint(baseUrl: string): Promise<DoctorCheck> {
+  try {
+    const res = await fetch(`${baseUrl}/v1/gateway/status`, { signal: AbortSignal.timeout(2000) });
+    if (!res.ok) return { id: "gateway-routes", label: "/v1/gateway/status", status: "fail", detail: `status ${res.status}` };
+    const body = (await res.json()) as { routesEnabled?: boolean; messagesPath?: string };
+    if (body.routesEnabled !== true) return { id: "gateway-routes", label: "routes", status: "fail", detail: `routesEnabled=${body.routesEnabled}` };
+    return { id: "gateway-routes", label: "routes", status: "ok", detail: body.messagesPath ?? "/v1/messages" };
+  } catch (err) {
+    return { id: "gateway-routes", label: "/v1/gateway/status", status: "fail", detail: (err as Error).message };
+  }
+}
+
+async function checkLogWritable(resolvedDataDir: string): Promise<DoctorCheck> {
+  const logPath = gatewayLogPath(resolvedDataDir);
+  try {
+    await fs.mkdir(resolvedDataDir, { recursive: true });
+    const probe = `${logPath}.probe-${process.pid}`;
+    await fs.writeFile(probe, "");
+    await fs.unlink(probe);
+    return { id: "gateway-log-path", label: "safe gateway log", status: "ok", detail: logPath };
+  } catch (err) {
+    return { id: "gateway-log-path", label: "safe gateway log", status: "fail", detail: `${logPath} — ${(err as Error).message}` };
+  }
+}
+
+function checkClaudeBinary(): DoctorCheck {
+  const r = spawnSync("claude", ["--version"], { encoding: "utf8", shell: process.platform === "win32" });
+  if (r.status === 0 && (r.stdout?.trim()?.length ?? 0) > 0) {
+    return { id: "gateway-claude-code", label: "claude (Claude Code CLI)", status: "ok", detail: r.stdout.trim() };
+  }
+  return { id: "gateway-claude-code", label: "claude (Claude Code CLI)", status: "warn", detail: "not detected on PATH — install Claude Code, then re-run." };
+}
+
+function checkCredentialMode(): DoctorCheck {
+  const hasApiKey = typeof process.env.ANTHROPIC_API_KEY === "string" && process.env.ANTHROPIC_API_KEY.length > 0;
+  return { id: "gateway-credential-mode", label: "credential mode", status: "ok", detail: hasApiKey ? "api-key (ANTHROPIC_API_KEY is set)" : "subscription / unknown (no ANTHROPIC_API_KEY)" };
+}
