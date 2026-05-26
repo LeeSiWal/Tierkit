@@ -8,6 +8,9 @@ import { compareCompressedContext } from "../usecases/compareCompressedContext.j
 import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
 import { readVerdict, writeVerdict, VerdictStoreError } from "./verdictStore.js";
 import { forwardMessages, streamMessages, forwardCountTokens } from "./anthropicGateway.js";
+import { isLoopbackRemoteAddress } from "./loopback.js";
+import { resolveRuntimeDataDir } from "./runtimePaths.js";
+import { buildGatewayStatus } from "./gatewayStatus.js";
 import {
   buildContextPack,
   clearFileDigestCache,
@@ -1790,6 +1793,15 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         const body = await readJsonBody<unknown>(req);
         await handleOpenAIChatCompletions(req, res, body, { cwd: opts.cwd, env });
         return;
+      }
+
+      if (route === "GET /v1/gateway/status") {
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
+        const cfg = await loadConfig(opts.cwd);
+        return sendJson(res, 200, buildGatewayStatus({
+          gatewayMode: cfg.config.runtime.gatewayMode,
+          resolvedDataDir: resolveRuntimeDataDir(cfg.config.runtime.dataDir, opts.cwd),
+        }));
       }
 
       // Anthropic Gateway Phase 0 spike (branch only — not shipped to users yet):
