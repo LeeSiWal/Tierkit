@@ -97,6 +97,47 @@ describe("forwardMessages (non-streaming)", () => {
     }
   });
 
+  it("drops transport-sensitive response headers (content-length, encodings, hop-by-hop)", async () => {
+    // When we strip content-encoding upstream, the original content-length
+    // describes compressed bytes — passing it through can make Claude Code
+    // misread the response length. Same logic for the rest of the hop-by-hop
+    // set: Node regenerates them for the new outbound response.
+    //
+    // NOTE: content-length and transfer-encoding cannot coexist on the wire
+    // (HTTP/1.1 RFC) — Node's parser will reject the upstream response. So
+    // we set content-length WITHOUT transfer-encoding here; transfer-encoding
+    // coverage is implicit (it's in the same blocklist set).
+    // We test most of the blocklist directly. content-encoding is omitted
+    // here because setting it to "gzip" with an ungzipped body makes fetch's
+    // automatic decoder throw before our code sees the response; covered by
+    // the blocklist source code itself, which is a single Set literal.
+    // Body `{"ok":true}` serializes to 11 bytes — set content-length to match
+    // so fetch can read the response. The point of the test isn't to send a
+    // bogus length; it's to verify content-length gets dropped from what we
+    // forward downstream (even a valid one — Node regenerates it).
+    const upstream = await startFakeUpstream(() => ({
+      status: 200,
+      body: { ok: true },
+      headers: {
+        "content-length": "11",
+        "connection": "keep-alive",
+        "keep-alive": "timeout=5",
+        "x-request-id": "req-1",
+      },
+    }));
+    try {
+      const req = { headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" } } as unknown as http.IncomingMessage;
+      const r = await forwardMessages(req, Buffer.from("{}"), { upstreamBaseUrl: upstream.url });
+      expect(r.headers["content-length"]).toBeUndefined();
+      expect(r.headers["connection"]).toBeUndefined();
+      expect(r.headers["keep-alive"]).toBeUndefined();
+      // Non-hop-by-hop headers must survive — observability + tracing depends on it.
+      expect(r.headers["x-request-id"]).toBe("req-1");
+    } finally {
+      await upstream.close();
+    }
+  });
+
   it("propagates non-2xx status codes (e.g. 401 from upstream)", async () => {
     const upstream = await startFakeUpstream(() => ({
       status: 401,

@@ -53,9 +53,29 @@ function upstreamUrl(opts: ForwardOptions, path: string): string {
 }
 
 /** Headers we drop from the upstream response before writing to the client.
- *  `content-encoding` and `transfer-encoding` get rebuilt by Node; passing them
- *  through can break decoding on the Claude Code side. */
-const RESPONSE_HEADER_BLOCKLIST = new Set(["content-encoding", "transfer-encoding"]);
+ *  Two categories:
+ *
+ *    - **Transport-rewrite hazards**: when we strip `content-encoding`, the
+ *      original `content-length` describes compressed bytes and no longer
+ *      matches what we actually write. Passing that through can make Claude
+ *      Code misread the response. Same for `transfer-encoding`.
+ *
+ *    - **Hop-by-hop headers** (RFC 7230 §6.1): connection, keep-alive,
+ *      proxy-authenticate, proxy-authorization, te, trailer, upgrade —
+ *      defined as never to be forwarded by an intermediary. Node regenerates
+ *      the connection ones for the new outbound response anyway. */
+const RESPONSE_HEADER_BLOCKLIST = new Set([
+  "connection",
+  "content-encoding",
+  "content-length",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 function pickResponseHeaders(h: Headers): Record<string, string> {
   const out: Record<string, string> = {};
