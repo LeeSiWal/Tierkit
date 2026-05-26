@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.24.1 — 2026-05-26
+
+### Release Copy Alignment
+
+- Updated release-facing VS Code README copy to match the Anthropic Gateway release positioning.
+- Anthropic Gateway remains the stable release feature.
+- Experimental request transformation remains disabled by default and requires explicit opt-in.
+
+### 릴리즈 문구 정리
+
+- VS Code 공개 README 문구를 Anthropic Gateway 릴리즈 정체성에 맞게 정리했습니다.
+- Anthropic Gateway는 stable 릴리즈 기능입니다.
+- 실험적 request transformation은 기본 비활성이며 명시적 opt-in이 필요합니다.
+
 ## 0.24.0 — 2026-05-26
 
 ### Anthropic Gateway Connection
@@ -290,14 +304,14 @@ Adds a `paymentModel` dimension (`"free" | "flat-rate" | "per-token"`) to model 
 
 ## 0.11.1 — 2026-05-19
 
-**Repositioning: Tierkit reframed as a local-first cost optimizer.**
+**Repositioning: Tierkit reframed as a local-first runtime.**
 
 Docs, copy, and UI information architecture updated to lead with cost reduction rather than plugin runtime. Zero runtime behavior change; all CLI commands, HTTP endpoints, and `tierkit.config.json` schema unchanged.
 
 - GUI sidebar groups renamed: Savings / Current project / Cost routing / Integrations / Advanced
 - CLI `--help` categories: Savings / Cost routing / Integrations / Diagnostics / Advanced
 - README leads with `tierkit context build` / `compare`
-- All package descriptions updated to cost-optimizer framing
+- All package descriptions updated to runtime framing
 - VS Code marketplace listing (`package.nls.json`) updated
 
 ## 0.11.0 — 2026-05-19

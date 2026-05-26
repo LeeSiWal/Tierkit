@@ -1,7 +1,7 @@
 {
   "name": "tierkit",
   "private": true,
-  "version": "0.24.0",
+  "version": "0.24.1",
   "description": "Local-first runtime and Anthropic Gateway for AI coding CLIs.",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",
