@@ -105,8 +105,8 @@ Not in this RFC's scope, but recorded for planning:
 
 ## Phase 2 entry gate (added during Phase 1)
 
-Phase 2 work (request/response transformation, including any context-handling
-or measurement features) MUST NOT begin until:
+Phase 2 production activation and user-facing billing/quota claims MUST NOT
+begin until:
 
 1. Phase 1 has dogfood for ≥ 1 week with `tierkit doctor gateway` reporting
    ok across all checks on a real workstation.
@@ -121,6 +121,26 @@ Phase 2 design constraints inherited from Phase 1:
   `anthropicGateway.ts`; Phase 2 candidate.
 - The safe log `authorizationScheme` enum stays `["Bearer", "Other"]` unless
   Phase 2 deliberately extends it (and updates the redaction tests).
+
+## Phase 2 v1 implementation addendum
+
+Phase 2 v1 is implemented behind `runtime.gatewayTransformations` and remains
+off by default. `runtime.gatewayMode: "on"` still means routing only.
+
+Implemented scope:
+
+- request-side body transformation hook before upstream `/v1/messages`
+- `mode: "off" | "observe" | "envelope"`
+- deterministic `tool_result` envelope for explicitly allowlisted tool names
+- safe payload-byte telemetry in the existing gateway JSONL
+- additive gateway status, doctor, and sidebar diagnostic surface
+
+Not implemented in v1: response rewriting, SSE event rewriting, cursor
+pagination, multi-turn dedupe, tokenizer-based measurement, model routing, and
+public billing/quota claims.
+
+Activation remains blocked by the operational gate above. No default enablement
+or user-facing billing/quota claim is permitted until that evidence exists.
 
 ## References
 

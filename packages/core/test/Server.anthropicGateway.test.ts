@@ -111,4 +111,113 @@ describe("/v1/messages — Anthropic passthrough (integration)", () => {
     const json = await r.json();
     expect(json.id).toBe("msg_int");
   });
+
+  it("observe mode forwards the raw body and logs payload metrics", async () => {
+    await fs.writeFile(
+      path.join(cwd, "tierkit.config.json"),
+      JSON.stringify({ version: "0.1", runtime: { gatewayMode: "on", gatewayTransformations: { mode: "observe" } } }),
+    );
+    const body = {
+      model: "m",
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "SyntheticRead", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "x".repeat(2000) }] },
+      ],
+    };
+    const raw = JSON.stringify(body);
+    const r = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+      body: raw,
+    });
+    expect(r.status).toBe(200);
+    expect(lastUpstream.body).toBe(raw);
+    const log = await fs.readFile(path.join(cwd, ".tierkit/runtime/anthropic-gateway.jsonl"), "utf8");
+    const line = JSON.parse(log.trim().split("\n").at(-1)!);
+    expect(line.transformation).toMatchObject({ mode: "observe", outcome: "observed", eligibleToolResultCount: 1 });
+    expect(log).not.toContain("x".repeat(2000));
+  });
+
+  it("envelope mode forwards a transformed body only for allowlisted tool results", async () => {
+    await fs.writeFile(
+      path.join(cwd, "tierkit.config.json"),
+      JSON.stringify({
+        version: "0.1",
+        runtime: {
+          gatewayMode: "on",
+          gatewayTransformations: {
+            mode: "envelope",
+            toolResultEnvelope: {
+              allowlistedToolNames: ["SyntheticRead"],
+              minInputUtf8Bytes: 20,
+              preservedHeadUtf8Bytes: 6,
+              preservedTailUtf8Bytes: 6,
+            },
+          },
+        },
+      }),
+    );
+    const r = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "m",
+        messages: [
+          { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "SyntheticRead", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "한글" + "x".repeat(2000) + "tail" }] },
+        ],
+      }),
+    });
+    expect(r.status).toBe(200);
+    expect(lastUpstream.body).toContain("[TIERKIT_TOOL_RESULT_ENVELOPE_V1]");
+    expect(lastUpstream.body).not.toContain("x".repeat(2000));
+  });
+
+  it("fail-opens to raw body when the transformation hook throws", async () => {
+    await fs.writeFile(
+      path.join(cwd, "tierkit.config.json"),
+      JSON.stringify({ version: "0.1", runtime: { gatewayMode: "on", gatewayTransformations: { mode: "envelope" } } }),
+    );
+    const raw = "{not valid json";
+    const r = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+      body: raw,
+    });
+    expect(r.status).toBe(200);
+    expect(lastUpstream.body).toBe(raw);
+    const log = await fs.readFile(path.join(cwd, ".tierkit/runtime/anthropic-gateway.jsonl"), "utf8");
+    expect(JSON.parse(log.trim().split("\n").at(-1)!).transformation.outcome).toBe("bypassed_error");
+  });
+
+  it("streaming requests are transformed before upstream connection", async () => {
+    await fs.writeFile(
+      path.join(cwd, "tierkit.config.json"),
+      JSON.stringify({
+        version: "0.1",
+        runtime: {
+          gatewayMode: "on",
+          gatewayTransformations: {
+            mode: "envelope",
+            toolResultEnvelope: { allowlistedToolNames: ["SyntheticRead"], minInputUtf8Bytes: 20 },
+          },
+        },
+      }),
+    );
+    const r = await fetch(`${url}/v1/messages`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+      body: JSON.stringify({
+        model: "m",
+        stream: true,
+        messages: [
+          { role: "assistant", content: [{ type: "tool_use", id: "toolu_1", name: "SyntheticRead", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_1", content: "x".repeat(5000) }] },
+        ],
+      }),
+    });
+    expect(r.status).toBe(200);
+    await r.text();
+    expect(lastUpstream.body).toContain("[TIERKIT_TOOL_RESULT_ENVELOPE_V1]");
+  });
 });

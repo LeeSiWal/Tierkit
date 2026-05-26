@@ -35,6 +35,31 @@ describe("PATCH /v1/config/runtime", () => {
       expect(res.status).toBe(400);
     } finally { await srv.close(); await rm(dir, { recursive: true, force: true }); }
   });
+  it("patches valid gatewayTransformations and rejects invalid values", async () => {
+    const { srv, dir, url } = await startWith({ version: "0.1" });
+    try {
+      const ok = await fetch(`${url}/v1/config/runtime`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          gatewayTransformations: {
+            mode: "observe",
+            toolResultEnvelope: { allowlistedToolNames: [], minInputUtf8Bytes: 100 },
+          },
+        }),
+      });
+      expect(ok.status).toBe(200);
+      const disk = JSON.parse(await readFile(path.join(dir, "tierkit.config.json"), "utf8"));
+      expect(disk.runtime.gatewayTransformations.mode).toBe("observe");
+
+      const bad = await fetch(`${url}/v1/config/runtime`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ gatewayTransformations: { mode: "envelope", toolResultEnvelope: { minInputUtf8Bytes: -1 } } }),
+      });
+      expect(bad.status).toBe(400);
+    } finally { await srv.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   it("preserves other valid runtime fields", async () => {
     const { srv, dir, url } = await startWith({ version: "0.1", runtime: { port: 4101, dataDir: ".custom/dd", host: "127.0.0.1" } });
     try {

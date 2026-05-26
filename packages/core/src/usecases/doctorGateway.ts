@@ -37,10 +37,44 @@ export async function doctorGateway(input: DoctorGatewayInput = {}): Promise<Doc
     }
   }
 
+  checks.push(checkGatewayTransformations(runtime.gatewayTransformations));
   checks.push(await checkLogWritable(resolvedDataDir));
   checks.push(checkClaudeBinary());
   checks.push(checkCredentialMode());
   return checks;
+}
+
+function checkGatewayTransformations(runtimeTransformations: {
+  mode: "off" | "observe" | "envelope";
+  toolResultEnvelope: { allowlistedToolNames: string[] };
+}): DoctorCheck {
+  const mode = runtimeTransformations.mode;
+  if (mode === "off") {
+    return {
+      id: "gateway-transformations",
+      label: "experimental request transformations",
+      status: "ok",
+      detail: "off",
+    };
+  }
+  if (mode === "observe") {
+    return {
+      id: "gateway-transformations",
+      label: "experimental request transformations",
+      status: "warn",
+      detail: "observe enabled; request bodies are not rewritten.",
+    };
+  }
+  const count = runtimeTransformations.toolResultEnvelope.allowlistedToolNames.length;
+  return {
+    id: "gateway-transformations",
+    label: "experimental request transformations",
+    status: count > 0 ? "warn" : "fail",
+    detail:
+      count > 0
+        ? `envelope enabled with explicit allowlist count=${count}; production activation still requires gate evidence.`
+        : "envelope enabled without allowlisted tools; add an explicit allowlist or set mode off.",
+  };
 }
 
 async function probeDaemon(baseUrl: string): Promise<{ ok: boolean; detail?: string }> {

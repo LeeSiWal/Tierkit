@@ -189,6 +189,115 @@ What is **never** in the log: request body, response body, raw
 `Authorization` / `x-api-key` value, `system` prompt, `messages[]`,
 `tool_result` content.
 
+## Phase 2 v1 Request Transformation
+
+Phase 2 v1 adds a request-side hook only. The upstream response body and SSE
+event stream are never parsed or rewritten.
+
+```
+POST /v1/messages
+  read raw request body
+  determine stream from raw top-level JSON
+  load runtime.gatewayTransformations
+  ├─ off      → raw body upstream, metric outcome disabled
+  ├─ observe  → inspect eligible tool_result candidates, raw body upstream
+  └─ envelope → rewrite only explicit allowlisted eligible tool_result blocks
+  fetch upstream /v1/messages
+  pass upstream response through unchanged
+  append safe gateway log line with optional transformation metric
+```
+
+`POST /v1/messages/count_tokens` remains Phase 1 passthrough. The gateway does
+not issue extra upstream count-token calls for Phase 2 v1 measurement.
+
+### Config
+
+```jsonc
+{
+  "runtime": {
+    "gatewayMode": "on",
+    "gatewayTransformations": {
+      "mode": "off", // off | observe | envelope
+      "toolResultEnvelope": {
+        "allowlistedToolNames": [],
+        "minInputUtf8Bytes": 4096,
+        "preservedHeadUtf8Bytes": 1024,
+        "preservedTailUtf8Bytes": 1024
+      }
+    }
+  }
+}
+```
+
+The default is `off`, and the default allowlist is empty.
+
+### Eligibility
+
+The transformer builds a `tool_use_id -> tool name` map from assistant
+`tool_use` blocks in the request body. A `tool_result` can be rewritten only
+when:
+
+- mode is `envelope`
+- tool name correlation succeeds
+- the tool name is explicitly allowlisted
+- the result is not an error
+- the result content is plain text
+- the UTF-8 payload meets the configured minimum threshold
+
+Unsupported structured, image, blob, document, binary, unknown, short, or
+uncorrelated results are passed through unchanged.
+
+### Envelope
+
+The envelope is deterministic and memory-only:
+
+```text
+[TIERKIT_TOOL_RESULT_ENVELOPE_V1]
+tool: <allowlisted tool name>
+original_utf8_bytes: <number>
+content_sha256: <sha256>
+preserved_head:
+...
+
+preserved_tail:
+...
+
+omitted_utf8_bytes: <number>
+note: This result was compacted by an explicitly enabled experimental Tierkit gateway transformation.
+```
+
+UTF-8 character boundaries are preserved. The full original result is never
+stored in logs or artifacts.
+
+### Fail Open
+
+If transformation throws, the daemon logs a safe `bypassed_error` metric and
+continues upstream with the original raw request body. The daemon must not crash
+or block Claude Code workflow because of the experimental hook.
+
+### Metric
+
+Existing gateway log lines may include:
+
+```jsonc
+{
+  "transformation": {
+    "mode": "observe",
+    "outcome": "observed",
+    "ruleId": "tool_result_envelope_v1",
+    "eligibleToolResultCount": 1,
+    "transformedToolResultCount": 0,
+    "inputUtf8BytesBefore": 1234,
+    "inputUtf8BytesAfter": 1234,
+    "reducedUtf8Bytes": 0
+  }
+}
+```
+
+The schema is allowlisted and validates byte arithmetic and count invariants.
+It does not contain body text, excerpts, tool output, raw credentials, or tool
+name lists.
+
 ## Toggle flow (state machine)
 
 ```
@@ -428,7 +537,7 @@ packages/core/src/usecases/doctor.ts           (ordinary tierkit doctor)
 
 ## Phase 2 entry gate
 
-Phase 2 work must not begin until:
+Phase 2 production activation must not begin until:
 
 1. Phase 1 has been dogfooded for ≥ 1 week with `tierkit doctor gateway`
    reporting ok across all checks on a real workstation.

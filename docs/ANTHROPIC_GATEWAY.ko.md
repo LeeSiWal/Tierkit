@@ -59,3 +59,50 @@ loopback 또는 wildcard 주소에 바인딩되어야 합니다. 특정 LAN 인�
 라도 실제로 direct 경로로 동작합니다.
 
 추가적인 컨텍스트 처리 및 정책 기능은 후속 단계에서 제공될 예정입니다.
+
+## 실험적 요청 변환
+
+Phase 2 v1은 request-side 변환 hook을 추가합니다. 기본값은 꺼짐이며,
+`runtime.gatewayMode`와 별개의 설정입니다.
+
+```json
+{
+  "runtime": {
+    "gatewayMode": "on",
+    "gatewayTransformations": {
+      "mode": "off",
+      "toolResultEnvelope": {
+        "allowlistedToolNames": [],
+        "minInputUtf8Bytes": 4096,
+        "preservedHeadUtf8Bytes": 1024,
+        "preservedTailUtf8Bytes": 1024
+      }
+    }
+  }
+}
+```
+
+모드:
+
+- `off`: Phase 1 passthrough와 동일합니다. 검사나 rewrite가 없습니다.
+- `observe`: eligible `tool_result` 후보와 payload byte만 계산하고, 원본
+  request body를 그대로 전달합니다.
+- `envelope`: assistant `tool_use`와 연결되어 tool name을 확인할 수 있고,
+  명시적 allowlist와 byte threshold를 통과한 plain-text `tool_result`만
+  deterministic envelope로 바꿉니다.
+
+기본 allowlist는 비어 있으므로 gateway를 켜는 것만으로 request rewrite가
+켜지지 않습니다. envelope는 memory-only로 생성되며, 원본 tool result 전체를
+디스크에 저장하지 않습니다.
+
+gateway log의 optional `transformation` 객체에는 `inputUtf8BytesBefore`,
+`inputUtf8BytesAfter`, `reducedUtf8Bytes` 같은 payload byte metric만 들어갑니다.
+이 값은 Anthropic token count가 아니며 billing 또는 quota 영향으로 해석하면
+안 됩니다.
+
+즉시 rollback하려면 `runtime.gatewayTransformations.mode`를 `"off"`로 바꾸거나
+`gatewayTransformations` 블록을 제거하면 됩니다.
+
+Phase 2 동작의 production activation은 1주 dogfood, 최근 7일 5xx 0건, Direct
+fallback의 실제 회복 경험, `tierkit doctor gateway` 정상 증빙이 있을 때까지
+blocked 상태입니다.

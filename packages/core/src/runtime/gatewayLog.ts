@@ -6,6 +6,63 @@ export const GATEWAY_LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const GATEWAY_LOG_MAX_AGE_DAYS = 7;
 const FINGERPRINT_RE = /^[0-9a-f]{12}$/;
 
+const GatewayTransformationMetricSchema = z
+  .object({
+    mode: z.enum(["off", "observe", "envelope"]),
+    outcome: z.enum([
+      "disabled",
+      "observed",
+      "transformed",
+      "bypassed_ineligible",
+      "bypassed_error",
+    ]),
+    ruleId: z.literal("tool_result_envelope_v1").nullable(),
+    eligibleToolResultCount: z.number().int().nonnegative(),
+    transformedToolResultCount: z.number().int().nonnegative(),
+    inputUtf8BytesBefore: z.number().int().nonnegative().nullable(),
+    inputUtf8BytesAfter: z.number().int().nonnegative().nullable(),
+    reducedUtf8Bytes: z.number().int().nonnegative().nullable(),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.transformedToolResultCount > v.eligibleToolResultCount) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transformedToolResultCount"],
+        message: "transformedToolResultCount cannot exceed eligibleToolResultCount",
+      });
+    }
+    if (v.mode === "off" && v.transformedToolResultCount !== 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transformedToolResultCount"],
+        message: "off mode cannot transform results",
+      });
+    }
+    if (v.outcome === "transformed" && v.transformedToolResultCount < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transformedToolResultCount"],
+        message: "transformed outcome requires transformedToolResultCount >= 1",
+      });
+    }
+    if (v.inputUtf8BytesBefore !== null || v.inputUtf8BytesAfter !== null || v.reducedUtf8Bytes !== null) {
+      if (v.inputUtf8BytesBefore === null || v.inputUtf8BytesAfter === null || v.reducedUtf8Bytes === null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["reducedUtf8Bytes"],
+          message: "byte fields must be all null or all non-null",
+        });
+      } else if (v.inputUtf8BytesBefore - v.inputUtf8BytesAfter !== v.reducedUtf8Bytes) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["reducedUtf8Bytes"],
+          message: "reducedUtf8Bytes must equal inputUtf8BytesBefore - inputUtf8BytesAfter",
+        });
+      }
+    }
+  });
+
 const GatewayAuthSchema = z
   .object({
     authorizationScheme: z.enum(["Bearer", "Other"]).nullable(),
@@ -46,6 +103,7 @@ const GatewayLogRecordSchema = z
     status: z.number().int(),
     durationMs: z.number().int().nonnegative(),
     auth: GatewayAuthSchema,
+    transformation: GatewayTransformationMetricSchema.optional(),
   })
   .strict();
 
@@ -57,6 +115,9 @@ function projectAndValidate(input: unknown): GatewayLogRecord {
   if (!input || typeof input !== "object") throw new Error("gateway log input must be an object");
   const r = input as Record<string, unknown>;
   const a = (r.auth && typeof r.auth === "object" ? r.auth : {}) as Record<string, unknown>;
+  const t = (r.transformation && typeof r.transformation === "object" ? r.transformation : undefined) as
+    | Record<string, unknown>
+    | undefined;
   return GatewayLogRecordSchema.parse({
     ts: r.ts,
     path: r.path,
@@ -69,6 +130,20 @@ function projectAndValidate(input: unknown): GatewayLogRecord {
       apiKeyPresent: a.apiKeyPresent,
       apiKeyFingerprint: a.apiKeyFingerprint,
     },
+    ...(t
+      ? {
+          transformation: {
+            mode: t.mode,
+            outcome: t.outcome,
+            ruleId: t.ruleId,
+            eligibleToolResultCount: t.eligibleToolResultCount,
+            transformedToolResultCount: t.transformedToolResultCount,
+            inputUtf8BytesBefore: t.inputUtf8BytesBefore,
+            inputUtf8BytesAfter: t.inputUtf8BytesAfter,
+            reducedUtf8Bytes: t.reducedUtf8Bytes,
+          },
+        }
+      : {}),
   });
 }
 

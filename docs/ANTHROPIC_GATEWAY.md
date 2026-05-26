@@ -62,3 +62,51 @@ The direct terminal explicitly removes `ANTHROPIC_BASE_URL` so it is truly
 direct even when the VS Code process inherited the variable.
 
 Additional context-processing and policy features are planned for a later phase.
+
+## Experimental request transformations
+
+Phase 2 v1 adds an experimental request-side transformation hook. It is off by
+default and remains separate from `runtime.gatewayMode`.
+
+```json
+{
+  "runtime": {
+    "gatewayMode": "on",
+    "gatewayTransformations": {
+      "mode": "off",
+      "toolResultEnvelope": {
+        "allowlistedToolNames": [],
+        "minInputUtf8Bytes": 4096,
+        "preservedHeadUtf8Bytes": 1024,
+        "preservedTailUtf8Bytes": 1024
+      }
+    }
+  }
+}
+```
+
+Modes:
+
+- `off`: Phase 1 passthrough. No inspection or rewrite.
+- `observe`: counts eligible `tool_result` candidates and payload bytes, but
+  forwards the original request body.
+- `envelope`: rewrites only plain-text `tool_result` blocks whose tool name can
+  be correlated to a prior assistant `tool_use`, is explicitly allowlisted, and
+  meets the configured byte threshold.
+
+The default allowlist is empty, so enabling the gateway never enables request
+rewrites by itself. The envelope is deterministic and extractive: it preserves
+bounded head/tail excerpts in memory and adds a SHA-256 digest, but never writes
+the original tool result to disk.
+
+The gateway log may include an optional `transformation` object with payload
+byte fields such as `inputUtf8BytesBefore`, `inputUtf8BytesAfter`, and
+`reducedUtf8Bytes`. These are engineering payload metrics only. They are not
+Anthropic token counts and must not be interpreted as billing or quota impact.
+
+To roll back immediately, set `runtime.gatewayTransformations.mode` to `"off"`
+or remove the `gatewayTransformations` block.
+
+Production activation of Phase 2 behavior is blocked until one week of dogfood,
+zero trailing 7-day 5xx records, one clean Direct fallback recovery, and healthy
+`tierkit doctor gateway` evidence are available.

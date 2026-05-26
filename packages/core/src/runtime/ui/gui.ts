@@ -978,6 +978,7 @@ export const GUI_HTML = `<!doctype html>
       </label>
     </div>
     <div id="tk-gateway-browser-note" class="dim" style="font-size:10.5px;margin-top:6px;display:none">Use the VS Code sidebar to toggle.</div>
+    <div id="tk-gateway-transform-status" class="dim" style="font-size:10.5px;margin-top:6px">Experimental request transformation: Loading…</div>
   </section>
 
   <!-- ── ANTHROPIC GATEWAY DIAGNOSTICS card ──────────────────────────── -->
@@ -7272,6 +7273,7 @@ export const GUI_HTML = `<!doctype html>
   const tkGatewayToggle = $('tk-gateway-toggle');
   const tkGatewayToggleLabel = $('tk-gateway-toggle-label');
   const tkGatewayBrowserNote = $('tk-gateway-browser-note');
+  const tkGatewayTransformStatus = $('tk-gateway-transform-status');
 
   async function refreshGatewayToggle() {
     if (!tkGatewayToggle) return;
@@ -7290,13 +7292,22 @@ export const GUI_HTML = `<!doctype html>
         if (tkGatewayToggleLabel) {
           tkGatewayToggleLabel.textContent = r.data.gatewayMode === 'on' ? 'On' : 'Off';
         }
+        if (tkGatewayTransformStatus) {
+          const t = r.data.transformations || {};
+          const mode = typeof t.mode === 'string' ? t.mode : 'off';
+          const count = typeof t.allowlistedToolCount === 'number' ? t.allowlistedToolCount : 0;
+          const label = mode === 'off' ? 'Off' : mode === 'observe' ? 'Observe' : mode === 'envelope' ? 'Envelope' : 'Unknown';
+          tkGatewayTransformStatus.textContent = 'Experimental request transformation: ' + label + ' · allowlisted tools: ' + count;
+        }
       } else {
         tkGatewayToggle.disabled = true;
         if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
+        if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
       }
     } catch (_) {
       tkGatewayToggle.disabled = true;
       if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
+      if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
     }
   }
 

@@ -66,4 +66,20 @@ describe("doctorGateway", () => {
       }
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
+
+  it("reports transformation modes distinctly", async () => {
+    const observeDir = await projectWith({ version: "0.1", runtime: { gatewayTransformations: { mode: "observe" } } });
+    const envelopeDir = await projectWith({ version: "0.1", runtime: { gatewayTransformations: { mode: "envelope" } } });
+    try {
+      const observe = (await doctorGateway({ cwd: observeDir })).find((c) => c.id === "gateway-transformations");
+      expect(observe?.status).toBe("warn");
+      expect(observe?.detail).toContain("observe");
+      const envelope = (await doctorGateway({ cwd: envelopeDir })).find((c) => c.id === "gateway-transformations");
+      expect(envelope?.status).toBe("fail");
+      expect(envelope?.detail).toContain("without allowlisted tools");
+    } finally {
+      await rm(observeDir, { recursive: true, force: true });
+      await rm(envelopeDir, { recursive: true, force: true });
+    }
+  });
 });

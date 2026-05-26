@@ -76,6 +76,41 @@ export const BudgetPolicySchema = z
   })
   .strict();
 
+export const GatewayTransformationModeSchema = z.enum(["off", "observe", "envelope"]);
+
+export const GatewayToolResultEnvelopeConfigSchema = z
+  .object({
+    allowlistedToolNames: z.array(z.string().min(1)).default([]),
+    minInputUtf8Bytes: z.number().int().min(0).max(10 * 1024 * 1024).default(4096),
+    preservedHeadUtf8Bytes: z.number().int().min(0).max(64 * 1024).default(1024),
+    preservedTailUtf8Bytes: z.number().int().min(0).max(64 * 1024).default(1024),
+  })
+  .strict();
+
+export const GatewayTransformationsConfigSchema = z
+  .object({
+    mode: GatewayTransformationModeSchema.default("off"),
+    toolResultEnvelope: GatewayToolResultEnvelopeConfigSchema.default({
+      allowlistedToolNames: [],
+      minInputUtf8Bytes: 4096,
+      preservedHeadUtf8Bytes: 1024,
+      preservedTailUtf8Bytes: 1024,
+    }),
+  })
+  .strict()
+  .default({
+    mode: "off",
+    toolResultEnvelope: {
+      allowlistedToolNames: [],
+      minInputUtf8Bytes: 4096,
+      preservedHeadUtf8Bytes: 1024,
+      preservedTailUtf8Bytes: 1024,
+    },
+  });
+
+export type GatewayTransformationMode = z.infer<typeof GatewayTransformationModeSchema>;
+export type GatewayTransformationsConfig = z.infer<typeof GatewayTransformationsConfigSchema>;
+
 export const RuntimeConfigSchema = z
   .object({
     /** TCP port the local runtime daemon binds to. 0 = pick any free port. */
@@ -138,6 +173,7 @@ export const RuntimeConfigSchema = z
      * This flag does NOT enable any request/response transformation.
      */
     gatewayMode: z.enum(["off", "on"]).default("off"),
+    gatewayTransformations: GatewayTransformationsConfigSchema,
   })
   .strict();
 

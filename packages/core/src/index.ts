@@ -155,9 +155,14 @@ export {
   SecurityPolicySchema,
   BudgetPolicySchema,
   PerProfileBudgetSchema,
+  GatewayTransformationModeSchema,
+  GatewayToolResultEnvelopeConfigSchema,
+  GatewayTransformationsConfigSchema,
   CONFIG_FILENAME,
   type TierkitConfig,
   type PerProfileBudget,
+  type GatewayTransformationMode,
+  type GatewayTransformationsConfig,
 } from "./config/TierkitConfig.js";
 export {
   loadConfig,

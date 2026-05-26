@@ -75,3 +75,49 @@
 - Click sidebar toggle.
 - Expected: indeterminate-state error like "The gateway update request did not complete cleanly. Check the current status before trying again."
 - Expected: `tierkit.config.json` was NOT silently overwritten by the extension.
+
+## Phase 2 v1 experimental cases
+
+## Test 14 — Transformations off preserves Phase 1 passthrough
+- Set `runtime.gatewayMode: "on"` and remove `runtime.gatewayTransformations`, or set `runtime.gatewayTransformations.mode: "off"`.
+- Send a Claude Code request through the gateway.
+- Expected: upstream receives the original request body. Gateway status reports `transformations.mode: "off"`.
+
+## Test 15 — Observe mode does not rewrite request body
+- Set `runtime.gatewayTransformations.mode: "observe"`.
+- Send a synthetic request containing an assistant `tool_use` and matching user `tool_result`.
+- Expected: upstream receives the original body. Gateway log contains `transformation.outcome: "observed"` and payload byte fields.
+
+## Test 16 — Envelope mode with empty allowlist does not rewrite
+- Set `runtime.gatewayTransformations.mode: "envelope"` and `toolResultEnvelope.allowlistedToolNames: []`.
+- Send the same synthetic request.
+- Expected: upstream receives the original body. Gateway log contains `transformation.outcome: "bypassed_ineligible"`.
+
+## Test 17 — Allowlisted synthetic tool_result gets an envelope
+- Set `toolResultEnvelope.allowlistedToolNames: ["SyntheticRead"]` and a low `minInputUtf8Bytes`.
+- Send a synthetic `SyntheticRead` `tool_result` with large plain text content.
+- Expected: upstream request contains `[TIERKIT_TOOL_RESULT_ENVELOPE_V1]`, `content_sha256`, preserved head/tail, and no full original body in `.tierkit/runtime/anthropic-gateway.jsonl`.
+
+## Test 18 — Unsupported result bypass
+- Send image/blob/document-like `tool_result` content.
+- Expected: no rewrite and `transformation.outcome: "bypassed_ineligible"`.
+
+## Test 19 — Transformer failure recovers with raw passthrough
+- Inject a local test failure in the transform hook or run the automated fail-open test.
+- Expected: upstream receives the raw request body and gateway log records `transformation.outcome: "bypassed_error"`.
+
+## Test 20 — Safe log remains body-free
+- Grep `.tierkit/runtime/anthropic-gateway.jsonl` for known synthetic message text, tool output text, and credential test values.
+- Expected: no hits. The log may contain only safe enum/count/payload-byte fields.
+
+## Test 21 — Doctor reports transformation state
+- Run `tierkit doctor gateway` in `off`, `observe`, and `envelope` modes.
+- Expected: `off` is normal, `observe` is experimental, and `envelope` without an explicit allowlist fails diagnostics.
+
+## Test 22 — Direct fallback still strips gateway env
+- Repeat Test 5 while `runtime.gatewayTransformations.mode` is `observe` or `envelope`.
+- Expected: Direct terminal still removes `ANTHROPIC_BASE_URL`.
+
+## Test 23 — Sidebar copy remains bounded
+- Open the Tierkit sidebar.
+- Expected: the gateway card shows `Experimental request transformation: Off|Observe|Envelope`; it does not show token or billing impact claims.

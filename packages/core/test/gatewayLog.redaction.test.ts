@@ -49,6 +49,50 @@ describe("gatewayLog — redaction (value constraints + invariants)", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it("accepts safe transformation metrics and drops injected excerpts", async () => {
+    const { file, dir } = await tmpFile();
+    try {
+      await appendGatewayLog(file, {
+        ...baseRecord(),
+        transformation: {
+          mode: "envelope",
+          outcome: "transformed",
+          ruleId: "tool_result_envelope_v1",
+          eligibleToolResultCount: 1,
+          transformedToolResultCount: 1,
+          inputUtf8BytesBefore: 100,
+          inputUtf8BytesAfter: 60,
+          reducedUtf8Bytes: 40,
+          excerpt: "TOP_SECRET_TOOL_RESULT",
+        },
+      });
+      const raw = await readFile(file, "utf8");
+      expect(raw).toContain("\"transformation\"");
+      expect(raw).not.toContain("TOP_SECRET_TOOL_RESULT");
+      expect(raw).not.toContain("excerpt");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("rejects invalid transformation metric invariants", async () => {
+    const { file, dir } = await tmpFile();
+    try {
+      const metric = {
+        mode: "envelope",
+        outcome: "transformed",
+        ruleId: "tool_result_envelope_v1",
+        eligibleToolResultCount: 1,
+        transformedToolResultCount: 1,
+        inputUtf8BytesBefore: 100,
+        inputUtf8BytesAfter: 60,
+        reducedUtf8Bytes: 39,
+      };
+      await expect(appendGatewayLog(file, { ...baseRecord(), transformation: metric })).rejects.toThrow();
+      await expect(appendGatewayLog(file, { ...baseRecord(), transformation: { ...metric, outcome: "saved_tokens" } })).rejects.toThrow();
+      await expect(appendGatewayLog(file, { ...baseRecord(), transformation: { ...metric, inputUtf8BytesBefore: -1 } })).rejects.toThrow();
+      await expect(appendGatewayLog(file, { ...baseRecord(), transformation: { ...metric, eligibleToolResultCount: 0, reducedUtf8Bytes: 40 } })).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("rejects records missing required fields (async rejection)", async () => {
     const { file, dir } = await tmpFile();
     try {

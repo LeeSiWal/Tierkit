@@ -13,3 +13,38 @@ describe("RuntimeConfigSchema.gatewayMode", () => {
     expect(() => TierkitConfigSchema.parse({ version: "0.1", runtime: { gatewayMode: "auto" } })).toThrow();
   });
 });
+
+describe("RuntimeConfigSchema.gatewayTransformations", () => {
+  it("defaults to off with an empty allowlist", () => {
+    const parsed = TierkitConfigSchema.parse({ version: "0.1" });
+    expect(parsed.runtime.gatewayTransformations.mode).toBe("off");
+    expect(parsed.runtime.gatewayTransformations.toolResultEnvelope.allowlistedToolNames).toEqual([]);
+  });
+
+  it("accepts observe and envelope configuration", () => {
+    expect(TierkitConfigSchema.parse({ version: "0.1", runtime: { gatewayTransformations: { mode: "observe" } } }).runtime.gatewayTransformations.mode).toBe("observe");
+    const parsed = TierkitConfigSchema.parse({
+      version: "0.1",
+      runtime: {
+        gatewayTransformations: {
+          mode: "envelope",
+          toolResultEnvelope: {
+            allowlistedToolNames: ["SyntheticRead"],
+            minInputUtf8Bytes: 100,
+            preservedHeadUtf8Bytes: 10,
+            preservedTailUtf8Bytes: 10,
+          },
+        },
+      },
+    });
+    expect(parsed.runtime.gatewayTransformations.toolResultEnvelope.allowlistedToolNames).toEqual(["SyntheticRead"]);
+  });
+
+  it("rejects invalid transformation mode and thresholds", () => {
+    expect(() => TierkitConfigSchema.parse({ version: "0.1", runtime: { gatewayTransformations: { mode: "auto" } } })).toThrow();
+    expect(() => TierkitConfigSchema.parse({
+      version: "0.1",
+      runtime: { gatewayTransformations: { toolResultEnvelope: { minInputUtf8Bytes: -1 } } },
+    })).toThrow();
+  });
+});

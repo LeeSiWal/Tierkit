@@ -17,11 +17,12 @@ describe("GET /v1/gateway/status", () => {
     try {
       const res = await fetch(`${url}/v1/gateway/status`);
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { gatewayMode: string; routesEnabled: boolean; logPath: string };
+      const body = (await res.json()) as { gatewayMode: string; routesEnabled: boolean; logPath: string; transformations: { mode: string; allowlistedToolCount: number } };
       expect(body.gatewayMode).toBe("on");
       expect(body.routesEnabled).toBe(true);
       expect(path.isAbsolute(body.logPath)).toBe(true);
       expect(body.logPath).toContain(dir);
+      expect(body.transformations).toMatchObject({ mode: "off", allowlistedToolCount: 0 });
     } finally { await srv.close(); await rm(dir, { recursive: true, force: true }); }
   });
 
