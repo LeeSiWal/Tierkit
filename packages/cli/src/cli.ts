@@ -3,6 +3,7 @@ import { TIERKIT_VERSION } from "@tierkit/core";
 import type { CliContext } from "./context/CliContext.js";
 import { InitCommand } from "./commands/InitCommand.js";
 import { DoctorCommand } from "./commands/DoctorCommand.js";
+import { DoctorGatewayCommand } from "./commands/DoctorGatewayCommand.js";
 import { ModelsListCommand } from "./commands/models/ModelsListCommand.js";
 import { ModelsTestCommand } from "./commands/models/ModelsTestCommand.js";
 import { RouteExplainCommand } from "./commands/route/RouteExplainCommand.js";
@@ -79,6 +80,7 @@ export function buildCli(): Cli<CliContext> {
   // ── Setup + diagnostics ──────────────────────────────────────────────────
   cli.register(InitCommand);
   cli.register(DoctorCommand);
+  cli.register(DoctorGatewayCommand);
   cli.register(ConnectCommand);
   // v0.20: Claude Code auto-wire
   cli.register(ConnectClaudeCodeCommand);
