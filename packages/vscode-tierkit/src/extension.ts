@@ -1182,6 +1182,69 @@ export function activate(context: vscode.ExtensionContext): void {
       );
       sidebarRef?.render();
     }),
+
+    // Task 9: launch Claude Code with the Tierkit gateway.
+    vscode.commands.registerCommand("tierkit.launchClaudeCodeWithGateway", async () => {
+      const cfg = vscode.workspace.getConfiguration("tierkit");
+      const configuredBaseUrl = cfg.get<string>("baseUrl") ?? "http://127.0.0.1:4101";
+      const { classifyReadiness, gatewayLaunchCommand } = await import("./gatewayLaunchCore.js");
+      const { openGatewayTerminal } = await import("./gatewayTerminal.js");
+      const controlBaseUrl = controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl);
+
+      const readReadiness = async () => {
+        try {
+          const r = await fetch(`${controlBaseUrl}/v1/gateway/status`);
+          if (!r.ok) return classifyReadiness(null);
+          return classifyReadiness((await r.json()) as { gatewayMode?: "off" | "on"; routesEnabled?: boolean });
+        } catch {
+          return classifyReadiness(null);
+        }
+      };
+
+      let state = await readReadiness();
+
+      if (state.kind === "mode-off") {
+        void vscode.window.showInformationMessage(
+          vscode.l10n.t('Enable "Route Claude Code through Tierkit" before launching a routed session.'),
+        );
+        return;
+      }
+
+      if (state.kind === "unreachable") {
+        void vscode.window.setStatusBarMessage(vscode.l10n.t("Tierkit Gateway: starting daemon…"), 3000);
+        await vscode.commands.executeCommand("tierkit.restartDaemon");
+        const deadline = Date.now() + 3000;
+        while (Date.now() < deadline && state.kind !== "ready") {
+          await new Promise((r) => setTimeout(r, 300));
+          state = await readReadiness();
+          if (state.kind === "mode-off") {
+            void vscode.window.showInformationMessage(
+              vscode.l10n.t('Enable "Route Claude Code through Tierkit" before launching a routed session.'),
+            );
+            return;
+          }
+        }
+      }
+
+      if (state.kind !== "ready") {
+        const directLabel = vscode.l10n.t("Launch direct");
+        const pick = await vscode.window.showWarningMessage(
+          vscode.l10n.t("Tierkit Gateway unreachable. Launch Claude Code directly (no gateway)?"),
+          { modal: false }, directLabel, vscode.l10n.t("Cancel"),
+        );
+        if (pick === directLabel) {
+          const t = vscode.window.createTerminal({
+            name: "Claude Code (direct)",
+            env: { ANTHROPIC_BASE_URL: undefined as unknown as string },
+          });
+          t.show();
+          t.sendText(gatewayLaunchCommand(process.env), true);
+        }
+        return;
+      }
+
+      await openGatewayTerminal(controlBaseUrl);
+    }),
   );
 }
 

@@ -16,5 +16,6 @@
   "commands.restartDaemon": "Tierkit: Restart daemon",
   "commands.showOutput": "Tierkit: Show diagnostic output",
   "commands.addModelProfile": "Tierkit: Add model profile",
-  "commands.toggleGatewayMode": "Tierkit: Toggle gateway mode"
+  "commands.toggleGatewayMode": "Tierkit: Toggle gateway mode",
+  "command.launchClaudeCodeWithGateway": "Launch Claude Code through Tierkit"
 }
