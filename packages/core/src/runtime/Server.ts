@@ -1841,25 +1841,8 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 
         try {
           if (wantsStream) {
-            // Intercept res.end() so the stream-end signal is NOT sent to the client
-            // until AFTER the log has been committed. This ensures the test invariant:
-            // "log is present when await res.text() resolves" holds because the client
-            // only sees the final empty chunk AFTER logFinal has awaited appendGatewayLog.
-            const origEnd = res.end.bind(res) as (...args: unknown[]) => http.ServerResponse;
-            let pendingEnd: (() => void) | null = null;
-            (res.end as unknown) = (...args: unknown[]): http.ServerResponse => {
-              pendingEnd = () => { origEnd(...(args as Parameters<typeof origEnd>)); };
-              return res;
-            };
-            try {
-              await streamMessages(req, body, res);
-            } finally {
-              // Restore original end so logFinal and any subsequent error handling can
-              // call it without recursion.
-              (res.end as unknown) = origEnd;
-            }
+            await streamMessages(req, body, res);
             await logFinal(res.statusCode);
-            (pendingEnd ?? origEnd)();
             return;
           }
           const r = await forwardMessages(req, body);

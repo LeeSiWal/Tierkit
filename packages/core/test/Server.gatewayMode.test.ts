@@ -140,6 +140,10 @@ describe("Server — safe log (deterministic, every route)", () => {
         body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1, stream: true, messages: [] }),
       });
       await res.text(); // drain
+      // Phase 1 logs after streamMessages resolves; on loopback the client may
+      // observe completion before the server's async log write finishes. Small
+      // settle wait so we read the file after the writer's queue resolves.
+      await new Promise((r) => setTimeout(r, 50));
       const parsed = JSON.parse((await readFile(logPathFor(dir), "utf8")).trim());
       expect(parsed.path).toBe("/v1/messages");
       expect(parsed.stream).toBe(true);
