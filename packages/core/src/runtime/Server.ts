@@ -7,6 +7,7 @@ import { buildCompressedContext } from "../usecases/buildCompressedContext.js";
 import { compareCompressedContext } from "../usecases/compareCompressedContext.js";
 import { readArtifact, writeArtifact } from "./contextArtifactStore.js";
 import { readVerdict, writeVerdict, VerdictStoreError } from "./verdictStore.js";
+import { forwardMessages, streamMessages, forwardCountTokens } from "./anthropicGateway.js";
 import {
   buildContextPack,
   clearFileDigestCache,
@@ -1791,6 +1792,51 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         return;
       }
 
+      // Anthropic Gateway Phase 0 spike (branch only — not shipped to users yet):
+      // Transparent passthrough so Claude Code can be pointed at Tierkit via
+      // ANTHROPIC_BASE_URL=http://127.0.0.1:4101. No compression, no redaction,
+      // no UI, no auto-wire — those land in Phase 1+ after the spike's RFC
+      // answers the three open validation questions. See
+      // docs/RFC-anthropic-gateway.md.
+      if (route === "POST /v1/messages") {
+        const body = await readRawBody(req);
+        const wantsStream = isStreamingMessagesBody(body);
+        try {
+          if (wantsStream) {
+            await streamMessages(req, body, res);
+            return;
+          }
+          const r = await forwardMessages(req, body);
+          for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
+          res.statusCode = r.status;
+          res.end(r.body);
+          return;
+        } catch (err) {
+          // If we already started streaming (headers or chunks sent), we cannot
+          // pivot to a JSON 502 — the client would see a mixed-protocol response.
+          // Destroy the socket instead; Claude Code surfaces this as a network
+          // error, which is the honest signal.
+          if (res.headersSent) {
+            res.destroy(err as Error);
+            return;
+          }
+          return sendJson(res, 502, { type: "error", error: { type: "upstream_error", message: (err as Error).message } });
+        }
+      }
+
+      if (route === "POST /v1/messages/count_tokens") {
+        const body = await readRawBody(req);
+        try {
+          const r = await forwardCountTokens(req, body);
+          for (const [k, v] of Object.entries(r.headers)) res.setHeader(k, v);
+          res.statusCode = r.status;
+          res.end(r.body);
+          return;
+        } catch (err) {
+          return sendJson(res, 502, { type: "error", error: { type: "upstream_error", message: (err as Error).message } });
+        }
+      }
+
       if (route === "POST /v1/config/init") {
         const body = await readJsonBody<{ force?: boolean; defaultTarget?: "roo" | "zoo" | "cline" | "continue" | "claude-code" | "generic" }>(req);
         const r = await initProject({
@@ -2011,6 +2057,35 @@ async function readJsonBody<T>(req: http.IncomingMessage): Promise<T | undefined
     return JSON.parse(Buffer.concat(chunks).toString("utf8")) as T;
   } catch {
     return undefined;
+  }
+}
+
+/** Phase 0 spike: read inbound bytes as a Buffer for byte-faithful upstream
+ *  forwarding. Anthropic Messages payloads can be a few hundred KB with full
+ *  conversation history + caching, so the 5 MB ceiling matches readJsonBody. */
+async function readRawBody(req: http.IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buf.length;
+    if (total > 5_000_000) throw new Error("request body too large");
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** MUST be a real JSON parse, not a regex. A user message that contains the
+ *  text `"stream": true` would false-positive a regex check — and the proxy
+ *  would switch to streaming mode against a non-streaming request, hanging
+ *  Claude Code. Parse once for the decision; the upstream call still gets
+ *  the ORIGINAL Buffer (never our re-serialized form). */
+function isStreamingMessagesBody(body: Buffer): boolean {
+  try {
+    const parsed = JSON.parse(body.toString("utf8")) as { stream?: unknown };
+    return parsed.stream === true;
+  } catch {
+    return false;
   }
 }
 
