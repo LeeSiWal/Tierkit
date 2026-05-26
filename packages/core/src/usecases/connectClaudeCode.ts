@@ -219,6 +219,17 @@ export interface ConnectClaudeCodeInput {
   nodeBinary?: string;
   /** Override the home directory (test injection). Default os.homedir(). */
   homeDir?: string;
+  /**
+   * v0.22.5: when true, only update an entry that ALREADY exists in the
+   * target config. Never creates a new entry. Used by the daemon's host-info
+   * handler to auto-heal stale cliPath references after an extension auto-
+   * update — without silently opting in users who never wired Claude Code.
+   *
+   * When this is set and no `tierkit` entry exists, the function returns
+   * early with `skipped: true` and writes nothing (MCP config + CLAUDE.md
+   * both untouched).
+   */
+  onlyIfAlreadyConnected?: boolean;
 }
 
 export interface ConnectClaudeCodeResult {
@@ -239,6 +250,9 @@ export interface ConnectClaudeCodeResult {
     binaryError?: string;
     resolvedCommand: string;
   };
+  /** v0.22.5: true when `onlyIfAlreadyConnected` was set and no existing
+   *  tierkit entry was found — no files were touched. */
+  skipped?: boolean;
 }
 
 export interface DisconnectClaudeCodeInput {
@@ -492,6 +506,28 @@ export async function connectClaudeCode(input: ConnectClaudeCodeInput): Promise<
   // 1. MCP entry
   const existingCfg = (await readJson(mcpConfigPath)) ?? {};
   const servers = getMcpServersObject(existingCfg);
+
+  // v0.22.5: auto-heal mode — refuse to create entries we don't own. If no
+  // tierkit entry is already there, bail out cleanly without writing CLAUDE.md
+  // either. This keeps the host-info hook safe to fire on every daemon start.
+  if (input.onlyIfAlreadyConnected && !servers[TK_MCP_SERVER_NAME]) {
+    return {
+      ok: true,
+      mcpConfigPath,
+      mcpServerName: TK_MCP_SERVER_NAME,
+      claudeMdPath: null,
+      claudeMdWritten: false,
+      alreadyConnected: false,
+      verification: {
+        fileWritten: false,
+        fileContainsEntry: false,
+        binaryLaunchable: false,
+        resolvedCommand,
+      },
+      skipped: true,
+    };
+  }
+
   const alreadyConnected = JSON.stringify(servers[TK_MCP_SERVER_NAME]) === JSON.stringify(desiredEntry);
 
   if (!alreadyConnected) {

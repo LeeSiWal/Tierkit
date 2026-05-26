@@ -447,7 +447,35 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         const body = await readJsonBody<{ cliPath?: unknown; nodeBinary?: unknown }>(req) ?? {};
         if (typeof body.cliPath === "string") hostInfo.cliPath = body.cliPath;
         if (typeof body.nodeBinary === "string") hostInfo.nodeBinary = body.nodeBinary;
-        return sendJson(res, 200, { ok: true, hostInfo });
+
+        // v0.22.5: auto-heal stale cliPath in existing tierkit MCP entries.
+        // When VS Code auto-updates the extension, context.extensionPath
+        // changes (…/leesiwal.tierkit-vscode-0.22.X/…) and the entry in
+        // .mcp.json / ~/.claude.json is left pointing at the old folder.
+        // Without this hook the user has to manually click Connect again.
+        //
+        // `onlyIfAlreadyConnected: true` guarantees we never create new
+        // entries — users who never opted into MCP wire-up stay untouched.
+        const autoHealed = { workspace: false, global: false };
+        if (hostInfo.cliPath) {
+          const common = {
+            workspaceRoot: opts.cwd,
+            instructionsLevel: "none" as InstructionsLevel,
+            cliPath: hostInfo.cliPath,
+            ...(hostInfo.nodeBinary ? { nodeBinary: hostInfo.nodeBinary } : {}),
+            ...(opts.homeDir ? { homeDir: opts.homeDir } : {}),
+            onlyIfAlreadyConnected: true,
+          };
+          for (const scope of ["workspace", "global"] as const) {
+            try {
+              const r = await connectClaudeCode({ ...common, scope });
+              autoHealed[scope] = !r.skipped;
+            } catch (err) {
+              console.error(`[tierkit] host-info auto-heal (${scope}) failed:`, err);
+            }
+          }
+        }
+        return sendJson(res, 200, { ok: true, hostInfo, autoHealed });
       }
       if (route === "POST /v1/claude-code/connect") {
         const body = await readJsonBody<{

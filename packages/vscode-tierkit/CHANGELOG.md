@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.22.5 — 2026-05-26
+
+**Auto-heal stale MCP cliPath after extension updates.**
+
+When VS Code auto-updates the extension (e.g. 0.22.4 → 0.22.5), `context.extensionPath` changes to point at the new versioned folder, but any existing `.mcp.json` / `~/.claude.json` `tierkit` entry still references the OLD folder. Once VS Code GCs the old extension directory, Claude Code can no longer spawn the MCP server and silently produces 0 tool calls — surfacing as "the Savings card is stuck at 0" without any obvious error.
+
+The daemon's `POST /v1/claude-code/host-info` endpoint (fired on every extension activation) now detects stale `cliPath` references in BOTH the workspace and global MCP configs and rewrites them in place. The new `onlyIfAlreadyConnected: true` flag on `connectClaudeCode` guarantees we never opt a user in who didn't already wire up MCP — the auto-heal only updates entries that already exist.
+
+- feat(core): `connectClaudeCode` honors `onlyIfAlreadyConnected: true` (skips when no entry, rewrites when present)
+- feat(core): `/v1/claude-code/host-info` runs auto-heal for both scopes on every call, returns `autoHealed: { workspace, global }` so the extension can log it
+- test(core): 3 new connectClaudeCode tests for the flag + 3 new Server.hostInfoAutoHeal integration tests (975 total tests pass)
+
 ## 0.22.4 — 2026-05-26
 
 **Savings "today" window now uses local midnight + sidebar overflow fix + recommended-spec docs.**

@@ -283,3 +283,59 @@ describe("claudeCodeStatus", () => {
     expect(s.connectedWorkspace).toBe(true);
   });
 });
+
+describe("connectClaudeCode — onlyIfAlreadyConnected (v0.22.5 auto-heal)", () => {
+  it("skips entirely when no existing entry and onlyIfAlreadyConnected=true", async () => {
+    // Pre: no .mcp.json exists in the fresh workspace.
+    const r = await connectClaudeCode({
+      workspaceRoot: workspace,
+      scope: "workspace",
+      instructionsLevel: "none",
+      homeDir: fakeHome,
+      cliPath: "/tmp/fake-cli-v1/index.js",
+      onlyIfAlreadyConnected: true,
+    });
+    expect(r.skipped).toBe(true);
+    // No file should have been created — auto-heal must never opt a user in.
+    await expect(fs.access(path.join(workspace, ".mcp.json"))).rejects.toThrow();
+  });
+
+  it("rewrites stale cliPath when entry exists and onlyIfAlreadyConnected=true", async () => {
+    // First connect with an old path simulating extension v0.22.3.
+    await connectClaudeCode({
+      workspaceRoot: workspace,
+      scope: "workspace",
+      instructionsLevel: "none",
+      homeDir: fakeHome,
+      cliPath: "/old/extensions/tierkit-vscode-0.22.3/cli/index.js",
+    });
+    const before = JSON.parse(await fs.readFile(path.join(workspace, ".mcp.json"), "utf8"));
+    expect(before.mcpServers.tierkit.args[0]).toBe("/old/extensions/tierkit-vscode-0.22.3/cli/index.js");
+
+    // Now simulate the daemon waking up post-update with the new path.
+    const r = await connectClaudeCode({
+      workspaceRoot: workspace,
+      scope: "workspace",
+      instructionsLevel: "none",
+      homeDir: fakeHome,
+      cliPath: "/new/extensions/tierkit-vscode-0.22.5/cli/index.js",
+      onlyIfAlreadyConnected: true,
+    });
+    expect(r.skipped).toBeFalsy();
+    expect(r.alreadyConnected).toBe(false);
+    const after = JSON.parse(await fs.readFile(path.join(workspace, ".mcp.json"), "utf8"));
+    expect(after.mcpServers.tierkit.args[0]).toBe("/new/extensions/tierkit-vscode-0.22.5/cli/index.js");
+  });
+
+  it("default behavior (onlyIfAlreadyConnected absent) still creates new entries", async () => {
+    // Regression guard for the existing first-time-connect flow.
+    const r = await connectClaudeCode({
+      workspaceRoot: workspace,
+      scope: "workspace",
+      instructionsLevel: "none",
+      homeDir: fakeHome,
+    });
+    expect(r.skipped).toBeFalsy();
+    await fs.access(path.join(workspace, ".mcp.json"));
+  });
+});
