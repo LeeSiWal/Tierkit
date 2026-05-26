@@ -267,6 +267,51 @@ describe("streamMessages (SSE passthrough)", () => {
       await upstream.close();
     }
   });
+
+  it("preserves a tool_use SSE sequence without loss or reordering", async () => {
+    // The text-delta test (above) covers the simple case. Validation C is
+    // specifically about multi-turn tool_use loops, so the spike needs a
+    // unit test that exercises the tool_use event shapes Claude Code
+    // actually sends. This doesn't replace the manual Claude Code
+    // smoke test in Task 12, but it makes the automated half of C real.
+    const events = [
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"m_tool"}}\n\n`,
+      `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}}\n\n`,
+      `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"broken.js\\"}"}}\n\n`,
+      `event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`,
+      `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n`,
+      `event: message_stop\ndata: {"type":"message_stop"}\n\n`,
+    ];
+    const upstream = await startStreamingUpstream(events);
+    try {
+      const written: Buffer[] = [];
+      const { EventEmitter } = await import("node:events");
+      const res = Object.assign(new EventEmitter(), {
+        setHeader: () => {},
+        write: (chunk: Buffer | string) => {
+          written.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+          return true;
+        },
+        end: () => {},
+        statusCode: 0,
+        headersSent: false,
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.ServerResponse;
+      const req = Object.assign(new EventEmitter(), {
+        headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.IncomingMessage;
+      await streamMessages(
+        req,
+        Buffer.from(JSON.stringify({ stream: true })),
+        res,
+        { upstreamBaseUrl: upstream.url },
+      );
+      expect(Buffer.concat(written).toString("utf8")).toBe(events.join(""));
+    } finally {
+      await upstream.close();
+    }
+  });
 });
 
 describe("observeAuthHeaders (spike diagnostic — fingerprints only, never raw tokens)", () => {
