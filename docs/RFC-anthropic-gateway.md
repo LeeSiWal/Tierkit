@@ -84,15 +84,18 @@ Per the spike's hard rule, no verbatim Authorization or x-api-key value was logg
 
 ## Phase 1 scope sketch (separate plan to follow)
 
+**Important framing**: Phase 1 is *pure passthrough productization* — it does NOT compress, dedupe, redact, or save tokens. The user-facing language must reflect that. Token-savings claims belong in Phase 2 once `tool_result` envelope + cursor pagination + dedupe land. Phase 1's job is to make the gateway pipe a first-class, safely-instrumented product feature so Phase 2 has a stable substrate.
+
 Not in this RFC's scope, but recorded for planning:
 
-1. VS Code extension: optional `tierkit.gatewayMode` setting that, when enabled, sets `ANTHROPIC_BASE_URL` for shells launched from the integrated terminal AND wires `claude` config so the user doesn't have to `export` manually.
-2. Sidebar card: "Claude Code routing — Direct / Gateway" with one-click toggle. When gateway is on, show recent gateway request count + latest savings.
-3. Per-request safe log (`.tierkit/runtime/anthropic-gateway.jsonl`) with the diagnostic shape from `observeAuthHeaders` plus request path / stream / status / ts. Strict allowlist — no body, no tool_result contents.
-4. `auto-heal` for `ANTHROPIC_BASE_URL` analogous to 0.22.5's MCP path auto-heal: when extension auto-updates, re-export the env hint into Claude Code's environment so the user doesn't manually re-export every release.
-5. Onboarding card: "You're a Claude Max user — route through Tierkit to get token savings + local policy" with a single Enable button (driven by A's positive result).
-6. Documentation: README "Gateway mode" section, with the three pre-flight checks (infra, BYOK, subscription) folded into a single doctor script.
-7. Phase 2 entry gate: only after Phase 1 ships, layer in tool_result dedupe + secret redaction at the gateway request transformation hook.
+1. **Setting + sidebar toggle**: `tierkit.gatewayMode: off | on` setting and a sidebar control labeled **"Route Claude Code through Tierkit"** — NOT "Token savings" or "절감". Status surfaces are `Connected` / `Offline` / `Error` plus recent request count, not a "savings" number.
+2. **Scoped env injection only**: a "Launch Claude Code through Tierkit" button opens a VS Code integrated terminal with `ANTHROPIC_BASE_URL` set for THAT terminal only. Phase 1 does NOT modify `.zshrc` or any persistent shell profile — too invasive, hard to reverse, and risks breaking Claude Code system-wide when the daemon is down.
+3. **Per-request safe log** (`.tierkit/runtime/anthropic-gateway.jsonl`): allowlist of `{ ts, path, stream, status, durationMs, auth.scheme, auth.fingerprint }` only. NO `Authorization` raw, NO `x-api-key` raw, NO request body, NO `system` prompt, NO `messages[]`, NO `tool_result` contents, NO SSE response body. Rotation: 7-day retention OR 5 MB cap, whichever first.
+4. **Auto-heal + Direct fallback**: gateway-mode-on but daemon offline → auto-start daemon, then if still failing, surface "Gateway unreachable — run in Direct mode?" button. On extension auto-update, re-issue the env hint (analogous to 0.22.5's `.mcp.json` path auto-heal).
+5. **Onboarding card** (driven by A's positive result): "Route Claude Code through Tierkit to enable upcoming context-savings and policy features" — explicit "upcoming", no current savings claim. Detect subscription users (`ANTHROPIC_API_KEY` absent + Claude Code installed) and offer the toggle.
+6. **`tierkit doctor gateway`** CLI + matching sidebar diagnostics card: daemon reachable, `/v1/messages` route active, Claude Code installed, MCP config present, can construct the gateway-mode launch command. Credential check must report mode (subscription / api-key / unknown) without exposing values.
+7. **README + UI language**: "Phase 1 is a passthrough connection feature; context-savings measurement and compression arrive in Phase 2." Both English and Korean.
+8. **Phase 2 entry gate**: only after Phase 1 ships and dogfood shows the pipe is stable, layer in `tool_result` envelope + cursor pagination + dedupe + secret redaction at the gateway request/response transformation hook. THAT is where token-savings claims become factually defensible.
 
 ## Out of scope for both spike and Phase 1
 
