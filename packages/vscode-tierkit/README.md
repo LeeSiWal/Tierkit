@@ -17,8 +17,9 @@
 
 This extension is the VS Code companion. The daemon **auto-starts in-process** on activation — open a folder, the daemon runs.
 
-## What's new in 0.24
+## What's new in 0.25
 
+- **0.25.0** — MCP Compact Context groundwork. Tierkit now includes disabled-by-default `runtime.measuredCompact` configuration, compact context metadata on `tierkit.get_file_digest`, and Gateway status / `tierkit doctor gateway` reporting for measured compact readiness. Official request-level Anthropic Token Counting API comparison is not active yet; it remains blocked until MCP and Gateway can share raw-equivalent baselines through memory only.
 - **0.24.1** — Release-facing README copy aligned with the Anthropic Gateway release: Gateway connection is stable; experimental request transformation remains disabled by default.
 - **0.24.0** — Anthropic Gateway Connection. Route Claude Code through Tierkit with status, diagnostics, scoped terminal launch, Direct fallback, and safe local gateway request logging. Experimental request transformation infrastructure is included but requires explicit opt-in.
 

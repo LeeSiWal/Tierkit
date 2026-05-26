@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.25.0 — 2026-05-27
+
+### MCP Compact Context Groundwork
+
+Added:
+
+- Added disabled-by-default `runtime.measuredCompact` configuration for the MCP-first measured compact direction.
+- `tierkit.get_file_digest` now includes compact context metadata with a retrieve-more path.
+- Gateway status and `tierkit doctor gateway` now report measured compact state and the current request-level measurement blocker.
+- Existing Anthropic Gateway passthrough remains the default behavior.
+
+Notes:
+
+- Official request-level Anthropic Token Counting API comparison is not active in this release.
+- Request-level measurement remains blocked until MCP and Gateway can share raw-equivalent baselines through memory only.
+- Existing digest `savedTokens` values remain local estimates and are not presented as official measurement.
+
+### MCP Compact Context 기반 정리
+
+추가:
+
+- MCP-first measured compact 방향을 위한 기본 비활성 `runtime.measuredCompact` 설정을 추가했습니다.
+- `tierkit.get_file_digest`가 compact context metadata와 retrieve-more 경로를 포함합니다.
+- Gateway status와 `tierkit doctor gateway`가 measured compact 상태와 현재 request-level measurement blocker를 보고합니다.
+- 기존 Anthropic Gateway passthrough가 계속 기본 동작입니다.
+
+참고:
+
+- 이 릴리즈에서는 Anthropic Token Counting API 기반 request-level 공식 비교가 활성화되지 않습니다.
+- MCP와 Gateway가 raw-equivalent baseline을 memory-only로 공유할 수 있을 때까지 request-level measurement는 blocked 상태입니다.
+- 기존 digest `savedTokens` 값은 로컬 추정값이며 공식 측정값으로 표시하지 않습니다.
+
 ## 0.24.1 — 2026-05-26
 
 ### Release Copy Alignment
