@@ -74,6 +74,15 @@ describe("GUI_HTML inline script", () => {
     expect(script).toMatch(/_healthWasOffline[\s\S]{0,200}refreshAll\(\)/);
   });
 
+  it("gateway status request cannot leave the sidebar in permanent Loading state", () => {
+    const script = extractScript();
+    expect(GUI_HTML).toContain('id="tk-gateway-measured-compact-status"');
+    expect(script).toContain("requestGatewayStatusWithTimeout");
+    expect(script).toContain("setGatewayUnavailable");
+    expect(script).toMatch(/setTimeout[\s\S]{0,120}ctrl\.abort/);
+    expect(script).toContain("Measured Compact Context: ");
+  });
+
   it("does not call acquireVsCodeApi more than once (VS Code webview API contract)", () => {
     const script = extractScript();
     let acquireCount = 0;

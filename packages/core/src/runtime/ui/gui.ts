@@ -979,6 +979,7 @@ export const GUI_HTML = `<!doctype html>
     </div>
     <div id="tk-gateway-browser-note" class="dim" style="font-size:10.5px;margin-top:6px;display:none">Use the VS Code sidebar to toggle.</div>
     <div id="tk-gateway-transform-status" class="dim" style="font-size:10.5px;margin-top:6px">Experimental request transformation: Loading…</div>
+    <div id="tk-gateway-measured-compact-status" class="dim" style="font-size:10.5px;margin-top:6px;display:none"></div>
   </section>
 
   <!-- ── ANTHROPIC GATEWAY DIAGNOSTICS card ──────────────────────────── -->
@@ -7274,6 +7275,63 @@ export const GUI_HTML = `<!doctype html>
   const tkGatewayToggleLabel = $('tk-gateway-toggle-label');
   const tkGatewayBrowserNote = $('tk-gateway-browser-note');
   const tkGatewayTransformStatus = $('tk-gateway-transform-status');
+  const tkGatewayMeasuredCompactStatus = $('tk-gateway-measured-compact-status');
+
+  function setGatewayUnavailable(detail) {
+    if (tkGatewayToggle) tkGatewayToggle.disabled = true;
+    if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = detail || 'Unavailable';
+    if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
+    if (tkGatewayMeasuredCompactStatus) {
+      tkGatewayMeasuredCompactStatus.style.display = 'none';
+      tkGatewayMeasuredCompactStatus.textContent = '';
+    }
+  }
+
+  async function requestGatewayStatusWithTimeout() {
+    var ctrl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timer = null;
+    if (ctrl) {
+      timer = setTimeout(function () {
+        try { ctrl.abort(); } catch (_) {}
+      }, 3000);
+    }
+    try {
+      return await transport.request('/v1/gateway/status', {
+        method: 'GET',
+        signal: ctrl ? ctrl.signal : undefined,
+      });
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  function renderMeasuredCompactStatus(data) {
+    if (!tkGatewayMeasuredCompactStatus) return;
+    var m = data && data.measuredCompact && typeof data.measuredCompact === 'object'
+      ? data.measuredCompact
+      : null;
+    if (!m) {
+      tkGatewayMeasuredCompactStatus.style.display = 'none';
+      tkGatewayMeasuredCompactStatus.textContent = '';
+      return;
+    }
+    tkGatewayMeasuredCompactStatus.style.display = '';
+    var mode = typeof m.mode === 'string' ? m.mode : 'unknown';
+    var measurement = typeof m.officialTokenMeasurement === 'string' ? m.officialTokenMeasurement : 'unknown';
+    var compactLabel = mode === 'off' ? 'Off' : mode === 'measured_compact' ? 'Enabled' : 'Unknown';
+    var measurementLabel =
+      measurement === 'off' ? 'Off' :
+      measurement === 'anthropic_count_tokens_opt_in' ? 'Enabled by opt-in' :
+      'Unknown';
+    var parts = [
+      'Measured Compact Context: ' + compactLabel,
+      'Official measurement: ' + measurementLabel,
+    ];
+    if (m.requestLevelMeasurementAvailable === false && m.blockedReason) {
+      parts.push('blocked: ' + String(m.blockedReason));
+    }
+    tkGatewayMeasuredCompactStatus.textContent = parts.join(' · ');
+  }
 
   async function refreshGatewayToggle() {
     if (!tkGatewayToggle) return;
@@ -7282,10 +7340,11 @@ export const GUI_HTML = `<!doctype html>
       tkGatewayToggle.disabled = true;
       if (tkGatewayBrowserNote) tkGatewayBrowserNote.style.display = '';
       if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Gateway (disabled in browser)';
+      renderMeasuredCompactStatus(null);
       return;
     }
     try {
-      const r = await transport.request('/v1/gateway/status', { method: 'GET' });
+      const r = await requestGatewayStatusWithTimeout();
       if (r.ok && r.data && typeof r.data.gatewayMode === 'string') {
         tkGatewayToggle.checked = r.data.gatewayMode === 'on';
         tkGatewayToggle.disabled = false;
@@ -7299,15 +7358,12 @@ export const GUI_HTML = `<!doctype html>
           const label = mode === 'off' ? 'Off' : mode === 'observe' ? 'Observe' : mode === 'envelope' ? 'Envelope' : 'Unknown';
           tkGatewayTransformStatus.textContent = 'Experimental request transformation: ' + label + ' · allowlisted tools: ' + count;
         }
+        renderMeasuredCompactStatus(r.data);
       } else {
-        tkGatewayToggle.disabled = true;
-        if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
-        if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
+        setGatewayUnavailable('Unavailable');
       }
     } catch (_) {
-      tkGatewayToggle.disabled = true;
-      if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
-      if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
+      setGatewayUnavailable('Unavailable');
     }
   }
 
