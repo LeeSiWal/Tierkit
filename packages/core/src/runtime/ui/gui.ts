@@ -967,6 +967,29 @@ export const GUI_HTML = `<!doctype html>
     <div id="onboarding-trace" style="display:none;font-size:11px;margin-top:8px;padding:6px 8px;background:var(--bg-input);border-radius:4px;font-family:var(--mono);color:var(--fg-dim)"></div>
   </div>
 
+  <!-- ── ANTHROPIC GATEWAY PHASE 1 toggle card ──────────────────────── -->
+  <section class="card tk-anthropic-gateway-card">
+    <h2>Route Claude Code through Tierkit</h2>
+    <p class="dim" style="font-size:11.5px;margin-top:0">Phase 1 passthrough connection. Requests are routed through the local Tierkit daemon without modifying message content.</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <label class="toggle-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="tk-gateway-toggle" disabled style="width:16px;height:16px">
+        <span id="tk-gateway-toggle-label" style="font-size:12px">Loading…</span>
+      </label>
+    </div>
+    <div id="tk-gateway-browser-note" class="dim" style="font-size:10.5px;margin-top:6px;display:none">Use the VS Code sidebar to toggle.</div>
+    <div id="tk-gateway-transform-status" class="dim" style="font-size:10.5px;margin-top:6px">Experimental request transformation: Loading…</div>
+  </section>
+
+  <!-- ── ANTHROPIC GATEWAY DIAGNOSTICS card ──────────────────────────── -->
+  <section class="card tk-gateway-diagnostics-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <h2 style="margin:0">Anthropic Gateway — diagnostics</h2>
+      <button id="tk-gateway-diag-refresh" class="tiny">↻ Refresh</button>
+    </div>
+    <div id="tk-gateway-diag-list" style="margin-top:8px;font-size:11.5px"></div>
+  </section>
+
   <!-- ── MCP BRIDGE card (v0.15, extended in v0.18) ──────────────────── -->
   <section class="card mcp-bridge-card">
     <h2 data-i18n="cardMcpBridge">Connect Claude Code (MCP)</h2>
@@ -7233,6 +7256,112 @@ export const GUI_HTML = `<!doctype html>
   }
   renderMcpPatches();
   setInterval(renderMcpPatches, 5000);
+
+  // ── Anthropic Gateway Phase 1 toggle card ────────────────────────────
+  // postTierkitCommand: sends a tk:cmd to the extension host (VS Code only).
+  // Uses the vsApi handle already acquired by createVsCodeTransport() above —
+  // acquireVsCodeApi() may only be called once per page, so we must NOT call it again.
+  // In browser context vsApi is null and this returns false (toggle is disabled above).
+  function postTierkitCommand(commandName) {
+    if (vsApi) {
+      vsApi.postMessage({ type: 'tk:cmd', command: commandName });
+      return true;
+    }
+    return false;
+  }
+
+  const tkGatewayToggle = $('tk-gateway-toggle');
+  const tkGatewayToggleLabel = $('tk-gateway-toggle-label');
+  const tkGatewayBrowserNote = $('tk-gateway-browser-note');
+  const tkGatewayTransformStatus = $('tk-gateway-transform-status');
+
+  async function refreshGatewayToggle() {
+    if (!tkGatewayToggle) return;
+    // Check if we're in VS Code context; if not, disable with a note.
+    if (typeof acquireVsCodeApi !== 'function') {
+      tkGatewayToggle.disabled = true;
+      if (tkGatewayBrowserNote) tkGatewayBrowserNote.style.display = '';
+      if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Gateway (disabled in browser)';
+      return;
+    }
+    try {
+      const r = await transport.request('/v1/gateway/status', { method: 'GET' });
+      if (r.ok && r.data && typeof r.data.gatewayMode === 'string') {
+        tkGatewayToggle.checked = r.data.gatewayMode === 'on';
+        tkGatewayToggle.disabled = false;
+        if (tkGatewayToggleLabel) {
+          tkGatewayToggleLabel.textContent = r.data.gatewayMode === 'on' ? 'On' : 'Off';
+        }
+        if (tkGatewayTransformStatus) {
+          const t = r.data.transformations || {};
+          const mode = typeof t.mode === 'string' ? t.mode : 'off';
+          const count = typeof t.allowlistedToolCount === 'number' ? t.allowlistedToolCount : 0;
+          const label = mode === 'off' ? 'Off' : mode === 'observe' ? 'Observe' : mode === 'envelope' ? 'Envelope' : 'Unknown';
+          tkGatewayTransformStatus.textContent = 'Experimental request transformation: ' + label + ' · allowlisted tools: ' + count;
+        }
+      } else {
+        tkGatewayToggle.disabled = true;
+        if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
+        if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
+      }
+    } catch (_) {
+      tkGatewayToggle.disabled = true;
+      if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
+      if (tkGatewayTransformStatus) tkGatewayTransformStatus.textContent = 'Experimental request transformation: Unavailable';
+    }
+  }
+
+  if (tkGatewayToggle) {
+    tkGatewayToggle.addEventListener('change', () => {
+      // Dispatch the toggle command via the extension host (VS Code only).
+      // In browser context postTierkitCommand returns false — the toggle
+      // is disabled above so this path is unreachable in practice.
+      postTierkitCommand('tierkit.toggleGatewayMode');
+      // Optimistically flip the label; actual state will update on next refresh.
+      if (tkGatewayToggleLabel) {
+        tkGatewayToggleLabel.textContent = tkGatewayToggle.checked ? 'On' : 'Off';
+      }
+    });
+    void refreshGatewayToggle();
+  }
+
+  // ── Anthropic Gateway diagnostics card ─────────────────────────────────
+  const tkGatewayDiagList = $('tk-gateway-diag-list');
+  const tkGatewayDiagRefresh = $('tk-gateway-diag-refresh');
+
+  async function refreshGatewayDiagnostics() {
+    if (!tkGatewayDiagList) return;
+    tkGatewayDiagList.textContent = 'Loading…';
+    try {
+      const r = await transport.request('/v1/doctor/gateway', { method: 'GET' });
+      if (!r.ok || !r.data || !Array.isArray(r.data.checks)) {
+        tkGatewayDiagList.innerHTML = '<span style="color:var(--err)">Failed to load diagnostics.</span>';
+        return;
+      }
+      const checks = r.data.checks;
+      if (checks.length === 0) {
+        tkGatewayDiagList.innerHTML = '<span class="dim">No diagnostic checks available.</span>';
+        return;
+      }
+      tkGatewayDiagList.innerHTML = checks.map((c) => {
+        const statusColor =
+          c.status === 'ok'   ? 'var(--ok)'   :
+          c.status === 'warn' ? 'var(--warn)'  :
+                                'var(--err)';
+        const dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + statusColor + ';flex-shrink:0"></span>';
+        const label = '<span style="font-weight:500">' + escapeHtml(c.label) + '</span>';
+        const detail = c.detail ? ' <span class="dim" style="font-size:10.5px">— ' + escapeHtml(c.detail) + '</span>' : '';
+        return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0">' + dot + label + detail + '</div>';
+      }).join('');
+    } catch (_) {
+      if (tkGatewayDiagList) tkGatewayDiagList.innerHTML = '<span style="color:var(--err)">Connection error.</span>';
+    }
+  }
+
+  if (tkGatewayDiagRefresh) {
+    tkGatewayDiagRefresh.addEventListener('click', () => { void refreshGatewayDiagnostics(); });
+  }
+  void refreshGatewayDiagnostics();
 
   refreshAll();
   void subscribeSavings();

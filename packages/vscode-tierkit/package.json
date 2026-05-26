@@ -1,7 +1,7 @@
 {
   "name": "tierkit-vscode",
   "displayName": "Tierkit",
-  "version": "0.22.6",
+  "version": "0.23.0-spike.0",
   "private": true,
   "description": "%description%",
   "license": "MIT",
@@ -112,6 +112,15 @@
       {
         "command": "tierkit.addModelProfile",
         "title": "%commands.addModelProfile%"
+      },
+      {
+        "command": "tierkit.toggleGatewayMode",
+        "title": "%commands.toggleGatewayMode%"
+      },
+      {
+        "command": "tierkit.launchClaudeCodeWithGateway",
+        "title": "%command.launchClaudeCodeWithGateway%",
+        "category": "Tierkit"
       }
     ],
     "configuration": {

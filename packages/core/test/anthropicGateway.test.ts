@@ -1,0 +1,374 @@
+import { describe, it, expect } from "vitest";
+import http from "node:http";
+import { AddressInfo } from "node:net";
+import { pickForwardHeaders, forwardMessages, streamMessages, forwardCountTokens, observeAuthHeaders } from "../src/runtime/anthropicGateway.js";
+
+async function startFakeUpstream(
+  handler: (req: http.IncomingMessage, body: Buffer) => { status: number; body: object; headers?: Record<string, string> },
+): Promise<{ url: string; close: () => Promise<void>; received: () => { headers: http.IncomingHttpHeaders; body: string; url?: string; method?: string } }> {
+  let receivedHeaders: http.IncomingHttpHeaders = {};
+  let receivedBody = "";
+  let receivedUrl: string | undefined;
+  let receivedMethod: string | undefined;
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks);
+      receivedHeaders = req.headers;
+      receivedBody = body.toString("utf8");
+      receivedUrl = req.url;
+      receivedMethod = req.method;
+      const r = handler(req, body);
+      const headers = { "content-type": "application/json", ...(r.headers ?? {}) };
+      for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+      res.statusCode = r.status;
+      res.end(JSON.stringify(r.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
+    received: () => ({ headers: receivedHeaders, body: receivedBody, url: receivedUrl, method: receivedMethod }),
+  };
+}
+
+describe("pickForwardHeaders", () => {
+  it("forwards Anthropic-required headers and drops hop-by-hop ones", () => {
+    const out = pickForwardHeaders({
+      "anthropic-version": "2023-06-01",
+      "anthropic-beta": "prompt-caching-2024-07-31",
+      "x-api-key": "sk-test",
+      "x-claude-code-session-id": "sess-1",
+      "x-claude-code-agent-id": "agent-9",
+      "host": "127.0.0.1:4101",
+      "content-length": "42",
+      "connection": "keep-alive",
+      "transfer-encoding": "chunked",
+    });
+    expect(out["anthropic-version"]).toBe("2023-06-01");
+    expect(out["anthropic-beta"]).toBe("prompt-caching-2024-07-31");
+    expect(out["x-api-key"]).toBe("sk-test");
+    expect(out["x-claude-code-session-id"]).toBe("sess-1");
+    expect(out["x-claude-code-agent-id"]).toBe("agent-9");
+    expect(out["host"]).toBeUndefined();
+    expect(out["content-length"]).toBeUndefined();
+    expect(out["connection"]).toBeUndefined();
+    expect(out["transfer-encoding"]).toBeUndefined();
+  });
+
+  it("forwards Authorization Bearer when x-api-key absent", () => {
+    const out = pickForwardHeaders({
+      "authorization": "Bearer some-oauth-token",
+      "anthropic-version": "2023-06-01",
+    });
+    expect(out["authorization"]).toBe("Bearer some-oauth-token");
+  });
+
+  it("collapses array-valued headers to a comma-separated string", () => {
+    const out = pickForwardHeaders({
+      "anthropic-beta": ["prompt-caching-2024-07-31", "tools-2024-04-04"],
+    });
+    expect(out["anthropic-beta"]).toBe("prompt-caching-2024-07-31,tools-2024-04-04");
+  });
+});
+
+describe("forwardMessages (non-streaming)", () => {
+  it("forwards POST body verbatim and returns upstream status+body+headers", async () => {
+    const upstream = await startFakeUpstream(() => ({
+      status: 200,
+      body: { id: "msg_test", content: [{ type: "text", text: "ok" }] },
+    }));
+    try {
+      const req = { headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01", "content-type": "application/json" } } as unknown as http.IncomingMessage;
+      const body = Buffer.from(JSON.stringify({ model: "m", max_tokens: 4, messages: [{ role: "user", content: "hi" }] }));
+      const r = await forwardMessages(req, body, { upstreamBaseUrl: upstream.url });
+      expect(r.status).toBe(200);
+      const parsed = JSON.parse(r.body.toString("utf8"));
+      expect(parsed.id).toBe("msg_test");
+      const rec = upstream.received();
+      expect(rec.headers["x-api-key"]).toBe("sk-x");
+      expect(rec.headers["anthropic-version"]).toBe("2023-06-01");
+      expect(JSON.parse(rec.body).model).toBe("m");
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("drops transport-sensitive response headers (content-length, encodings, hop-by-hop)", async () => {
+    // When we strip content-encoding upstream, the original content-length
+    // describes compressed bytes — passing it through can make Claude Code
+    // misread the response length. Same logic for the rest of the hop-by-hop
+    // set: Node regenerates them for the new outbound response.
+    //
+    // NOTE: content-length and transfer-encoding cannot coexist on the wire
+    // (HTTP/1.1 RFC) — Node's parser will reject the upstream response. So
+    // we set content-length WITHOUT transfer-encoding here; transfer-encoding
+    // coverage is implicit (it's in the same blocklist set).
+    // We test most of the blocklist directly. content-encoding is omitted
+    // here because setting it to "gzip" with an ungzipped body makes fetch's
+    // automatic decoder throw before our code sees the response; covered by
+    // the blocklist source code itself, which is a single Set literal.
+    // Body `{"ok":true}` serializes to 11 bytes — set content-length to match
+    // so fetch can read the response. The point of the test isn't to send a
+    // bogus length; it's to verify content-length gets dropped from what we
+    // forward downstream (even a valid one — Node regenerates it).
+    const upstream = await startFakeUpstream(() => ({
+      status: 200,
+      body: { ok: true },
+      headers: {
+        "content-length": "11",
+        "connection": "keep-alive",
+        "keep-alive": "timeout=5",
+        "x-request-id": "req-1",
+      },
+    }));
+    try {
+      const req = { headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" } } as unknown as http.IncomingMessage;
+      const r = await forwardMessages(req, Buffer.from("{}"), { upstreamBaseUrl: upstream.url });
+      expect(r.headers["content-length"]).toBeUndefined();
+      expect(r.headers["connection"]).toBeUndefined();
+      expect(r.headers["keep-alive"]).toBeUndefined();
+      // Non-hop-by-hop headers must survive — observability + tracing depends on it.
+      expect(r.headers["x-request-id"]).toBe("req-1");
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("propagates non-2xx status codes (e.g. 401 from upstream)", async () => {
+    const upstream = await startFakeUpstream(() => ({
+      status: 401,
+      body: { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } },
+    }));
+    try {
+      const req = { headers: { "x-api-key": "sk-bad", "anthropic-version": "2023-06-01" } } as unknown as http.IncomingMessage;
+      const body = Buffer.from("{}");
+      const r = await forwardMessages(req, body, { upstreamBaseUrl: upstream.url });
+      expect(r.status).toBe(401);
+      const parsed = JSON.parse(r.body.toString("utf8"));
+      expect(parsed.error.type).toBe("authentication_error");
+    } finally {
+      await upstream.close();
+    }
+  });
+});
+
+async function startStreamingUpstream(
+  events: string[],
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", async () => {
+      res.setHeader("content-type", "text/event-stream");
+      res.statusCode = 200;
+      for (const ev of events) {
+        res.write(ev);
+        await new Promise((r) => setImmediate(r));
+      }
+      res.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
+  };
+}
+
+describe("streamMessages (SSE passthrough)", () => {
+  it("aborts upstream when downstream closes, even if caller supplied opts.signal", async () => {
+    // Regression guard for the original bug: when opts.signal was provided,
+    // the internal controller wired to req-aborted / res-close was IGNORED,
+    // so a Claude Code disconnect couldn't stop the upstream stream.
+    let upstreamReqAborted = false;
+    const slowUpstream = http.createServer((req, res) => {
+      req.on("aborted", () => { upstreamReqAborted = true; });
+      res.setHeader("content-type", "text/event-stream");
+      res.statusCode = 200;
+      res.write(`event: message_start\ndata: {"type":"message_start"}\n\n`);
+      // Hold the connection open — never end. Only an abort from our side
+      // (downstream close → upstream abort) should free this server.
+    });
+    await new Promise<void>((resolve) => slowUpstream.listen(0, "127.0.0.1", resolve));
+    const port = (slowUpstream.address() as AddressInfo).port;
+
+    const { EventEmitter } = await import("node:events");
+    const res = Object.assign(new EventEmitter(), {
+      setHeader: () => {},
+      write: () => true,
+      end: () => {},
+      statusCode: 0,
+      headersSent: false,
+      off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+    }) as unknown as http.ServerResponse;
+    const req = Object.assign(new EventEmitter(), {
+      headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+      off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+    }) as unknown as http.IncomingMessage;
+
+    // Caller supplies their own signal — the bug was that this caused the
+    // downstream-close wiring to be discarded.
+    const callerController = new AbortController();
+    const body = Buffer.from(JSON.stringify({ stream: true }));
+    const streamPromise = streamMessages(req, body, res, {
+      upstreamBaseUrl: `http://127.0.0.1:${port}`,
+      signal: callerController.signal,
+    });
+
+    // Wait briefly for the first chunk to land, then simulate the downstream
+    // closing (Claude Code disconnect / VS Code reload).
+    await new Promise((r) => setTimeout(r, 50));
+    res.emit("close");
+
+    // The stream must terminate; the upstream must observe an aborted request.
+    await streamPromise.catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(upstreamReqAborted).toBe(true);
+
+    await new Promise<void>((resolve, reject) => slowUpstream.close((e) => (e ? reject(e) : resolve())));
+  });
+
+  it("pipes upstream SSE events in order and without modification", async () => {
+    const events = [
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"m1"}}\n\n`,
+      `event: content_block_start\ndata: {"type":"content_block_start","index":0}\n\n`,
+      `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}\n\n`,
+      `event: message_stop\ndata: {"type":"message_stop"}\n\n`,
+    ];
+    const upstream = await startStreamingUpstream(events);
+    try {
+      const written: Buffer[] = [];
+      const { EventEmitter } = await import("node:events");
+      const res = Object.assign(new EventEmitter(), {
+        setHeader: () => {},
+        write: (chunk: Buffer | string) => {
+          written.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+          return true;
+        },
+        end: () => {},
+        statusCode: 0,
+        headersSent: false,
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.ServerResponse;
+      const req = Object.assign(new EventEmitter(), {
+        headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.IncomingMessage;
+      const body = Buffer.from(JSON.stringify({ model: "m", max_tokens: 4, messages: [{ role: "user", content: "hi" }], stream: true }));
+      await streamMessages(req, body, res, { upstreamBaseUrl: upstream.url });
+      const piped = Buffer.concat(written).toString("utf8");
+      expect(piped).toBe(events.join(""));
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("preserves a tool_use SSE sequence without loss or reordering", async () => {
+    // The text-delta test (above) covers the simple case. Validation C is
+    // specifically about multi-turn tool_use loops, so the spike needs a
+    // unit test that exercises the tool_use event shapes Claude Code
+    // actually sends. This doesn't replace the manual Claude Code
+    // smoke test in Task 12, but it makes the automated half of C real.
+    const events = [
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"m_tool"}}\n\n`,
+      `event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"Read","input":{}}}\n\n`,
+      `event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"file_path\\":\\"broken.js\\"}"}}\n\n`,
+      `event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n`,
+      `event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"tool_use"}}\n\n`,
+      `event: message_stop\ndata: {"type":"message_stop"}\n\n`,
+    ];
+    const upstream = await startStreamingUpstream(events);
+    try {
+      const written: Buffer[] = [];
+      const { EventEmitter } = await import("node:events");
+      const res = Object.assign(new EventEmitter(), {
+        setHeader: () => {},
+        write: (chunk: Buffer | string) => {
+          written.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+          return true;
+        },
+        end: () => {},
+        statusCode: 0,
+        headersSent: false,
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.ServerResponse;
+      const req = Object.assign(new EventEmitter(), {
+        headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.IncomingMessage;
+      await streamMessages(
+        req,
+        Buffer.from(JSON.stringify({ stream: true })),
+        res,
+        { upstreamBaseUrl: upstream.url },
+      );
+      expect(Buffer.concat(written).toString("utf8")).toBe(events.join(""));
+    } finally {
+      await upstream.close();
+    }
+  });
+});
+
+describe("observeAuthHeaders (spike diagnostic — fingerprints only, never raw tokens)", () => {
+  it("captures Bearer token scheme + sha256 fingerprint without leaking the value", () => {
+    const obs = observeAuthHeaders({
+      "authorization": "Bearer sk-ant-oauth-secret-XYZ-DO-NOT-LOG",
+    });
+    expect(obs.hasAuthorization).toBe(true);
+    expect(obs.authorizationScheme).toBe("Bearer");
+    expect(obs.authorizationFingerprint).toHaveLength(12);
+    expect(obs.authorizationFingerprint).toMatch(/^[a-f0-9]{12}$/);
+    // The single thing that MUST hold: the raw secret never appears in the output.
+    const serialized = JSON.stringify(obs);
+    expect(serialized).not.toContain("sk-ant-oauth-secret");
+    expect(serialized).not.toContain("XYZ-DO-NOT-LOG");
+  });
+
+  it("captures x-api-key fingerprint independently of Authorization", () => {
+    const obs = observeAuthHeaders({
+      "x-api-key": "sk-real-api-key-VERY-SECRET",
+    });
+    expect(obs.hasApiKey).toBe(true);
+    expect(obs.apiKeyFingerprint).toHaveLength(12);
+    expect(obs.hasAuthorization).toBe(false);
+    expect(obs.authorizationScheme).toBeNull();
+    expect(JSON.stringify(obs)).not.toContain("VERY-SECRET");
+  });
+
+  it("returns empty observation when no auth headers present", () => {
+    const obs = observeAuthHeaders({ "anthropic-version": "2023-06-01" });
+    expect(obs.hasAuthorization).toBe(false);
+    expect(obs.hasApiKey).toBe(false);
+    expect(obs.authorizationFingerprint).toBeNull();
+    expect(obs.apiKeyFingerprint).toBeNull();
+  });
+
+  it("identical input produces identical fingerprint (so we can correlate two observations)", () => {
+    const a = observeAuthHeaders({ "x-api-key": "sk-same" });
+    const b = observeAuthHeaders({ "x-api-key": "sk-same" });
+    expect(a.apiKeyFingerprint).toBe(b.apiKeyFingerprint);
+  });
+});
+
+describe("forwardCountTokens", () => {
+  it("forwards to /v1/messages/count_tokens and returns the upstream JSON", async () => {
+    const upstream = await startFakeUpstream((req) => {
+      expect(req.url).toBe("/v1/messages/count_tokens");
+      return { status: 200, body: { input_tokens: 12 } };
+    });
+    try {
+      const req = { headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" } } as unknown as http.IncomingMessage;
+      const body = Buffer.from(JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] }));
+      const r = await forwardCountTokens(req, body, { upstreamBaseUrl: upstream.url });
+      expect(r.status).toBe(200);
+      expect(JSON.parse(r.body.toString("utf8")).input_tokens).toBe(12);
+    } finally {
+      await upstream.close();
+    }
+  });
+});

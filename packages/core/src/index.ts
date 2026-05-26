@@ -155,9 +155,14 @@ export {
   SecurityPolicySchema,
   BudgetPolicySchema,
   PerProfileBudgetSchema,
+  GatewayTransformationModeSchema,
+  GatewayToolResultEnvelopeConfigSchema,
+  GatewayTransformationsConfigSchema,
   CONFIG_FILENAME,
   type TierkitConfig,
   type PerProfileBudget,
+  type GatewayTransformationMode,
+  type GatewayTransformationsConfig,
 } from "./config/TierkitConfig.js";
 export {
   loadConfig,
@@ -425,6 +430,8 @@ export {
   type DoctorCheck,
   type CheckStatus,
 } from "./usecases/doctor.js";
+export { doctorGateway } from "./usecases/doctorGateway.js";
+export type { DoctorGatewayInput } from "./usecases/doctorGateway.js";
 
 // Context compression (v1.7-spike)
 export {

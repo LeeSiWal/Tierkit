@@ -1,3 +1,4 @@
 # Bundled sample plugins copied here by scripts/copy-samples.mjs at build time.
 # Source of truth lives in packages/plugin-superpowers/plugins/.
 samples/
+cli/

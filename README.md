@@ -11,6 +11,9 @@ agents. Two distribution surfaces:
    command execution) to Claude Code, Claude Desktop, and any MCP-aware
    agent. Tierkit becomes the local policy gateway; the agent remains in
    the calling client. See [docs/MCP_BRIDGE.md](docs/MCP_BRIDGE.md).
+3. **Anthropic Gateway (Phase 1 — connection)** — route Claude Code Messages
+   API traffic through the local Tierkit daemon with a sidebar toggle and a
+   scoped integrated-terminal launcher. See [docs/ANTHROPIC_GATEWAY.md](docs/ANTHROPIC_GATEWAY.md).
 
 > **Status: v0.17.0** — Telemetry completion + GUI per-tool rendering + Windows hardening + cross-OS CI. See [CHANGELOG.md](CHANGELOG.md#0170--2026-05-22). Key milestones:
 >
