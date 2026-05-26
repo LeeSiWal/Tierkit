@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
 import { once } from "node:events";
+import crypto from "node:crypto";
 
 /**
  * Header allowlist for the Anthropic-passthrough proxy. Everything else
@@ -143,6 +144,54 @@ export async function streamMessages(
     req.off("aborted", abort);
     res.off("close", abort);
   }
+}
+
+/**
+ * Phase 0 spike diagnostic helper. Returns only the *shape* of inbound auth
+ * headers so Validation A (Task 10) can characterize what Claude Code is
+ * actually sending without logging or persisting the verbatim token.
+ *
+ * Hard rule: this function must never emit any output that reveals the raw
+ * token. Tests in test/anthropicGateway.test.ts assert that the JSON-
+ * serialized observation does not contain known secret substrings.
+ *
+ * Gated by the caller. Production code paths (forwardMessages, streamMessages,
+ * forwardCountTokens) do NOT call this — observation should only run when
+ * TIERKIT_ANTHROPIC_SPIKE_DIAGNOSTICS=1, behind whichever logger the spike
+ * operator wires up.
+ */
+export interface AnthropicAuthObservation {
+  hasAuthorization: boolean;
+  authorizationScheme: string | null;
+  authorizationFingerprint: string | null;
+  hasApiKey: boolean;
+  apiKeyFingerprint: string | null;
+}
+
+function shortFingerprint(value: string): string {
+  return crypto.createHash("sha256").update(value).digest("hex").slice(0, 12);
+}
+
+export function observeAuthHeaders(
+  headers: IncomingHttpHeaders,
+): AnthropicAuthObservation {
+  const authorization = Array.isArray(headers.authorization)
+    ? headers.authorization[0]
+    : headers.authorization;
+  const apiKey = Array.isArray(headers["x-api-key"])
+    ? headers["x-api-key"][0]
+    : headers["x-api-key"];
+  return {
+    hasAuthorization: typeof authorization === "string",
+    authorizationScheme:
+      typeof authorization === "string"
+        ? authorization.split(/\s+/, 1)[0] ?? null
+        : null,
+    authorizationFingerprint:
+      typeof authorization === "string" ? shortFingerprint(authorization) : null,
+    hasApiKey: typeof apiKey === "string",
+    apiKeyFingerprint: typeof apiKey === "string" ? shortFingerprint(apiKey) : null,
+  };
 }
 
 export async function forwardCountTokens(

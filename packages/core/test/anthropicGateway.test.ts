@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import { AddressInfo } from "node:net";
-import { pickForwardHeaders, forwardMessages, streamMessages, forwardCountTokens } from "../src/runtime/anthropicGateway.js";
+import { pickForwardHeaders, forwardMessages, streamMessages, forwardCountTokens, observeAuthHeaders } from "../src/runtime/anthropicGateway.js";
 
 async function startFakeUpstream(
   handler: (req: http.IncomingMessage, body: Buffer) => { status: number; body: object; headers?: Record<string, string> },
@@ -173,6 +173,47 @@ describe("streamMessages (SSE passthrough)", () => {
     } finally {
       await upstream.close();
     }
+  });
+});
+
+describe("observeAuthHeaders (spike diagnostic — fingerprints only, never raw tokens)", () => {
+  it("captures Bearer token scheme + sha256 fingerprint without leaking the value", () => {
+    const obs = observeAuthHeaders({
+      "authorization": "Bearer sk-ant-oauth-secret-XYZ-DO-NOT-LOG",
+    });
+    expect(obs.hasAuthorization).toBe(true);
+    expect(obs.authorizationScheme).toBe("Bearer");
+    expect(obs.authorizationFingerprint).toHaveLength(12);
+    expect(obs.authorizationFingerprint).toMatch(/^[a-f0-9]{12}$/);
+    // The single thing that MUST hold: the raw secret never appears in the output.
+    const serialized = JSON.stringify(obs);
+    expect(serialized).not.toContain("sk-ant-oauth-secret");
+    expect(serialized).not.toContain("XYZ-DO-NOT-LOG");
+  });
+
+  it("captures x-api-key fingerprint independently of Authorization", () => {
+    const obs = observeAuthHeaders({
+      "x-api-key": "sk-real-api-key-VERY-SECRET",
+    });
+    expect(obs.hasApiKey).toBe(true);
+    expect(obs.apiKeyFingerprint).toHaveLength(12);
+    expect(obs.hasAuthorization).toBe(false);
+    expect(obs.authorizationScheme).toBeNull();
+    expect(JSON.stringify(obs)).not.toContain("VERY-SECRET");
+  });
+
+  it("returns empty observation when no auth headers present", () => {
+    const obs = observeAuthHeaders({ "anthropic-version": "2023-06-01" });
+    expect(obs.hasAuthorization).toBe(false);
+    expect(obs.hasApiKey).toBe(false);
+    expect(obs.authorizationFingerprint).toBeNull();
+    expect(obs.apiKeyFingerprint).toBeNull();
+  });
+
+  it("identical input produces identical fingerprint (so we can correlate two observations)", () => {
+    const a = observeAuthHeaders({ "x-api-key": "sk-same" });
+    const b = observeAuthHeaders({ "x-api-key": "sk-same" });
+    expect(a.apiKeyFingerprint).toBe(b.apiKeyFingerprint);
   });
 });
 
