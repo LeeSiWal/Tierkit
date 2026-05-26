@@ -425,6 +425,8 @@ export {
   type DoctorCheck,
   type CheckStatus,
 } from "./usecases/doctor.js";
+export { doctorGateway } from "./usecases/doctorGateway.js";
+export type { DoctorGatewayInput } from "./usecases/doctorGateway.js";
 
 // Context compression (v1.7-spike)
 export {
