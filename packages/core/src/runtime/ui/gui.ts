@@ -967,6 +967,19 @@ export const GUI_HTML = `<!doctype html>
     <div id="onboarding-trace" style="display:none;font-size:11px;margin-top:8px;padding:6px 8px;background:var(--bg-input);border-radius:4px;font-family:var(--mono);color:var(--fg-dim)"></div>
   </div>
 
+  <!-- ── ANTHROPIC GATEWAY PHASE 1 toggle card ──────────────────────── -->
+  <section class="card tk-anthropic-gateway-card">
+    <h2>Route Claude Code through Tierkit</h2>
+    <p class="dim" style="font-size:11.5px;margin-top:0">Phase 1 passthrough connection. Requests are routed through the local Tierkit daemon without modifying message content.</p>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <label class="toggle-label" style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="tk-gateway-toggle" disabled style="width:16px;height:16px">
+        <span id="tk-gateway-toggle-label" style="font-size:12px">Loading…</span>
+      </label>
+    </div>
+    <div id="tk-gateway-browser-note" class="dim" style="font-size:10.5px;margin-top:6px;display:none">Use the VS Code sidebar to toggle.</div>
+  </section>
+
   <!-- ── MCP BRIDGE card (v0.15, extended in v0.18) ──────────────────── -->
   <section class="card mcp-bridge-card">
     <h2 data-i18n="cardMcpBridge">Connect Claude Code (MCP)</h2>
@@ -7233,6 +7246,63 @@ export const GUI_HTML = `<!doctype html>
   }
   renderMcpPatches();
   setInterval(renderMcpPatches, 5000);
+
+  // ── Anthropic Gateway Phase 1 toggle card ────────────────────────────
+  // postTierkitCommand: sends a tk:cmd to the extension host (VS Code only).
+  // In browser context, acquireVsCodeApi is not available — the toggle is disabled.
+  function postTierkitCommand(commandName) {
+    if (typeof acquireVsCodeApi === 'function') {
+      const api = (window.__tierkitVsApi || (window.__tierkitVsApi = acquireVsCodeApi()));
+      api.postMessage({ type: 'tk:cmd', command: commandName });
+      return true;
+    }
+    return false;
+  }
+
+  const tkGatewayToggle = $('tk-gateway-toggle');
+  const tkGatewayToggleLabel = $('tk-gateway-toggle-label');
+  const tkGatewayBrowserNote = $('tk-gateway-browser-note');
+
+  async function refreshGatewayToggle() {
+    if (!tkGatewayToggle) return;
+    // Check if we're in VS Code context; if not, disable with a note.
+    if (typeof acquireVsCodeApi !== 'function') {
+      tkGatewayToggle.disabled = true;
+      if (tkGatewayBrowserNote) tkGatewayBrowserNote.style.display = '';
+      if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Gateway (disabled in browser)';
+      return;
+    }
+    try {
+      const r = await transport.request('/v1/gateway/status', { method: 'GET' });
+      if (r.ok && r.data && typeof r.data.gatewayMode === 'string') {
+        tkGatewayToggle.checked = r.data.gatewayMode === 'on';
+        tkGatewayToggle.disabled = false;
+        if (tkGatewayToggleLabel) {
+          tkGatewayToggleLabel.textContent = r.data.gatewayMode === 'on' ? 'On' : 'Off';
+        }
+      } else {
+        tkGatewayToggle.disabled = true;
+        if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
+      }
+    } catch (_) {
+      tkGatewayToggle.disabled = true;
+      if (tkGatewayToggleLabel) tkGatewayToggleLabel.textContent = 'Unavailable';
+    }
+  }
+
+  if (tkGatewayToggle) {
+    tkGatewayToggle.addEventListener('change', () => {
+      // Dispatch the toggle command via the extension host (VS Code only).
+      // In browser context postTierkitCommand returns false — the toggle
+      // is disabled above so this path is unreachable in practice.
+      postTierkitCommand('tierkit.toggleGatewayMode');
+      // Optimistically flip the label; actual state will update on next refresh.
+      if (tkGatewayToggleLabel) {
+        tkGatewayToggleLabel.textContent = tkGatewayToggle.checked ? 'On' : 'Off';
+      }
+    });
+    void refreshGatewayToggle();
+  }
 
   refreshAll();
   void subscribeSavings();

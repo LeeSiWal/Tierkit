@@ -15,5 +15,6 @@
   "commands.sessionStatus": "Tierkit: 워크플로 세션 상태 보기",
   "commands.restartDaemon": "Tierkit: 데몬 재시작",
   "commands.showOutput": "Tierkit: 진단 로그 보기",
-  "commands.addModelProfile": "Tierkit: 모델 프로파일 추가"
+  "commands.addModelProfile": "Tierkit: 모델 프로파일 추가",
+  "commands.toggleGatewayMode": "Tierkit: 게이트웨이 모드 전환"
 }

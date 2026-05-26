@@ -112,6 +112,10 @@
       {
         "command": "tierkit.addModelProfile",
         "title": "%commands.addModelProfile%"
+      },
+      {
+        "command": "tierkit.toggleGatewayMode",
+        "title": "%commands.toggleGatewayMode%"
       }
     ],
     "configuration": {

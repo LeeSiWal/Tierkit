@@ -15,5 +15,6 @@
   "commands.sessionStatus": "Tierkit: Show workflow session status",
   "commands.restartDaemon": "Tierkit: Restart daemon",
   "commands.showOutput": "Tierkit: Show diagnostic output",
-  "commands.addModelProfile": "Tierkit: Add model profile"
+  "commands.addModelProfile": "Tierkit: Add model profile",
+  "commands.toggleGatewayMode": "Tierkit: Toggle gateway mode"
 }
