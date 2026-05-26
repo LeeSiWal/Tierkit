@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import { AddressInfo } from "node:net";
-import { pickForwardHeaders, forwardMessages } from "../src/runtime/anthropicGateway.js";
+import { pickForwardHeaders, forwardMessages, streamMessages } from "../src/runtime/anthropicGateway.js";
 
 async function startFakeUpstream(
   handler: (req: http.IncomingMessage, body: Buffer) => { status: number; body: object; headers?: Record<string, string> },
@@ -109,6 +109,67 @@ describe("forwardMessages (non-streaming)", () => {
       expect(r.status).toBe(401);
       const parsed = JSON.parse(r.body.toString("utf8"));
       expect(parsed.error.type).toBe("authentication_error");
+    } finally {
+      await upstream.close();
+    }
+  });
+});
+
+async function startStreamingUpstream(
+  events: string[],
+): Promise<{ url: string; close: () => Promise<void> }> {
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", async () => {
+      res.setHeader("content-type", "text/event-stream");
+      res.statusCode = 200;
+      for (const ev of events) {
+        res.write(ev);
+        await new Promise((r) => setImmediate(r));
+      }
+      res.end();
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
+  };
+}
+
+describe("streamMessages (SSE passthrough)", () => {
+  it("pipes upstream SSE events in order and without modification", async () => {
+    const events = [
+      `event: message_start\ndata: {"type":"message_start","message":{"id":"m1"}}\n\n`,
+      `event: content_block_start\ndata: {"type":"content_block_start","index":0}\n\n`,
+      `event: content_block_delta\ndata: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}\n\n`,
+      `event: message_stop\ndata: {"type":"message_stop"}\n\n`,
+    ];
+    const upstream = await startStreamingUpstream(events);
+    try {
+      const written: Buffer[] = [];
+      const { EventEmitter } = await import("node:events");
+      const res = Object.assign(new EventEmitter(), {
+        setHeader: () => {},
+        write: (chunk: Buffer | string) => {
+          written.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+          return true;
+        },
+        end: () => {},
+        statusCode: 0,
+        headersSent: false,
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.ServerResponse;
+      const req = Object.assign(new EventEmitter(), {
+        headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+        off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+      }) as unknown as http.IncomingMessage;
+      const body = Buffer.from(JSON.stringify({ model: "m", max_tokens: 4, messages: [{ role: "user", content: "hi" }], stream: true }));
+      await streamMessages(req, body, res, { upstreamBaseUrl: upstream.url });
+      const piped = Buffer.concat(written).toString("utf8");
+      expect(piped).toBe(events.join(""));
     } finally {
       await upstream.close();
     }

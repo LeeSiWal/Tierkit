@@ -1,4 +1,5 @@
-import type { IncomingHttpHeaders, IncomingMessage } from "node:http";
+import type { IncomingHttpHeaders, IncomingMessage, ServerResponse } from "node:http";
+import { once } from "node:events";
 
 /**
  * Header allowlist for the Anthropic-passthrough proxy. Everything else
@@ -79,4 +80,67 @@ export async function forwardMessages(
     headers: pickResponseHeaders(res.headers),
     body: Buffer.from(await res.arrayBuffer()),
   };
+}
+
+/**
+ * Stream an Anthropic Messages request and pipe each SSE chunk to the client.
+ * We do NOT parse events here — the spike's job is protocol-semantic
+ * fidelity (event sequence + multi-turn tool_use completion), not byte-level
+ * identity of TCP framing. Compression / dedupe hook into this function in
+ * Phase 2 after Phase 0 confirms the protocol works.
+ *
+ * Two stability concerns the spike still must address:
+ *   1. If the downstream client (Claude Code) disconnects, we abort the
+ *      upstream fetch — otherwise the daemon keeps streaming tokens into the
+ *      void, leaking memory and burning the user's API credit.
+ *   2. If res.write() returns false (downstream buffer full), we await
+ *      'drain' before pushing more — otherwise fast upstream + slow downstream
+ *      silently drops chunks.
+ */
+export async function streamMessages(
+  req: IncomingMessage,
+  body: Buffer,
+  res: ServerResponse,
+  opts: ForwardOptions = {},
+): Promise<void> {
+  const controller = new AbortController();
+  const abort = (): void => controller.abort();
+  req.once("aborted", abort);
+  res.once("close", abort);
+  const signal = opts.signal ?? controller.signal;
+
+  try {
+    const upstreamRes = await fetch(upstreamUrl(opts, "/v1/messages"), {
+      method: "POST",
+      headers: pickForwardHeaders(req.headers),
+      body,
+      signal,
+    });
+
+    for (const [k, v] of Object.entries(pickResponseHeaders(upstreamRes.headers))) {
+      res.setHeader(k, v);
+    }
+    res.statusCode = upstreamRes.status;
+
+    if (!upstreamRes.body) {
+      res.end();
+      return;
+    }
+    const reader = upstreamRes.body.getReader();
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const writable = res.write(Buffer.from(value));
+        if (!writable) {
+          await once(res, "drain");
+        }
+      }
+    } finally {
+      res.end();
+    }
+  } finally {
+    req.off("aborted", abort);
+    res.off("close", abort);
+  }
 }
