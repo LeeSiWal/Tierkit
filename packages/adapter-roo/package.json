@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/adapter-roo",
-  "version": "0.23.0-spike.0",
+  "version": "0.24.0",
   "description": "Tierkit integration for Roo Code / Zoo Code. Routes Roo's model calls through Tierkit's cost layer or exports policy as `.roomodes` + `.roo/`.",
   "license": "MIT",
   "type": "module",

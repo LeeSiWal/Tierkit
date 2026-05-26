@@ -1,5 +1,5 @@
 {
-  "description": "Local-first cost optimizer for AI coding CLIs — runs the Tierkit daemon and shows real-time token savings, compressed-vs-baseline quality, and cost routing in a VS Code sidebar.",
+  "description": "Local-first runtime for AI coding CLIs with Anthropic Gateway routing, diagnostics, scoped Claude Code launch, and safe local telemetry.",
   "viewContainer.title": "Tierkit",
   "view.dashboard.name": "Dashboard",
   "configuration.title": "Tierkit",

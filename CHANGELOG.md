@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.24.0 — 2026-05-26
+
+### Anthropic Gateway Connection
+
+Added:
+
+- Route Claude Code through Tierkit using the local Anthropic Gateway.
+- Gateway status, diagnostics, `tierkit doctor gateway`, and Direct fallback support.
+- Scoped terminal launch for Claude Code without permanently modifying shell profiles.
+- Safe local gateway request logging.
+- Experimental request transformation infrastructure, disabled by default.
+
+Notes:
+
+- Experimental request transformation requires explicit opt-in.
+- Existing passthrough behavior remains the default unless transformations are explicitly enabled.
+- This release does not present experimental transformations as a token or cost feature.
+- Phase 2 request rewriting default activation remains blocked pending operational gate evidence.
+
+### Anthropic Gateway 연결
+
+추가:
+
+- 로컬 Anthropic Gateway를 통해 Claude Code를 Tierkit으로 라우팅합니다.
+- Gateway 상태, 진단, `tierkit doctor gateway`, Direct fallback을 제공합니다.
+- shell profile을 영구 수정하지 않는 scoped terminal 방식으로 Claude Code를 실행합니다.
+- 안전한 로컬 Gateway 요청 로그를 제공합니다.
+- 실험적 request transformation 인프라를 포함하지만 기본값은 비활성입니다.
+
+참고:
+
+- 실험적 request transformation은 명시적 opt-in이 필요합니다.
+- transformation을 명시적으로 켜지 않으면 기존 passthrough 동작이 기본값입니다.
+- 이 릴리즈는 실험적 transformation을 토큰 또는 비용 관련 기능으로 표시하지 않습니다.
+- Phase 2 request rewriting 기본 활성화는 운영 gate 증빙 전까지 차단됩니다.
+
 ## 0.17.0 — 2026-05-22
 
 ### Track A — Telemetry completion

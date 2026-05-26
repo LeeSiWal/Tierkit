@@ -1,8 +1,8 @@
 {
   "name": "tierkit",
   "private": true,
-  "version": "0.23.0-spike.0",
-  "description": "Local-first cost optimizer and token firewall for AI coding CLIs.",
+  "version": "0.24.0",
+  "description": "Local-first runtime and Anthropic Gateway for AI coding CLIs.",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",
   "engines": {

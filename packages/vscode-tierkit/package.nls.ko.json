@@ -1,5 +1,5 @@
 {
-  "description": "AI 코딩 CLI를 위한 로컬 우선 비용 최적화 도구. Tierkit 데몬을 실행하고 실시간 토큰 절감량, 압축 vs 베이스라인 품질, 비용 라우팅을 VS Code 사이드바에 표시합니다.",
+  "description": "AI 코딩 CLI를 위한 로컬 우선 런타임. Anthropic Gateway 라우팅, 진단, scoped Claude Code 실행, 안전한 로컬 텔레메트리를 제공합니다.",
   "viewContainer.title": "Tierkit",
   "view.dashboard.name": "대시보드",
   "configuration.title": "Tierkit",

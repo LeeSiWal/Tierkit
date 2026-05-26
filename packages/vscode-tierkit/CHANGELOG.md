@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.24.0 — 2026-05-26
+
+### Anthropic Gateway Connection
+
+Added:
+
+- Route Claude Code through Tierkit using the local Anthropic Gateway.
+- Gateway status, diagnostics, `tierkit doctor gateway`, and Direct fallback support.
+- Scoped terminal launch for Claude Code without permanently modifying shell profiles.
+- Safe local gateway request logging.
+- Experimental request transformation infrastructure, disabled by default.
+
+Notes:
+
+- Experimental request transformation requires explicit opt-in.
+- Existing passthrough behavior remains the default unless transformations are explicitly enabled.
+- This release does not present experimental transformations as a token or cost feature.
+- Phase 2 request rewriting default activation remains blocked pending operational gate evidence.
+
+### Anthropic Gateway 연결
+
+추가:
+
+- 로컬 Anthropic Gateway를 통해 Claude Code를 Tierkit으로 라우팅합니다.
+- Gateway 상태, 진단, `tierkit doctor gateway`, Direct fallback을 제공합니다.
+- shell profile을 영구 수정하지 않는 scoped terminal 방식으로 Claude Code를 실행합니다.
+- 안전한 로컬 Gateway 요청 로그를 제공합니다.
+- 실험적 request transformation 인프라를 포함하지만 기본값은 비활성입니다.
+
+참고:
+
+- 실험적 request transformation은 명시적 opt-in이 필요합니다.
+- transformation을 명시적으로 켜지 않으면 기존 passthrough 동작이 기본값입니다.
+- 이 릴리즈는 실험적 transformation을 토큰 또는 비용 관련 기능으로 표시하지 않습니다.
+- Phase 2 request rewriting 기본 활성화는 운영 gate 증빙 전까지 차단됩니다.
+
 ## 0.22.6 — 2026-05-26
 
 **Sidebar auto-recovers when the daemon comes up after the tab opens.**
@@ -840,7 +876,7 @@ Ollama:                              silently dropped (text-only by default)
 - **Slash commands** — Type `/` in the input and an autocomplete dropdown appears with the active plugins' commands (name + description + plugin id). Pick one and `/cmdname` is inserted. On send, the slash command expands to a `[Plugin command: /name ...]` preamble + your free-form args, so the agent sees the command intent + plugin attribution.
 - **Mode picker** — A `mode:` dropdown next to approval lists every mode from active plugins (`name (plugin-id)`). Selecting one is sent as `mode` in the run request and threaded into the agent's system prompt so the model knows which role it's playing.
 - **Two new tools**:
-  - `apply_diff` — targeted edit by searching for a unique substring and replacing it. Cheaper + safer than rewriting the whole file with `write_file`. Refuses if the search anchor appears 0 or >1 times. Requires approval.
+  - `apply_diff` — targeted edit by searching for a unique substring and replacing it. Lower-risk than rewriting the whole file with `write_file`. Refuses if the search anchor appears 0 or >1 times. Requires approval.
   - `ask_followup_question` — the agent can pause and ask the user a clarifying question. The tool card renders the question in italics with a hint that the next user message will become the answer. Read-only — never gated by approval.
 
 ### Approval flow (UI ↔ server)
