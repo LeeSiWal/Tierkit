@@ -30,6 +30,16 @@ export interface ToolResultNext {
   };
 }
 
+export interface CompactContextMetadata {
+  version: "tierkit-compact-context.v1";
+  contextId: string;
+  contentDigest: string;
+  sourceKind: "file_digest" | "symbol_context" | "diff_context" | "test_failure_summary" | "context_pack" | "other_compact_tool";
+  recoverable: boolean;
+  retrieveMoreTool: string | null;
+  measurementTicket: string | null;
+}
+
 export interface ToolResultSuccess<TData> {
   ok: true;
   tool: string;
@@ -40,6 +50,7 @@ export interface ToolResultSuccess<TData> {
   size?: ToolResultSize;
   next?: ToolResultNext;
   warnings?: string[];
+  compactContext?: CompactContextMetadata;
 }
 
 export interface ToolResultFailure {
@@ -63,6 +74,7 @@ export interface MakeSuccessOptions {
   size?: ToolResultSize;
   next?: ToolResultNext;
   warnings?: string[];
+  compactContext?: CompactContextMetadata;
 }
 
 export function makeSuccessEnvelope<TData>(
@@ -81,6 +93,7 @@ export function makeSuccessEnvelope<TData>(
   if (opts.size) env.size = opts.size;
   if (opts.next) env.next = opts.next;
   if (opts.warnings && opts.warnings.length > 0) env.warnings = opts.warnings;
+  if (opts.compactContext) env.compactContext = opts.compactContext;
   return env;
 }
 

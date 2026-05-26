@@ -1809,6 +1809,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
           gatewayMode: cfg.config.runtime.gatewayMode,
           resolvedDataDir: resolveRuntimeDataDir(cfg.config.runtime.dataDir, opts.cwd),
           gatewayTransformations: cfg.config.runtime.gatewayTransformations,
+          measuredCompact: cfg.config.runtime.measuredCompact,
         }));
       }
 
@@ -1821,9 +1822,9 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       if (route === "PATCH /v1/config/runtime") {
         if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
 
-        const body = await readJsonBody<{ gatewayMode?: "off" | "on"; gatewayTransformations?: unknown }>(req);
+        const body = await readJsonBody<{ gatewayMode?: "off" | "on"; gatewayTransformations?: unknown; measuredCompact?: unknown }>(req);
         const incoming = body ?? {};
-        const allowedKeys = new Set(["gatewayMode", "gatewayTransformations"]);
+        const allowedKeys = new Set(["gatewayMode", "gatewayTransformations", "measuredCompact"]);
         for (const k of Object.keys(incoming)) {
           if (!allowedKeys.has(k)) return sendJson(res, 400, { error: "unknown_field", field: k });
         }
@@ -1848,6 +1849,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
               ...runtime,
               ...(incoming.gatewayMode !== undefined ? { gatewayMode: incoming.gatewayMode } : {}),
               ...(incoming.gatewayTransformations !== undefined ? { gatewayTransformations: incoming.gatewayTransformations } : {}),
+              ...(incoming.measuredCompact !== undefined ? { measuredCompact: incoming.measuredCompact } : {}),
             },
           });
         } catch (err) {
@@ -1861,6 +1863,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
           runtime: {
             gatewayMode: nextConfig.runtime.gatewayMode,
             gatewayTransformations: nextConfig.runtime.gatewayTransformations,
+            measuredCompact: nextConfig.runtime.measuredCompact,
           },
         });
       }

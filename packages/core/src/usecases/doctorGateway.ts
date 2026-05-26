@@ -38,9 +38,75 @@ export async function doctorGateway(input: DoctorGatewayInput = {}): Promise<Doc
   }
 
   checks.push(checkGatewayTransformations(runtime.gatewayTransformations));
+  checks.push(...checkMeasuredCompact(runtime.measuredCompact, runtime.gatewayTransformations));
   checks.push(await checkLogWritable(resolvedDataDir));
   checks.push(checkClaudeBinary());
   checks.push(checkCredentialMode());
+  return checks;
+}
+
+function checkMeasuredCompact(
+  measuredCompact: {
+    mode: "off" | "measured_compact";
+    eligibleSources: { tierkitMcpCompactTools: string[] };
+    officialTokenMeasurement: { mode: "off" | "anthropic_count_tokens_opt_in"; consentAcknowledged: boolean };
+    privacy: { rawBaselineStorage: "memory_only" };
+  },
+  gatewayTransformations: {
+    mode: "off" | "observe" | "envelope";
+  },
+): DoctorCheck[] {
+  const checks: DoctorCheck[] = [];
+  checks.push({
+    id: "measured-compact-mode",
+    label: "Measured Compact Context",
+    status: measuredCompact.mode === "off" ? "ok" : "warn",
+    detail: measuredCompact.mode === "off" ? "OFF" : "ENABLED (request-level official measurement currently blocked)",
+  });
+  checks.push({
+    id: "measured-compact-official-token-measurement",
+    label: "Official Token Measurement",
+    status:
+      measuredCompact.officialTokenMeasurement.mode === "off"
+        ? "ok"
+        : measuredCompact.officialTokenMeasurement.consentAcknowledged
+          ? "warn"
+          : "fail",
+    detail:
+      measuredCompact.officialTokenMeasurement.mode === "off"
+        ? "OFF — explicit consent required"
+        : measuredCompact.officialTokenMeasurement.consentAcknowledged
+          ? "ENABLED BY USER OPT-IN; raw baseline may be transmitted to Anthropic Token Counting API only when a safe memory-only bridge exists."
+          : "invalid: opt-in mode requires consentAcknowledged=true",
+  });
+  checks.push({
+    id: "measured-compact-mcp-contract",
+    label: "MCP Compact Tool Contract",
+    status: "ok",
+    detail: `READY for tierkit.get_file_digest; configured eligible count=${measuredCompact.eligibleSources.tierkitMcpCompactTools.length}`,
+  });
+  checks.push({
+    id: "measured-compact-request-level",
+    label: "Request-Level Counterfactual Measurement",
+    status: measuredCompact.mode === "off" ? "ok" : "warn",
+    detail:
+      "BLOCKED: MCP compact tools run in a separate process from the Gateway daemon, so no memory-only raw-baseline registry is currently shared.",
+  });
+  checks.push({
+    id: "measured-compact-raw-baseline-storage",
+    label: "Raw Baseline Storage",
+    status: measuredCompact.privacy.rawBaselineStorage === "memory_only" ? "ok" : "fail",
+    detail: "MEMORY ONLY",
+  });
+  checks.push({
+    id: "measured-compact-legacy-envelope-conflict",
+    label: "Legacy Gateway Envelope Conflict",
+    status: measuredCompact.mode === "measured_compact" && gatewayTransformations.mode === "envelope" ? "fail" : "ok",
+    detail:
+      measuredCompact.mode === "measured_compact" && gatewayTransformations.mode === "envelope"
+        ? "measured compact and legacy gateway envelope cannot be enabled together"
+        : "NONE",
+  });
   return checks;
 }
 

@@ -111,6 +111,77 @@ export const GatewayTransformationsConfigSchema = z
 export type GatewayTransformationMode = z.infer<typeof GatewayTransformationModeSchema>;
 export type GatewayTransformationsConfig = z.infer<typeof GatewayTransformationsConfigSchema>;
 
+export const MeasuredCompactModeSchema = z.enum(["off", "measured_compact"]);
+export const OfficialTokenMeasurementModeSchema = z.enum(["off", "anthropic_count_tokens_opt_in"]);
+
+export const MeasuredCompactConfigSchema = z
+  .object({
+    mode: MeasuredCompactModeSchema.default("off"),
+    eligibleSources: z
+      .object({
+        tierkitMcpCompactTools: z.array(z.string().min(1)).default([]),
+      })
+      .strict()
+      .default({ tierkitMcpCompactTools: [] }),
+    officialTokenMeasurement: z
+      .object({
+        mode: OfficialTokenMeasurementModeSchema.default("off"),
+        consentAcknowledged: z.boolean().default(false),
+      })
+      .strict()
+      .default({ mode: "off", consentAcknowledged: false }),
+    privacy: z
+      .object({
+        rawBaselineStorage: z.literal("memory_only").default("memory_only"),
+        rawBaselineTtlMs: z.number().int().min(1_000).max(10 * 60_000).default(60_000),
+        maxRawBaselineBytes: z.number().int().min(1).max(10 * 1024 * 1024).default(1_048_576),
+      })
+      .strict()
+      .default({
+        rawBaselineStorage: "memory_only",
+        rawBaselineTtlMs: 60_000,
+        maxRawBaselineBytes: 1_048_576,
+      }),
+    reporting: z
+      .object({
+        requestLevelMetrics: z.boolean().default(true),
+        sessionAggregation: z.boolean().default(false),
+      })
+      .strict()
+      .default({ requestLevelMetrics: true, sessionAggregation: false }),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.officialTokenMeasurement.mode === "anthropic_count_tokens_opt_in" && !v.officialTokenMeasurement.consentAcknowledged) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["officialTokenMeasurement", "consentAcknowledged"],
+        message: "official token measurement requires explicit consent acknowledgement",
+      });
+    }
+    if (v.mode === "off" && v.officialTokenMeasurement.mode !== "off") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["officialTokenMeasurement", "mode"],
+        message: "official token measurement requires measuredCompact.mode to be measured_compact",
+      });
+    }
+  })
+  .default({
+    mode: "off",
+    eligibleSources: { tierkitMcpCompactTools: [] },
+    officialTokenMeasurement: { mode: "off", consentAcknowledged: false },
+    privacy: {
+      rawBaselineStorage: "memory_only",
+      rawBaselineTtlMs: 60_000,
+      maxRawBaselineBytes: 1_048_576,
+    },
+    reporting: { requestLevelMetrics: true, sessionAggregation: false },
+  });
+
+export type MeasuredCompactMode = z.infer<typeof MeasuredCompactModeSchema>;
+export type MeasuredCompactConfig = z.infer<typeof MeasuredCompactConfigSchema>;
+
 export const RuntimeConfigSchema = z
   .object({
     /** TCP port the local runtime daemon binds to. 0 = pick any free port. */
@@ -174,8 +245,18 @@ export const RuntimeConfigSchema = z
      */
     gatewayMode: z.enum(["off", "on"]).default("off"),
     gatewayTransformations: GatewayTransformationsConfigSchema,
+    measuredCompact: MeasuredCompactConfigSchema,
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    if (v.measuredCompact.mode === "measured_compact" && v.gatewayTransformations.mode === "envelope") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["measuredCompact", "mode"],
+        message: "measured compact cannot run with legacy gateway envelope transformations",
+      });
+    }
+  });
 
 export const TierkitConfigSchema = z
   .object({

@@ -79,6 +79,15 @@ describe("tierkit.get_file_digest", () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect((r as any).data.importantSymbols).toContain("bar");
+    expect((r as any).compactContext).toEqual({
+      version: "tierkit-compact-context.v1",
+      contextId: (r as any).data.id,
+      contentDigest: (r as any).data.hash,
+      sourceKind: "file_digest",
+      recoverable: true,
+      retrieveMoreTool: "tierkit.read_file",
+      measurementTicket: null,
+    });
   });
 
   it("rejects paths outside the workspace", async () => {

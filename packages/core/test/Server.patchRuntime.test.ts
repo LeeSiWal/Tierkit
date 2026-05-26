@@ -60,6 +60,37 @@ describe("PATCH /v1/config/runtime", () => {
       expect(bad.status).toBe(400);
     } finally { await srv.close(); await rm(dir, { recursive: true, force: true }); }
   });
+  it("patches measuredCompact and rejects unsafe opt-in/conflict", async () => {
+    const { srv, dir, url } = await startWith({ version: "0.1" });
+    try {
+      const ok = await fetch(`${url}/v1/config/runtime`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          measuredCompact: {
+            mode: "measured_compact",
+            eligibleSources: { tierkitMcpCompactTools: ["tierkit.get_file_digest"] },
+            officialTokenMeasurement: { mode: "anthropic_count_tokens_opt_in", consentAcknowledged: true },
+          },
+        }),
+      });
+      expect(ok.status).toBe(200);
+      const disk = JSON.parse(await readFile(path.join(dir, "tierkit.config.json"), "utf8"));
+      expect(disk.runtime.measuredCompact.mode).toBe("measured_compact");
+
+      const noConsent = await fetch(`${url}/v1/config/runtime`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          measuredCompact: {
+            mode: "measured_compact",
+            officialTokenMeasurement: { mode: "anthropic_count_tokens_opt_in", consentAcknowledged: false },
+          },
+        }),
+      });
+      expect(noConsent.status).toBe(400);
+    } finally { await srv.close(); await rm(dir, { recursive: true, force: true }); }
+  });
   it("preserves other valid runtime fields", async () => {
     const { srv, dir, url } = await startWith({ version: "0.1", runtime: { port: 4101, dataDir: ".custom/dd", host: "127.0.0.1" } });
     try {

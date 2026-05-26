@@ -82,4 +82,26 @@ describe("doctorGateway", () => {
       await rm(envelopeDir, { recursive: true, force: true });
     }
   });
+
+  it("reports measured compact status and request-level blocker", async () => {
+    const dir = await projectWith({
+      version: "0.1",
+      runtime: {
+        measuredCompact: {
+          mode: "measured_compact",
+          eligibleSources: { tierkitMcpCompactTools: ["tierkit.get_file_digest"] },
+          officialTokenMeasurement: { mode: "anthropic_count_tokens_opt_in", consentAcknowledged: true },
+        },
+      },
+    });
+    try {
+      const checks = await doctorGateway({ cwd: dir });
+      expect(checks.find((c) => c.id === "measured-compact-mode")?.detail).toContain("ENABLED");
+      expect(checks.find((c) => c.id === "measured-compact-official-token-measurement")?.detail).toContain("ENABLED BY USER OPT-IN");
+      const requestLevel = checks.find((c) => c.id === "measured-compact-request-level");
+      expect(requestLevel?.status).toBe("warn");
+      expect(requestLevel?.detail).toContain("BLOCKED");
+      expect(JSON.stringify(checks)).not.toContain("Authorization");
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
 });

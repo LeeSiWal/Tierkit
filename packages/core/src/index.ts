@@ -9,6 +9,7 @@ export {
   type ToolResultRange,
   type ToolResultSize,
   type ToolResultNext,
+  type CompactContextMetadata,
   type ToolResultEnvelopeVersion,
 } from "./tools/envelope.js";
 
@@ -158,11 +159,16 @@ export {
   GatewayTransformationModeSchema,
   GatewayToolResultEnvelopeConfigSchema,
   GatewayTransformationsConfigSchema,
+  MeasuredCompactModeSchema,
+  OfficialTokenMeasurementModeSchema,
+  MeasuredCompactConfigSchema,
   CONFIG_FILENAME,
   type TierkitConfig,
   type PerProfileBudget,
   type GatewayTransformationMode,
   type GatewayTransformationsConfig,
+  type MeasuredCompactMode,
+  type MeasuredCompactConfig,
 } from "./config/TierkitConfig.js";
 export {
   loadConfig,

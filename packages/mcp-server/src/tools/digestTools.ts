@@ -147,6 +147,16 @@ export async function getFileDigestTool(args: Record<string, unknown>, ctx: Tool
     cacheHit: result.cacheHit,
     generatedAt: result.generatedAt,
     stats: result.stats,
+  }, {
+    compactContext: {
+      version: "tierkit-compact-context.v1",
+      contextId: result.id,
+      contentDigest: result.hash,
+      sourceKind: "file_digest",
+      recoverable: true,
+      retrieveMoreTool: "tierkit.read_file",
+      measurementTicket: null,
+    },
   });
 }
 
