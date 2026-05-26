@@ -7249,11 +7249,12 @@ export const GUI_HTML = `<!doctype html>
 
   // ── Anthropic Gateway Phase 1 toggle card ────────────────────────────
   // postTierkitCommand: sends a tk:cmd to the extension host (VS Code only).
-  // In browser context, acquireVsCodeApi is not available — the toggle is disabled.
+  // Uses the vsApi handle already acquired by createVsCodeTransport() above —
+  // acquireVsCodeApi() may only be called once per page, so we must NOT call it again.
+  // In browser context vsApi is null and this returns false (toggle is disabled above).
   function postTierkitCommand(commandName) {
-    if (typeof acquireVsCodeApi === 'function') {
-      const api = (window.__tierkitVsApi || (window.__tierkitVsApi = acquireVsCodeApi()));
-      api.postMessage({ type: 'tk:cmd', command: commandName });
+    if (vsApi) {
+      vsApi.postMessage({ type: 'tk:cmd', command: commandName });
       return true;
     }
     return false;
