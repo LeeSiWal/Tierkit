@@ -1806,6 +1806,12 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
         }));
       }
 
+      if (route === "GET /v1/doctor/gateway") {
+        if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
+        const { doctorGateway } = await import("../usecases/doctorGateway.js");
+        return sendJson(res, 200, { checks: await doctorGateway({ cwd: opts.cwd }) });
+      }
+
       if (route === "PATCH /v1/config/runtime") {
         if (!isLoopbackRemoteAddress(req.socket.remoteAddress)) return sendJson(res, 403, { error: "local_only" });
 

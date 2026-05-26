@@ -980,6 +980,15 @@ export const GUI_HTML = `<!doctype html>
     <div id="tk-gateway-browser-note" class="dim" style="font-size:10.5px;margin-top:6px;display:none">Use the VS Code sidebar to toggle.</div>
   </section>
 
+  <!-- ── ANTHROPIC GATEWAY DIAGNOSTICS card ──────────────────────────── -->
+  <section class="card tk-gateway-diagnostics-card">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+      <h2 style="margin:0">Anthropic Gateway — diagnostics</h2>
+      <button id="tk-gateway-diag-refresh" class="tiny">↻ Refresh</button>
+    </div>
+    <div id="tk-gateway-diag-list" style="margin-top:8px;font-size:11.5px"></div>
+  </section>
+
   <!-- ── MCP BRIDGE card (v0.15, extended in v0.18) ──────────────────── -->
   <section class="card mcp-bridge-card">
     <h2 data-i18n="cardMcpBridge">Connect Claude Code (MCP)</h2>
@@ -7304,6 +7313,44 @@ export const GUI_HTML = `<!doctype html>
     });
     void refreshGatewayToggle();
   }
+
+  // ── Anthropic Gateway diagnostics card ─────────────────────────────────
+  const tkGatewayDiagList = $('tk-gateway-diag-list');
+  const tkGatewayDiagRefresh = $('tk-gateway-diag-refresh');
+
+  async function refreshGatewayDiagnostics() {
+    if (!tkGatewayDiagList) return;
+    tkGatewayDiagList.textContent = 'Loading…';
+    try {
+      const r = await transport.request('/v1/doctor/gateway', { method: 'GET' });
+      if (!r.ok || !r.data || !Array.isArray(r.data.checks)) {
+        tkGatewayDiagList.innerHTML = '<span style="color:var(--err)">Failed to load diagnostics.</span>';
+        return;
+      }
+      const checks = r.data.checks;
+      if (checks.length === 0) {
+        tkGatewayDiagList.innerHTML = '<span class="dim">No diagnostic checks available.</span>';
+        return;
+      }
+      tkGatewayDiagList.innerHTML = checks.map((c) => {
+        const statusColor =
+          c.status === 'ok'   ? 'var(--ok)'   :
+          c.status === 'warn' ? 'var(--warn)'  :
+                                'var(--err)';
+        const dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + statusColor + ';flex-shrink:0"></span>';
+        const label = '<span style="font-weight:500">' + escapeHtml(c.label) + '</span>';
+        const detail = c.detail ? ' <span class="dim" style="font-size:10.5px">— ' + escapeHtml(c.detail) + '</span>' : '';
+        return '<div style="display:flex;align-items:center;gap:6px;padding:3px 0">' + dot + label + detail + '</div>';
+      }).join('');
+    } catch (_) {
+      if (tkGatewayDiagList) tkGatewayDiagList.innerHTML = '<span style="color:var(--err)">Connection error.</span>';
+    }
+  }
+
+  if (tkGatewayDiagRefresh) {
+    tkGatewayDiagRefresh.addEventListener('click', () => { void refreshGatewayDiagnostics(); });
+  }
+  void refreshGatewayDiagnostics();
 
   refreshAll();
   void subscribeSavings();
