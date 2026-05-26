@@ -121,3 +121,47 @@
 ## Test 23 — Sidebar copy remains bounded
 - Open the Tierkit sidebar.
 - Expected: the gateway card shows `Experimental request transformation: Off|Observe|Envelope`; it does not show token or billing impact claims.
+
+## Measured Compact Context bounded cases
+
+## Test 24 — Measured compact default is off
+- Remove `runtime.measuredCompact` from `tierkit.config.json`.
+- Run `tierkit doctor gateway`.
+- Expected: `Measured Compact Context: OFF` and `Official Token Measurement: OFF`.
+
+## Test 25 — MCP compact contract is present for file digest
+- Call `tierkit.get_file_digest` from Claude Code or an MCP test client.
+- Expected: the tool result envelope includes `compactContext.version:
+  "tierkit-compact-context.v1"`, `sourceKind: "file_digest"`,
+  `recoverable: true`, and `retrieveMoreTool: "tierkit.read_file"`.
+- Expected: `measurementTicket` is `null`.
+
+## Test 26 — Official measurement requires explicit consent
+- Try setting `runtime.measuredCompact.officialTokenMeasurement.mode:
+  "anthropic_count_tokens_opt_in"` with `consentAcknowledged: false`.
+- Expected: config validation or PATCH rejects the state.
+
+## Test 27 — Request-level measurement is blocked, not fabricated
+- Set `runtime.measuredCompact.mode: "measured_compact"` with consent true.
+- Run `tierkit doctor gateway` and `GET /v1/gateway/status`.
+- Expected: diagnostics report request-level counterfactual measurement as
+  blocked because MCP and Gateway do not share a memory-only raw-baseline
+  registry.
+- Expected: no measured input-token delta is displayed.
+
+## Test 28 — Legacy envelope conflict
+- Try enabling both `runtime.measuredCompact.mode: "measured_compact"` and
+  `runtime.gatewayTransformations.mode: "envelope"`.
+- Expected: config validation rejects the combination or doctor reports a
+  conflict. Actual requests must not be silently double-transformed.
+
+## Test 29 — No raw baseline persistence
+- Grep `.tierkit/runtime` after file digest and Gateway requests.
+- Expected: logs contain no raw file content, no `messages[]`, no tool result
+  bodies, no measurement ticket entry content, and no credentials.
+
+## Test 30 — Copy remains precise
+- Open any measured compact diagnostics surface.
+- Expected: it does not claim billing certainty, guaranteed reduction, or
+  request-level measured input-token delta while request-level measurement is
+  blocked.

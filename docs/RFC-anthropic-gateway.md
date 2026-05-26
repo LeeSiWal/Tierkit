@@ -122,6 +122,36 @@ Phase 2 design constraints inherited from Phase 1:
 - The safe log `authorizationScheme` enum stays `["Bearer", "Other"]` unless
   Phase 2 deliberately extends it (and updates the redaction tests).
 
+## 2026-05-26 Addendum: MCP-first measured compact direction
+
+The post-Phase-2 direction is reoriented away from Gateway native rewrite as
+the stable compact-context product path.
+
+Stable direction:
+
+- MCP tools generate semantic compact context with provenance and retrieve-more
+  affordances.
+- Gateway keeps Phase 1 passthrough semantics and acts as a measurement/delivery
+  layer.
+- Official input-token deltas may be shown only when compact and raw-equivalent
+  request bodies can be compared using Anthropic's Token Counting API.
+- Anthropic token-count values are pre-send estimates and may differ slightly
+  from message creation input tokens.
+- Official measurement must be explicit opt-in because raw-equivalent context
+  omitted from generation may still be sent to Anthropic for token counting.
+
+Bounded implementation decision:
+
+- `runtime.measuredCompact` was added with default `mode: "off"`.
+- `tierkit.get_file_digest` advertises a compact context contract in its MCP
+  result envelope.
+- Request-level counterfactual measurement remains blocked because the MCP
+  server and Gateway daemon do not share a memory-only raw-baseline registry.
+- Existing digest `savedTokens` values remain legacy local estimates.
+- Existing `gatewayTransformations.mode: "observe" | "envelope"` remains
+  legacy experimental and is not part of the new stable measured compact mode.
+- Same-request dedupe remains deferred.
+
 ## Phase 2 v1 implementation addendum
 
 Phase 2 v1 is implemented behind `runtime.gatewayTransformations` and remains

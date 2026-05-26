@@ -106,3 +106,53 @@ gateway log의 optional `transformation` 객체에는 `inputUtf8BytesBefore`,
 Phase 2 동작의 production activation은 1주 dogfood, 최근 7일 5xx 0건, Direct
 fallback의 실제 회복 경험, `tierkit doctor gateway` 정상 증빙이 있을 때까지
 blocked 상태입니다.
+
+## 측정형 Compact Context 방향
+
+Tierkit의 다음 stable compact-context 방향은 Gateway native rewrite가 아니라
+MCP-first 구조입니다. `tierkit.get_file_digest` 같은 MCP 도구가 provenance와
+retrieve-more 경로를 포함한 semantic compact context를 만들고, Gateway는
+passthrough delivery layer를 유지합니다. 이후 안전한 구조가 갖춰지면 compact
+요청과 원문 기준 counterfactual 요청을 비교 측정할 수 있습니다.
+
+새 설정 namespace는 존재하지만 기본값은 비활성입니다.
+
+```json
+{
+  "runtime": {
+    "measuredCompact": {
+      "mode": "off",
+      "eligibleSources": { "tierkitMcpCompactTools": [] },
+      "officialTokenMeasurement": {
+        "mode": "off",
+        "consentAcknowledged": false
+      },
+      "privacy": {
+        "rawBaselineStorage": "memory_only",
+        "rawBaselineTtlMs": 60000,
+        "maxRawBaselineBytes": 1048576
+      },
+      "reporting": {
+        "requestLevelMetrics": true,
+        "sessionAggregation": false
+      }
+    }
+  }
+}
+```
+
+이번 bounded implementation에서는 official measurement가 활성화되지 않습니다.
+request-level counterfactual measurement는 현재 구조상 blocked입니다. Tierkit
+MCP server와 Gateway daemon이 memory-only raw-baseline registry를 공유하지
+않기 때문입니다. 기존 digest `savedTokens` 값은 로컬 추정값이며 Anthropic
+Token Counting API 측정값이 아닙니다.
+
+향후 official measurement를 구현한다면, 실제 생성 요청에서 제외된 원문 문맥도
+토큰 계산 목적으로 Anthropic Token Counting API에 전송될 수 있다는 점을
+사용자가 명시적으로 동의해야 합니다. 표시되는 토큰 수는 Anthropic Token
+Counting API의 사전 측정값이며, 실제 메시지 생성 시 사용되는 입력 토큰과
+소량 차이가 날 수 있습니다.
+
+`tierkit.get_file_digest`는 이제 MCP tool-result envelope 안에 compact context
+contract를 표시합니다. `tierkit.read_file`로 복구 가능한 context이며, 안전한
+memory-only bridge가 생기기 전까지 measurement ticket은 발급하지 않습니다.

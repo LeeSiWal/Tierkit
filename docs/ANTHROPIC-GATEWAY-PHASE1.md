@@ -32,3 +32,17 @@ Phase 2 v1 implementation does not satisfy the operational activation gate by
 itself. Production activation remains blocked pending real dogfood evidence:
 one week of use, zero trailing 7-day 5xx gateway log records, one clean Direct
 fallback recovery, and healthy `tierkit doctor gateway` output.
+
+## Measured Compact Reorientation
+
+Branch `worktree-anthropic-gateway-measured-compact` reorients the next compact
+context direction toward MCP-first measured compact context:
+
+- MCP compact tools produce recoverable compact context with provenance.
+- Gateway native rewrite remains legacy experimental and default-off.
+- `observe` and dedupe are not part of the new stable measured compact feature.
+- `runtime.measuredCompact` defaults to `off`.
+- Official Anthropic Token Counting API measurement remains blocked until MCP
+  and Gateway can share raw-equivalent baseline content through memory only.
+- Existing digest `savedTokens` values are local estimates and are not promoted
+  to official measured input-token deltas.

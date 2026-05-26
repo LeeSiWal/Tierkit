@@ -110,3 +110,53 @@ or remove the `gatewayTransformations` block.
 Production activation of Phase 2 behavior is blocked until one week of dogfood,
 zero trailing 7-day 5xx records, one clean Direct fallback recovery, and healthy
 `tierkit doctor gateway` evidence are available.
+
+## Measured Compact Context direction
+
+Tierkit's next stable compact-context direction is MCP-first, not Gateway native
+rewrite. MCP tools such as `tierkit.get_file_digest` produce semantic compact
+context with provenance and a retrieve-more path. The Gateway remains a
+passthrough delivery layer and may later measure compact requests against
+raw-equivalent counterfactual requests.
+
+The new config namespace is present but disabled by default:
+
+```json
+{
+  "runtime": {
+    "measuredCompact": {
+      "mode": "off",
+      "eligibleSources": { "tierkitMcpCompactTools": [] },
+      "officialTokenMeasurement": {
+        "mode": "off",
+        "consentAcknowledged": false
+      },
+      "privacy": {
+        "rawBaselineStorage": "memory_only",
+        "rawBaselineTtlMs": 60000,
+        "maxRawBaselineBytes": 1048576
+      },
+      "reporting": {
+        "requestLevelMetrics": true,
+        "sessionAggregation": false
+      }
+    }
+  }
+}
+```
+
+Official measurement is not active in this bounded implementation. Request-level
+counterfactual measurement is blocked because Tierkit's MCP server and Gateway
+daemon do not currently share a memory-only raw-baseline registry. Existing
+digest `savedTokens` values are local estimates, not Anthropic Token Counting
+API measurements.
+
+If official measurement is implemented later, enabling it must explicitly
+acknowledge that source context omitted from the generated request may still be
+sent to Anthropic's Token Counting API for token counting only. Token counts are
+pre-send estimates from Anthropic's Token Counting API and may differ slightly
+from tokens used during message creation.
+
+`tierkit.get_file_digest` now advertises a compact context contract in its MCP
+tool-result envelope. It is recoverable through `tierkit.read_file`, and no
+measurement ticket is issued until a safe memory-only bridge exists.
