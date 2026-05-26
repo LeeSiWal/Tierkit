@@ -1,39 +1,39 @@
-# Anthropic Gateway Phase 1 Implementation Plan (rev5)
+# Anthropic Gateway Phase 1 Implementation Plan (rev6)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Productize the Phase 0 Anthropic-passthrough as a safe connection feature in Tierkit — config flag, scoped terminal launch, on-daemon status endpoint, local-only diagnostics, safe per-request log with value-constrained rotation, sidebar toggle, daemon auto-restart pre-flight, and explicit direct fallback. The gateway routes Claude Code's Messages API traffic through the local daemon without modifying message content.
+**Goal:** Productize the Phase 0 Anthropic-passthrough as a safe connection feature in Tierkit — config flag, scoped terminal launch, on-daemon status endpoint, local-only diagnostics, safe per-request log with value-constrained rotation, sidebar toggle, daemon auto-restart pre-flight, and explicit direct fallback.
 
-**Architecture:** Layer config + UX + safe logging + local-only status/diagnostic endpoints on top of the validated Phase 0 passthrough (`packages/core/src/runtime/anthropicGateway.ts` and two routes in `Server.ts`). Diagnostics, readiness checks, and the extension's PATCH calls all use a canonical loopback control URL — they never invoke the upstream Anthropic API. The safe-log writer is `async` so schema-validation failures surface uniformly as rejected Promises. Offline config writes from the extension only run on transport failure, never on a daemon-issued rejection — the daemon's full-schema validation cannot be bypassed.
+**Architecture:** Layer config + UX + safe logging + local-only status/diagnostic endpoints on top of the validated Phase 0 passthrough. Pure helpers live in modules with NO `vscode` import so unit tests run without the VS Code runtime. Daemon control state is a discriminated union — `reachable` / `transport-failure` / `rejected` — so the extension never silently writes the config when the daemon rejected a request, and never auto-retries after an attempted-PATCH transport failure (which would risk double-toggling). The safe-log schema enforces semantic invariants (no fingerprint without channel presence). Streaming errors log the HTTP status the client actually observed, not the would-be 502.
 
 **Tech Stack:**
 - Backend: TypeScript, Node 20+, plain `http` (existing `Server.ts`), `fetch()` (already in spike)
 - Config: zod (existing schema layer)
-- CLI: `clipanion` (existing pattern in `packages/cli/src/commands/`)
-- VS Code extension: `vscode` API, no new build deps
+- CLI: `clipanion`
+- VS Code extension: `vscode` API
 - Tests: vitest
 
 ---
 
 ## Mandatory corrections before implementation
 
-The following corrections override conflicting snippets elsewhere in this plan. Each task is already aligned; this section is the executive summary the executor verifies against.
+The following corrections override conflicting snippets elsewhere. Each task is already aligned; this section is the executive summary the executor verifies against.
 
-1. **Safe log shape is value-constrained.** `GatewayLogRecordSchema` MUST constrain values, not just types: `path` enum, `authorizationScheme` enum `["Bearer", "Other"]`, fingerprints regex `^[0-9a-f]{12}$`, `ts` datetime. Missing auth fields MUST fail validation; do not silently default `apiKeyPresent` to `false`.
+1. **Safe log shape is value-constrained.** `path` enum, `authorizationScheme` enum `["Bearer", "Other"]`, fingerprints regex `^[0-9a-f]{12}$`, `ts` datetime. `apiKeyPresent` has NO default — missing must fail.
 
-2. **Input is unknown.** `appendGatewayLog()` MUST accept `unknown` and perform runtime allowlist projection.
+2. **Input is unknown.** `appendGatewayLog()` accepts `unknown` and projects allowlisted fields at runtime.
 
-3. **Local-only enforcement (server).** `GET /v1/gateway/status`, `PATCH /v1/config/runtime`, and `GET /v1/doctor/gateway` MUST reject non-loopback requests with HTTP 403 via `isLoopbackRemoteAddress(addr)`.
+3. **Local-only enforcement (server).** `GET /v1/gateway/status`, `PATCH /v1/config/runtime`, `GET /v1/doctor/gateway` reject non-loopback callers with HTTP 403 via `isLoopbackRemoteAddress(addr)`.
 
-4. **Canonical dataDir resolver.** A single helper `resolveRuntimeDataDir(dataDir, cwd)` returns an absolute path. Status, log writer, and doctor MUST use the same resolved directory.
+4. **Canonical dataDir resolver.** A single helper `resolveRuntimeDataDir(dataDir, cwd)`. Status, log writer, doctor MUST use the same resolved directory.
 
 5. **No real upstream in tests.** All `/v1/messages*` tests set `TIERKIT_ANTHROPIC_UPSTREAM` to a mock server URL.
 
-6. **Deterministic logging contract.** Non-stream: `await logFinal(status)` BEFORE `res.end(body)`. Stream: log after `streamMessages()` resolves; no fire-and-forget. Stronger pre-client-completion guarantees for streaming are deferred.
+6. **Deterministic logging contract.** Non-stream: `await logFinal(status)` BEFORE `res.end(body)`. Stream: log after `streamMessages()` resolves. Stronger pre-client-completion stream guarantees deferred to Phase 2.
 
-7. **Transport errors log as 502.**
+7. **Transport-error status records match the emitted HTTP status.** Before response headers are sent, an upstream transport error returns and logs HTTP 502. After streaming headers have already been sent, the safe log records `res.statusCode` (the status the client actually observed) and the stream is destroyed. A dedicated stream-abort outcome field is deferred to Phase 2.
 
-8. **PATCH validates the full result.** `PATCH /v1/config/runtime` parses through `TierkitConfigSchema.parse()` before atomically persisting.
+8. **PATCH validates the full result.** `PATCH /v1/config/runtime` parses through `TierkitConfigSchema.parse()` before atomic write.
 
 9. **Ordinary `tierkit doctor` is NOT touched.**
 
@@ -41,54 +41,75 @@ The following corrections override conflicting snippets elsewhere in this plan. 
 
 11. **Diff-based language audit.**
 
-12. **No unconditional `acquireVsCodeApi()` in gui.ts.** Reuse the existing dispatch bridge.
+12. **No unconditional `acquireVsCodeApi()` in gui.ts.**
 
-13. **Offline toggle reads the file before flipping.** Defaulting current state to `"off"` without reading the file makes OFF transitions impossible when the daemon is down.
+13. **Offline toggle reads the file before flipping** (so OFF transitions work when the daemon is down).
 
-14. **Readiness distinguishes mode-off from unreachable.** Mode-off → show enable guidance immediately; do NOT restart the daemon. Routes-enabled → launch routed terminal. Endpoint unreachable / non-OK → attempt restart, then offer Direct fallback.
+14. **Readiness distinguishes mode-off from unreachable.** Mode-off → guidance immediately, no daemon restart.
 
-15. **Authorization scheme must not cause silent log loss.** Schema enum `["Bearer", "Other"]`; Server.ts maps any non-Bearer raw scheme to `"Other"`. Never persist the raw scheme value.
+15. **Authorization scheme must not cause silent log loss.** Server.ts maps any non-Bearer raw scheme to `"Other"` before logging.
 
-16. **Cover every modified proxy route in tests.** `/v1/messages` (off, on non-stream, on stream, 502), `/v1/messages/count_tokens` (off, on). All use the mock upstream.
+16. **Cover every modified proxy route in tests.** `/v1/messages` (off, on non-stream, on stream, 502 pre-headers), `/v1/messages/count_tokens` (off, on). Mock upstream parses request body and returns SSE when `stream: true`.
 
-17. **Audit actual dialog and CLI strings.** Audit MUST include `packages/vscode-tierkit/src/extension.ts`, `packages/cli/src/commands/DoctorGatewayCommand.ts`, and the manual test plan markdown.
+17. **Audit actual dialog and CLI strings** including `extension.ts`, `DoctorGatewayCommand.ts`, and the manual test plan markdown.
 
-18. **Direct fallback honors `TIERKIT_CLAUDE_CODE_BIN`.** Both routed and direct terminals call `gatewayLaunchCommand(process.env)`.
+18. **Direct fallback honors `TIERKIT_CLAUDE_CODE_BIN`.**
 
-19. **Offline fallback validation scope.** Extension's offline atomic file fallback is NOT full-schema validated (extension does not import `@tierkit/core` schema). It MUST reject an existing malformed `runtime.gatewayMode` and only mutate that one field.
+19. **Offline file fallback is constrained.** Extension only mutates `runtime.gatewayMode` and rejects a pre-existing malformed value.
 
-20. **Canonical loopback URL for SERVER-side endpoint registration / doctor.** `doctorGateway` probes `loopbackControlUrl(host, port)` so a daemon bound to `0.0.0.0` is still diagnosable.
+20. **Canonical loopback URL for SERVER-side endpoint registration / doctor.** `doctorGateway` probes `loopbackControlUrl(host, port)`.
 
-21. **`appendGatewayLog()` rejects asynchronously.** Declare it `async` so schema-validation and byte-guard failures are rejected Promises. Tests and production callers uniformly use `await appendGatewayLog(...)` / `expect(...).rejects.toThrow()`.
+21. **`appendGatewayLog()` is `async`.** Schema/byte-guard failures surface as rejected Promises; `await expect(...).rejects.toThrow()` works.
 
-22. **VS Code control requests also use loopback.** Extension MUST canonicalize the configured `tierkit.baseUrl` to a loopback control URL (preserving the port) via a pure helper `controlBaseUrlFromConfiguredBaseUrl(...)`. Both `tierkit.toggleGatewayMode` and `tierkit.launchClaudeCodeWithGateway` MUST call `/v1/gateway/status` and `/v1/config/runtime` through this control URL, not through a potentially LAN-facing configured base URL.
+22. **VS Code control requests also use loopback** via `controlBaseUrlFromConfiguredBaseUrl(...)`.
 
-23. **Offline fallback is transport-failure-only.** If the daemon is reachable and `PATCH /v1/config/runtime` returns non-2xx, show the rejection message and stop. NEVER write `tierkit.config.json` directly in that path, because that would bypass daemon-side full-schema validation. Offline atomic fallback runs only when the control request cannot be reached due to transport failure.
+23. **Offline fallback is allowed only before any mutation request is sent.** If the initial `GET /v1/gateway/status` fails due to transport failure, the extension may perform the atomic file fallback. Once a PATCH request has been attempted, any transport failure is ambiguous: the daemon may already have committed the write. In that case, show an indeterminate-state error and require the user to refresh/retry; NEVER perform a second file mutation automatically.
 
-24. **Offline config mutation is pure-tested.** Extract pure helpers `readGatewayModeFromConfig(parsed)` and `withGatewayMode(parsed, next)` into `packages/vscode-tierkit/src/gatewayModeConfig.ts`. Tests cover: absent → default `"off"`; existing `"on"` returns `"on"` (so offline OFF transitions work); malformed value throws; `withGatewayMode` mutates only the gatewayMode field and preserves other config fields.
+24. **Offline config mutation is pure-tested** via `gatewayModeConfig.ts` helpers.
 
-25. **Doctor loopback test checks the displayed URL.** The doctor unit test for a non-loopback configured host asserts that the `gateway-daemon` check **`label`** contains `http://127.0.0.1:<port>` (or `[::1]` for IPv6), not just its error detail.
+25. **Doctor loopback test checks the displayed URL** (asserts on `label`, not `detail`).
 
-26. **Streaming mock responds based on the request body.** The mock upstream in `Server.gatewayMode.test.ts` MUST parse the forwarded request body and return SSE when `stream: true`. It must NOT depend on the `Accept` header being forwarded (Phase 0's header allowlist does not forward `Accept`).
+26. **Streaming mock responds based on the request body.**
 
-27. **Sensitive-logging audit is a review aid, not a guard.** The hard redaction guarantees are the value-constrained schema and `gatewayLog.redaction.test.ts`. The grep step in Task 13 inspects only NEW lines added in this branch, scoped to `packages/`, and is reported as advisory (does not fail CI).
+27. **Sensitive-logging audit is a review aid, not a guard.** Diff-based, advisory.
 
-28. **Docs describe the actual auth record shape.** State that the log records the Authorization classification (`Bearer`, `Other`, or `null` when absent) and whether `x-api-key` was present, rather than implying a separate Authorization-present boolean.
+28. **Docs describe the auth record shape accurately** (classification, not separate "present" boolean).
+
+29. **Control-URL helper exists before Task 8 consumes it.** `controlBaseUrlFromConfiguredBaseUrl()` is a shared control-plane helper, not a terminal-launch-only helper. It lives in its OWN file (`packages/vscode-tierkit/src/gatewayControlUrl.ts`) with its own pure test, created in Task 8 BEFORE the extension toggle code. Both Task 8 and Task 9 import from it. Task 8 must never `import` from a file created later in Task 9.
+
+30. **HTTP rejection is not transport failure.** A reachable `/v1/gateway/status` with non-2xx status, or a malformed successful body, MUST surface an error and stop. The discriminated reachability type is `{kind:"reachable"} | {kind:"transport-failure"} | {kind:"rejected"}`. File fallback runs only on `transport-failure`.
+
+31. **Never retry a possibly committed PATCH via file mutation.** Once `PATCH /v1/config/runtime` has been attempted, a thrown fetch error is ambiguous: the daemon may have already committed the write before the response was lost. Show an indeterminate-state error and ask the user to refresh and retry. Do NOT execute offline file fallback after an attempted PATCH.
+
+32. **Streaming error status reflects what the client received.** When headers have already been sent (stream in progress), an upstream failure logs `res.statusCode` (the status the client observed). Logging `502` in that case would make the safe log diverge from what actually happened on the wire.
+
+33. **Auth fields enforce semantic invariants.** `superRefine()` adds:
+    - `authorizationScheme === null` iff `authorizationFingerprint === null`
+    - `apiKeyPresent === false` iff `apiKeyFingerprint === null`
+
+34. **Document supported control-plane bind modes.** Loopback canonicalization rescues daemons bound to `127.0.0.1`, `::1`, `0.0.0.0`, `::`. A daemon bound only to a specific LAN interface (e.g. `192.168.1.50`) is NOT reachable through Phase 1's local-control flow — explicitly documented as out of scope.
+
+35. **Keep pure tests independent of the VS Code runtime.** Split the extension helpers:
+    - `gatewayControlUrl.ts` — pure, no `vscode` import
+    - `gatewayLaunchCore.ts` — pure (`buildGatewayEnv`, `gatewayLaunchCommand`, `classifyReadiness`, `nextGatewayMode`)
+    - `gatewayModeConfig.ts` — pure (`readGatewayModeFromConfig`, `withGatewayMode`)
+    - `gatewayTerminal.ts` — VS Code side effects only (`openGatewayTerminal`)
+    The first three are unit-tested; pure tests never import `vscode`.
 
 ---
 
 ## Context — read these first
 
-1. **Phase 0 spike code is already in this branch.** Phase 1 branch is stacked on top of `worktree-anthropic-gateway-spike` (Draft PR #1). Verify with `git log --oneline main..HEAD`. Phase 1 PR base = spike branch until Phase 0 merges.
+1. **Phase 0 spike code is already in this branch.** Verify with `git log --oneline main..HEAD`. Phase 1 PR base = spike branch until Phase 0 merges.
 
 2. **Files this plan reuses:**
-   - `packages/core/src/runtime/anthropicGateway.ts` — `forwardMessages`, `streamMessages`, `forwardCountTokens`, `pickForwardHeaders` (header allowlist does **not** include `accept`), `observeAuthHeaders`, `upstreamUrl()` override via `TIERKIT_ANTHROPIC_UPSTREAM` env.
-   - `packages/core/src/runtime/Server.ts` — `POST /v1/messages` / `POST /v1/messages/count_tokens` already wired unconditionally.
-   - `packages/core/src/runtime/usageLog.ts` — JSONL pattern (Phase 1 uses 5 MB / 7 days).
-   - `packages/core/src/config/TierkitConfig.ts` — zod schema layering.
+   - `packages/core/src/runtime/anthropicGateway.ts` — `forwardMessages`, `streamMessages`, `forwardCountTokens`, `pickForwardHeaders` (header allowlist does NOT include `accept`), `observeAuthHeaders` (returns raw scheme prefix), `upstreamUrl()` override via `TIERKIT_ANTHROPIC_UPSTREAM`.
+   - `packages/core/src/runtime/Server.ts` — Phase 0 routes wired unconditionally.
+   - `packages/core/src/runtime/usageLog.ts` — JSONL pattern.
+   - `packages/core/src/config/TierkitConfig.ts` — zod schemas.
    - `packages/core/src/usecases/doctor.ts` — `DoctorCheck` type (re-used, not modified).
    - `packages/cli/src/commands/DoctorCommand.ts` — clipanion command pattern.
-   - `packages/vscode-tierkit/src/extension.ts` — `maybeStartDaemon` (line 399), `registerCommand` block (line 834+), sidebar webview's `onDidReceiveMessage` (line 572-603), main-panel webview's equivalent (line 279-299).
+   - `packages/vscode-tierkit/src/extension.ts` — `maybeStartDaemon` (~line 399), `registerCommand` (~834+), sidebar webview's `onDidReceiveMessage` (~572-603), main-panel webview's equivalent (~279-299).
 
 3. **Phase 0 RFC** (`docs/RFC-anthropic-gateway.md`): all four validations passed.
 
@@ -96,42 +117,37 @@ The following corrections override conflicting snippets elsewhere in this plan. 
 
 ## What this plan does NOT do
 
-| Excluded | Why deferred |
+| Excluded | Why |
 |---|---|
-| Request / response body transformation | Lives in Phase 2 inside `anthropicGateway.ts`. |
-| Compression / dedupe / cursor pagination | Schema design not finalized. |
-| Secret redaction at the body level | Body untouched in Phase 1. |
-| Per-call effectiveness numbers in the UI | No measurement = no claim. |
-| `~/.zshrc` or any persistent shell profile mutation | Too invasive. |
+| Body transformation / compression / dedupe / pagination | Phase 2. |
+| Per-call efficiency claims | No measurement = no claim. |
+| `~/.zshrc` / persistent shell profile mutation | Too invasive. |
 | Forcing or removing the user's Anthropic credential | Auth choice preserved. |
-| `POST /v1/models` discovery via gateway | Already gated by Claude Code. |
-| Local-LLM provider routing | Phase 3. |
-| OAuth admin endpoints | Hardcoded to api.anthropic.com by Claude Code. |
-| Strengthening streaming logging completion guarantee | Requires changing `anthropicGateway.ts`; deferred. |
-| Integrating gateway checks into ordinary `tierkit doctor` | Opt-in via `tierkit doctor gateway` only. |
+| `POST /v1/models` discovery | Already gated by Claude Code. |
+| Local-LLM routing | Phase 3. |
+| OAuth admin endpoints | Hardcoded by Claude Code. |
+| Strengthening stream pre-completion logging guarantee | Requires `anthropicGateway.ts` change → Phase 2. |
+| Stream-abort outcome field | Phase 2 (correction 32 records `res.statusCode` instead). |
+| Integrating gateway into ordinary `tierkit doctor` | Opt-in via `tierkit doctor gateway`. |
+| Reaching a daemon bound only to a specific LAN interface | Out of scope (correction 34). |
 
 ### User-facing language audit rule
 
-Phase 1 user-facing strings (README, `docs/ANTHROPIC_GATEWAY*.md`, sidebar HTML newly added in `gui.ts`, `package.json::contributes`, `package.nls*.json`, VS Code dialog text in `extension.ts`, CLI command `description`/`details` in `DoctorGatewayCommand.ts`, manual test plan markdown) **must not contain any of**:
+Forbidden in user-facing strings (README, `docs/ANTHROPIC_GATEWAY*.md`, newly added sidebar HTML, `package.json::contributes`, `package.nls*.json`, `extension.ts` dialogs, `DoctorGatewayCommand.ts`, manual test markdown): `\bsavings\b`, `\bsave\b`, `\bsaves\b`, `\bsaved\b`, `\bcost\b`, `\bcheaper\b`, `\befficient\b`, `절감`, `절약`, `비용`, `효율`, numeric token-count claims.
 
-- `\bsavings\b`, `\bsave\b`, `\bsaves\b`, `\bsaved\b`
-- `\bcost\b`, `\bcheaper\b`, `\befficient\b`
-- `절감`, `절약`, `비용`, `효율`
-- numeric token-count claims or percentages
-
-Audit is diff-based (see Task 13). Preferred vocabulary: route, connection, passthrough, diagnostic, status, 연결, 라우팅, 진단.
+Preferred vocabulary: route, connection, passthrough, diagnostic, status, 연결, 라우팅, 진단. Audit is diff-based (Task 13).
 
 ---
 
 ## File Structure
 
 **New files:**
-- `packages/core/src/runtime/gatewayLog.ts` — **async** allowlist-projection safe writer + queue + value-constrained schema + rotation
+- `packages/core/src/runtime/gatewayLog.ts` — async writer with value-constrained schema + superRefine + queue + rotation
 - `packages/core/test/gatewayLog.test.ts`
 - `packages/core/test/gatewayLog.redaction.test.ts`
 - `packages/core/src/runtime/gatewayStatus.ts`
 - `packages/core/test/gatewayStatus.test.ts`
-- `packages/core/src/runtime/loopback.ts` — `isLoopbackRemoteAddress`, `loopbackControlUrl(host, port)` (server-side)
+- `packages/core/src/runtime/loopback.ts` — `isLoopbackRemoteAddress`, `loopbackControlUrl` (server-side)
 - `packages/core/test/loopback.test.ts`
 - `packages/core/src/runtime/runtimePaths.ts`
 - `packages/core/test/runtimePaths.test.ts`
@@ -139,10 +155,13 @@ Audit is diff-based (see Task 13). Preferred vocabulary: route, connection, pass
 - `packages/core/test/doctorGateway.test.ts`
 - `packages/cli/src/commands/DoctorGatewayCommand.ts`
 - `packages/cli/test/doctorGatewayCommand.test.ts`
-- `packages/vscode-tierkit/src/gatewayLaunch.ts` — env builder + `gatewayLaunchCommand` + `classifyReadiness` + `nextGatewayMode` + **`controlBaseUrlFromConfiguredBaseUrl`** (pure)
-- `packages/vscode-tierkit/test/gatewayLaunch.test.ts`
-- `packages/vscode-tierkit/src/gatewayModeConfig.ts` — **`readGatewayModeFromConfig`** + **`withGatewayMode`** (pure)
+- **`packages/vscode-tierkit/src/gatewayControlUrl.ts`** — pure: `controlBaseUrlFromConfiguredBaseUrl`. NO `vscode` import. (correction 29, 35)
+- **`packages/vscode-tierkit/test/gatewayControlUrl.test.ts`**
+- **`packages/vscode-tierkit/src/gatewayLaunchCore.ts`** — pure: `buildGatewayEnv`, `gatewayLaunchCommand`, `classifyReadiness`, `nextGatewayMode`. NO `vscode` import. (correction 35)
+- **`packages/vscode-tierkit/test/gatewayLaunchCore.test.ts`**
+- `packages/vscode-tierkit/src/gatewayModeConfig.ts` — pure: `readGatewayModeFromConfig`, `withGatewayMode`. NO `vscode` import.
 - `packages/vscode-tierkit/test/gatewayModeConfig.test.ts`
+- **`packages/vscode-tierkit/src/gatewayTerminal.ts`** — VS Code side effects: `openGatewayTerminal`. Imports `vscode` + `gatewayLaunchCore`. (correction 35)
 - `packages/vscode-tierkit/src/webviewCommandAllowlist.ts`
 - `packages/vscode-tierkit/test/webviewCommandAllowlist.test.ts`
 - `packages/vscode-tierkit/test/MANUAL_gateway_flows.md`
@@ -150,14 +169,16 @@ Audit is diff-based (see Task 13). Preferred vocabulary: route, connection, pass
 
 **Modified files:**
 - `packages/core/src/config/TierkitConfig.ts` — add `gatewayMode`
-- `packages/core/src/runtime/Server.ts` — gate spike routes; non-stream log-before-end; loopback-guarded `GET /v1/gateway/status`, `PATCH /v1/config/runtime`, `GET /v1/doctor/gateway`; `resolveRuntimeDataDir` everywhere; map `authorizationScheme` to enum
+- `packages/core/src/runtime/Server.ts` — gate spike routes; non-stream log-before-end; **streaming error logs `res.statusCode`**; loopback-guarded status / doctor / PATCH; `resolveRuntimeDataDir` everywhere; scheme normalization
 - `packages/core/src/index.ts` — export `doctorGateway` + types
 - `packages/cli/src/cli.ts` — register `DoctorGatewayCommand`
-- `packages/vscode-tierkit/src/extension.ts` — register two commands; `tk:cmd` allowlist; toggle uses control URL + reads file fallback + stops on daemon non-2xx + uses `gatewayModeConfig` helpers; launch uses control URL + readiness discrimination; direct fallback uses `gatewayLaunchCommand`
-- `packages/vscode-tierkit/package.json` — add the two commands; no `tierkit.gatewayMode` configuration property
+- `packages/vscode-tierkit/src/extension.ts` — register two commands; `tk:cmd` allowlist; toggle uses discriminated reachability + transport-failure-only fallback + post-PATCH ambiguity stop; launch uses `gatewayLaunchCore` + `gatewayTerminal`
+- `packages/vscode-tierkit/package.json` — add the two commands; no `tierkit.gatewayMode` config property
 - `packages/vscode-tierkit/package.nls.json` + `package.nls.ko.json`
 - `packages/core/src/runtime/ui/gui.ts` — toggle row + diagnostics card (existing bridge)
 - `README.md`
+
+**Removed from prior revisions:** `gatewayLaunch.ts` (its responsibilities split across `gatewayControlUrl.ts`, `gatewayLaunchCore.ts`, `gatewayTerminal.ts`).
 
 **Untouched:**
 - `packages/core/src/runtime/anthropicGateway.ts`
@@ -171,55 +192,31 @@ Audit is diff-based (see Task 13). Preferred vocabulary: route, connection, pass
 |---|---|
 | 0 | Branch verification |
 | 1 | `gatewayMode` schema |
-| 2 | `gatewayLog` (async + value-constrained + queue + rotation) |
-| 3 | `loopback.ts` + `runtimePaths.ts` helpers |
+| 2 | `gatewayLog` (async + value-constrained schema + superRefine + queue + rotation) |
+| 3 | `loopback.ts` + `runtimePaths.ts` helpers (core-side) |
 | 4 | `GET /v1/gateway/status` (loopback-guarded) |
-| 5 | Route gate + deterministic safe-log wiring + scheme normalization (mock upstream parses body for stream) |
+| 5 | Route gate + deterministic safe-log wiring + streaming-aware error logging + scheme normalization (mock upstream parses body) |
 | 6 | `doctorGateway` (uses `loopbackControlUrl`, label-asserted test) + core export |
 | 7 | `tierkit doctor gateway` CLI |
-| 8 | Sidebar toggle — pure `gatewayModeConfig` helpers + `controlBaseUrlFromConfiguredBaseUrl` + daemon-rejection stops fallback |
-| 9 | Scoped terminal launch — uses control URL, readiness discrimination, fallback honors `TIERKIT_CLAUDE_CODE_BIN` |
+| 8 | Sidebar toggle — pure VS Code helpers FIRST (control URL, config mutation, webview allowlist), then server PATCH, then extension toggle with discriminated reachability + no-fallback-after-PATCH, then sidebar HTML |
+| 9 | Scoped terminal launch — pure `gatewayLaunchCore` + VS Code-side `gatewayTerminal` + extension launch command |
 | 10 | Manual test plan |
 | 11 | `GET /v1/doctor/gateway` + sidebar diagnostics card |
-| 12 | Docs (EN + KR) — accurate auth shape |
+| 12 | Docs (EN + KR) — accurate auth shape + supported bind modes note |
 | 13 | Full regression + diff-based language audit + sensitive-logging review aid + Phase 2 entry-gate |
 
 ---
 
 ## Task 0: Verify branch state
 
-- [ ] **Step 1: Clean tree + branch**
-
-```bash
-git status
-git branch --show-current
-```
-
-- [ ] **Step 2: Spike commits reachable + files present**
-
-```bash
-git log --oneline main..HEAD | grep -E "anthropicGateway|RFC|streamMessages|forwardMessages" | wc -l
-ls packages/core/src/runtime/anthropicGateway.ts \
-   packages/core/test/anthropicGateway.test.ts \
-   packages/core/test/Server.anthropicGateway.test.ts \
-   docs/RFC-anthropic-gateway.md
-```
-
-- [ ] **Step 3: Baseline build + tests**
-
-```bash
-pnpm install --frozen-lockfile
-pnpm -r build
-pnpm --filter @tierkit/core test -- anthropicGateway Server.anthropicGateway
-```
-
-- [ ] **Step 4: No commit.**
+- [ ] **Step 1**: `git status` (clean) on `worktree-anthropic-gateway-phase1`.
+- [ ] **Step 2**: spike commits reachable + 4 spike files present.
+- [ ] **Step 3**: `pnpm install --frozen-lockfile && pnpm -r build && pnpm --filter @tierkit/core test -- anthropicGateway Server.anthropicGateway` green.
+- [ ] **Step 4**: no commit.
 
 ---
 
 ## Task 1: Add `gatewayMode` to runtime config schema
-
-(Unchanged from rev4.)
 
 **Files:**
 - Modify: `packages/core/src/config/TierkitConfig.ts`
@@ -246,31 +243,52 @@ describe("RuntimeConfigSchema.gatewayMode", () => {
 });
 ```
 
-- [ ] **Step 2: Implement** — in `packages/core/src/config/TierkitConfig.ts`, inside `RuntimeConfigSchema.object({...})` after `discoverOllamaModels`:
+- [ ] **Step 2: Verify failure**
+
+```bash
+pnpm --filter @tierkit/core test -- configGatewayMode
+```
+
+- [ ] **Step 3: Implement** in `TierkitConfig.ts` inside `RuntimeConfigSchema.object({...})` after `discoverOllamaModels`:
 
 ```typescript
+    /**
+     * Anthropic Gateway flag. When "on", the daemon serves /v1/messages and
+     * /v1/messages/count_tokens as a transparent passthrough so Claude Code
+     * can be pointed at it via ANTHROPIC_BASE_URL. Default "off".
+     *
+     * This flag does NOT enable any request/response transformation.
+     */
     gatewayMode: z.enum(["off", "on"]).default("off"),
 ```
 
-- [ ] **Step 3: Tests + commit**
+- [ ] **Step 4: Tests pass**
 
 ```bash
 pnpm --filter @tierkit/core test -- "configGatewayMode|config"
+```
+
+- [ ] **Step 5: Commit**
+
+```bash
 git add packages/core/src/config/TierkitConfig.ts packages/core/test/configGatewayMode.test.ts
 git commit -m "feat(core): runtime.gatewayMode (off|on, default off)"
 ```
 
 ---
 
-## Task 2: Safe gateway log writer (**async**, value-constrained, queue, rotation)
+## Task 2: Safe gateway log writer (async + value-constrained + superRefine + queue + rotation)
 
-**Why:** Phase 1's hard rule. The function is declared `async` (correction 21) so schema-validation and byte-guard failures surface as rejected Promises consistently with all other failures — tests and callers can uniformly use `await` / `expect(...).rejects.toThrow()`.
+**Why:** Phase 1's hard rule. The function is `async` so all failures (including schema validation and the byte guard) surface as rejected Promises (correction 21). Value constraints prevent secret leakage and oversized records (corrections 1, 15). `superRefine()` enforces the documented invariant that fingerprint nullity matches channel presence (correction 33).
 
 ### Design
 
-- `async appendGatewayLog(filePath, input: unknown, opts?): Promise<void>` — schema errors throw inside the async function and reach the caller as a rejected Promise.
-- Value constraints: `path` enum, `authorizationScheme` enum `["Bearer", "Other"]`, fingerprint regex, `ts` datetime, `apiKeyPresent` boolean without default.
-- Module-level promise queue serializes writes.
+- `async appendGatewayLog(filePath, input: unknown, opts?): Promise<void>`
+- Value-constrained schema: `path` enum, `authorizationScheme: ["Bearer", "Other"]`, fingerprints regex, `ts` datetime, `apiKeyPresent` boolean without default.
+- `superRefine()` invariants:
+  - `authorizationScheme === null` iff `authorizationFingerprint === null`
+  - `apiKeyPresent === false` iff `apiKeyFingerprint === null`
+- Module-level promise queue.
 - `append → maybeTrim`; bounded line size; defensive byte guard.
 
 **Files:**
@@ -278,7 +296,7 @@ git commit -m "feat(core): runtime.gatewayMode (off|on, default off)"
 - Create: `packages/core/test/gatewayLog.test.ts`
 - Create: `packages/core/test/gatewayLog.redaction.test.ts`
 
-- [ ] **Step 1: Failing redaction tests**
+- [ ] **Step 1: Failing redaction + invariant tests**
 
 ```typescript
 // packages/core/test/gatewayLog.redaction.test.ts
@@ -312,7 +330,7 @@ function baseRecord() {
   };
 }
 
-describe("gatewayLog — redaction (allowlist projection + value constraints)", () => {
+describe("gatewayLog — redaction (value constraints + invariants)", () => {
   it("drops extra fields like authorizationRaw without throwing", async () => {
     const { file, dir } = await tmpFile();
     try {
@@ -348,7 +366,7 @@ describe("gatewayLog — redaction (allowlist projection + value constraints)", 
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it("accepts 'Other' as authorizationScheme (Server.ts maps non-Bearer to Other)", async () => {
+  it("accepts 'Other' as authorizationScheme", async () => {
     const { file, dir } = await tmpFile();
     try {
       await appendGatewayLog(file, { ...baseRecord(), auth: { ...baseRecord().auth, authorizationScheme: "Other" } });
@@ -357,7 +375,7 @@ describe("gatewayLog — redaction (allowlist projection + value constraints)", 
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it("rejects a malformed fingerprint instead of persisting it", async () => {
+  it("rejects a malformed fingerprint", async () => {
     const { file, dir } = await tmpFile();
     try {
       const evil = { ...baseRecord(), auth: { ...baseRecord().auth, apiKeyFingerprint: SECRET_API_KEY } };
@@ -365,7 +383,7 @@ describe("gatewayLog — redaction (allowlist projection + value constraints)", 
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
-  it("rejects a record where apiKeyPresent is missing", async () => {
+  it("rejects when apiKeyPresent is missing", async () => {
     const { file, dir } = await tmpFile();
     try {
       const evil = { ...baseRecord(), auth: { authorizationScheme: "Bearer", authorizationFingerprint: "abcdef123456", apiKeyFingerprint: null } };
@@ -379,6 +397,40 @@ describe("gatewayLog — redaction (allowlist projection + value constraints)", 
       await expect(appendGatewayLog(file, null)).rejects.toThrow();
       await expect(appendGatewayLog(file, "x")).rejects.toThrow();
       await expect(appendGatewayLog(file, 42)).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  // --- invariant (superRefine) tests ---
+
+  it("rejects authorizationFingerprint set while scheme is null", async () => {
+    const { file, dir } = await tmpFile();
+    try {
+      const evil = { ...baseRecord(), auth: { ...baseRecord().auth, authorizationScheme: null, authorizationFingerprint: "abcdef123456" } };
+      await expect(appendGatewayLog(file, evil)).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("rejects authorizationScheme set while fingerprint is null", async () => {
+    const { file, dir } = await tmpFile();
+    try {
+      const evil = { ...baseRecord(), auth: { ...baseRecord().auth, authorizationScheme: "Bearer", authorizationFingerprint: null } };
+      await expect(appendGatewayLog(file, evil)).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("rejects apiKeyFingerprint set while apiKeyPresent is false", async () => {
+    const { file, dir } = await tmpFile();
+    try {
+      const evil = { ...baseRecord(), auth: { ...baseRecord().auth, apiKeyPresent: false, apiKeyFingerprint: "abcdef123456" } };
+      await expect(appendGatewayLog(file, evil)).rejects.toThrow();
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
+  it("rejects apiKeyPresent: true with apiKeyFingerprint: null", async () => {
+    const { file, dir } = await tmpFile();
+    try {
+      const evil = { ...baseRecord(), auth: { ...baseRecord().auth, apiKeyPresent: true, apiKeyFingerprint: null } };
+      await expect(appendGatewayLog(file, evil)).rejects.toThrow();
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });
@@ -507,7 +559,7 @@ describe("gatewayLog — oversized guard", () => {
 pnpm --filter @tierkit/core test -- "gatewayLog "
 ```
 
-- [ ] **Step 5: Implement `gatewayLog.ts` (async, value-constrained)**
+- [ ] **Step 5: Implement `gatewayLog.ts`** (async + superRefine):
 
 ```typescript
 // packages/core/src/runtime/gatewayLog.ts
@@ -517,17 +569,39 @@ import { z } from "zod";
 
 export const GATEWAY_LOG_MAX_BYTES = 5 * 1024 * 1024;
 export const GATEWAY_LOG_MAX_AGE_DAYS = 7;
-
 const FINGERPRINT_RE = /^[0-9a-f]{12}$/;
 
 const GatewayAuthSchema = z
   .object({
     authorizationScheme: z.enum(["Bearer", "Other"]).nullable(),
     authorizationFingerprint: z.string().regex(FINGERPRINT_RE).nullable(),
-    apiKeyPresent: z.boolean(),                                       // no default
+    apiKeyPresent: z.boolean(),
     apiKeyFingerprint: z.string().regex(FINGERPRINT_RE).nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((v, ctx) => {
+    if ((v.authorizationScheme === null) !== (v.authorizationFingerprint === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["authorizationFingerprint"],
+        message: "authorizationFingerprint and authorizationScheme must both be null or both be non-null",
+      });
+    }
+    if (v.apiKeyPresent === false && v.apiKeyFingerprint !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apiKeyFingerprint"],
+        message: "apiKeyFingerprint must be null when apiKeyPresent is false",
+      });
+    }
+    if (v.apiKeyPresent === true && v.apiKeyFingerprint === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["apiKeyFingerprint"],
+        message: "apiKeyFingerprint is required when apiKeyPresent is true",
+      });
+    }
+  });
 
 const GatewayLogRecordSchema = z
   .object({
@@ -542,9 +616,7 @@ const GatewayLogRecordSchema = z
 
 export type GatewayLogRecord = z.infer<typeof GatewayLogRecordSchema>;
 
-export interface AppendGatewayLogOptions {
-  now?: Date;
-}
+export interface AppendGatewayLogOptions { now?: Date; }
 
 function projectAndValidate(input: unknown): GatewayLogRecord {
   if (!input || typeof input !== "object") throw new Error("gateway log input must be an object");
@@ -567,19 +639,12 @@ function projectAndValidate(input: unknown): GatewayLogRecord {
 
 let writeQueue: Promise<unknown> = Promise.resolve();
 
-/**
- * Async so schema-validation failures and the byte-guard surface uniformly
- * as rejected Promises. Callers and tests use:
- *
- *   await appendGatewayLog(filePath, record);
- *   await expect(appendGatewayLog(filePath, evil)).rejects.toThrow();
- */
 export async function appendGatewayLog(
   filePath: string,
   input: unknown,
   opts: AppendGatewayLogOptions = {},
 ): Promise<void> {
-  const record = projectAndValidate(input);                     // throws → rejected Promise
+  const record = projectAndValidate(input);
   const line = JSON.stringify(record) + "\n";
   if (Buffer.byteLength(line, "utf8") > GATEWAY_LOG_MAX_BYTES) {
     throw new Error("gateway log record exceeds maximum file size");
@@ -620,14 +685,10 @@ async function maybeTrim(filePath: string, now: Date): Promise<void> {
           try {
             const parsed = JSON.parse(buf.subarray(0, nl).toString("utf8")) as { ts?: string };
             if (parsed.ts && new Date(parsed.ts).getTime() < ageCutoffMs(now)) needsTrim = true;
-          } catch {
-            needsTrim = true;
-          }
+          } catch { needsTrim = true; }
         }
       }
-    } finally {
-      await fd.close();
-    }
+    } finally { await fd.close(); }
   }
   if (!needsTrim) return;
 
@@ -666,14 +727,12 @@ pnpm --filter @tierkit/core test -- gatewayLog
 git add packages/core/src/runtime/gatewayLog.ts \
         packages/core/test/gatewayLog.test.ts \
         packages/core/test/gatewayLog.redaction.test.ts
-git commit -m "feat(core): gatewayLog — async, value-constrained schema (Bearer|Other), queue"
+git commit -m "feat(core): gatewayLog — async, value-constrained, superRefine invariants, queue"
 ```
 
 ---
 
 ## Task 3: `loopback.ts` + `runtimePaths.ts` helpers
-
-(Unchanged from rev4.)
 
 **Files:**
 - Create: `packages/core/src/runtime/loopback.ts`
@@ -771,8 +830,6 @@ git commit -m "feat(core): loopback + runtimePaths helpers"
 ---
 
 ## Task 4: `GET /v1/gateway/status` — loopback-guarded
-
-(Unchanged from rev4.)
 
 **Files:**
 - Create: `packages/core/src/runtime/gatewayStatus.ts`
@@ -875,7 +932,7 @@ describe("GET /v1/gateway/status", () => {
 });
 ```
 
-- [ ] **Step 4: Add the route** in `Server.ts` (imports + route block):
+- [ ] **Step 4: Add the route** in `Server.ts`:
 
 ```typescript
 import { isLoopbackRemoteAddress } from "./loopback.js";
@@ -906,9 +963,9 @@ git commit -m "feat(core): GET /v1/gateway/status — loopback, resolved dataDir
 
 ---
 
-## Task 5: Route gate + deterministic safe-log wiring + scheme normalization
+## Task 5: Route gate + deterministic safe-log wiring + streaming-aware error logging + scheme normalization
 
-**Why:** Phase 0 routes are unconditional. Phase 1 gates them, normalizes `observeAuthHeaders` scheme to the safe enum so no Authorization header causes log loss, logs HTTP 502 as `status: 502`, and uses `resolveRuntimeDataDir`. The mock upstream parses the forwarded request body and returns SSE when `stream: true` (correction 26) — the Phase 0 header allowlist does NOT forward `Accept`, so body-based detection is required for the streaming test to exercise the proxy correctly.
+**Why:** Phase 0 routes gate on `gatewayMode`. Safe log writes deterministically (non-stream before `res.end`, stream after `streamMessages` resolves). The catch block distinguishes pre-headers vs post-headers errors: pre-headers returns 502 and logs 502; post-headers logs `res.statusCode` because the client has already observed that status (correction 32). Authorization scheme is normalized to `"Bearer" | "Other"` so no header causes log loss (correction 15). Tests use mock upstream that responds to SSE based on body, not Accept header (correction 26).
 
 **Files:**
 - Modify: `packages/core/src/runtime/Server.ts`
@@ -1066,7 +1123,7 @@ describe("Server — safe log (deterministic, every route)", () => {
     } finally { await srv.stop(); await rm(dir, { recursive: true, force: true }); }
   });
 
-  it("transport error → HTTP 502 AND log records status: 502", async () => {
+  it("pre-headers transport error → HTTP 502 AND log records status: 502", async () => {
     process.env.TIERKIT_ANTHROPIC_UPSTREAM = "http://127.0.0.1:1";
     const { srv, dir, url } = await startWith("on");
     try {
@@ -1096,6 +1153,11 @@ describe("Server — safe log (deterministic, every route)", () => {
       expect(parsed.auth.authorizationScheme).toBe("Other");
     } finally { await srv.stop(); await rm(dir, { recursive: true, force: true }); }
   });
+
+  // Post-headers stream abort coverage is in Task 10 Test 11 (manual). The automated
+  // version requires a mid-stream upstream socket close, which is timing-sensitive
+  // in vitest. The implementation in Server.ts catch block logs res.statusCode
+  // (not 502) when res.headersSent is true.
 });
 ```
 
@@ -1105,17 +1167,13 @@ describe("Server — safe log (deterministic, every route)", () => {
 pnpm --filter @tierkit/core test -- Server.gatewayMode
 ```
 
-- [ ] **Step 3: Gate + log in `Server.ts`** (same shape as rev4 — including the scheme normalizer):
-
-Top imports:
+- [ ] **Step 3: Gate + log in `Server.ts` — streaming-aware catch (correction 32)**
 
 ```typescript
 import { appendGatewayLog, gatewayLogPath } from "./gatewayLog.js";
 import { observeAuthHeaders } from "./anthropicGateway.js";
 import { resolveRuntimeDataDir } from "./runtimePaths.js";
 ```
-
-Helper:
 
 ```typescript
 function normalizeAuthorizationScheme(raw: string | null): "Bearer" | "Other" | null {
@@ -1124,7 +1182,7 @@ function normalizeAuthorizationScheme(raw: string | null): "Bearer" | "Other" | 
 }
 ```
 
-`/v1/messages`:
+`/v1/messages` block:
 
 ```typescript
       if (route === "POST /v1/messages") {
@@ -1169,21 +1227,29 @@ function normalizeAuthorizationScheme(raw: string | null): "Bearer" | "Other" | 
           res.end(r.body);
           return;
         } catch (err) {
+          // correction 32: if the stream has already sent headers, the client has
+          // observed res.statusCode (usually 200). Logging 502 would diverge from
+          // what actually happened on the wire. Record the observed status and
+          // destroy the stream. Before headers, return + log 502.
+          if (res.headersSent) {
+            await logFinal(res.statusCode);
+            res.destroy(err as Error);
+            return;
+          }
           await logFinal(502);
-          if (res.headersSent) { res.destroy(err as Error); return; }
           return sendJson(res, 502, { type: "error", error: { type: "upstream_error", message: (err as Error).message } });
         }
       }
 ```
 
-Mirror for `/v1/messages/count_tokens` (path string `/v1/messages/count_tokens`, `stream: false`, no streaming branch).
+Mirror for `/v1/messages/count_tokens` with `path: "/v1/messages/count_tokens"`, `stream: false`, no streaming branch (so the post-headers case is unreachable — non-stream `await logFinal(r.status)` runs before `res.end`, the catch always sees `headersSent: false`, and logs 502).
 
 - [ ] **Step 4: Tests pass + commit**
 
 ```bash
 pnpm --filter @tierkit/core test
 git add packages/core/src/runtime/Server.ts packages/core/test/Server.gatewayMode.test.ts
-git commit -m "feat(core): gate /v1/messages + count_tokens; log-before-end; scheme normalization; body-based stream mock"
+git commit -m "feat(core): gate routes; log-before-end; streaming-aware error status; scheme normalization"
 ```
 
 ---
@@ -1197,7 +1263,7 @@ git commit -m "feat(core): gate /v1/messages + count_tokens; log-before-end; sch
 - Create: `packages/core/test/doctorGateway.test.ts`
 - Modify: `packages/core/src/index.ts`
 
-- [ ] **Step 1: Failing test (label assertion fixed)**
+- [ ] **Step 1: Failing test (label assertion)**
 
 ```typescript
 // packages/core/test/doctorGateway.test.ts
@@ -1394,8 +1460,6 @@ git commit -m "feat(core): doctorGateway — loopback probe, label-asserted, pub
 
 ## Task 7: `tierkit doctor gateway` CLI
 
-(Unchanged from rev4.)
-
 **Files:**
 - Create: `packages/cli/src/commands/DoctorGatewayCommand.ts`
 - Create: `packages/cli/test/doctorGatewayCommand.test.ts`
@@ -1463,7 +1527,13 @@ export class DoctorGatewayCommand extends Command<CliContext> {
 }
 ```
 
-Register in `packages/cli/src/cli.ts`.
+Register in `packages/cli/src/cli.ts` next to `DoctorCommand`:
+
+```typescript
+import { DoctorGatewayCommand } from "./commands/DoctorGatewayCommand.js";
+// ...
+cli.register(DoctorGatewayCommand);
+```
 
 - [ ] **Step 3: Build + test + commit**
 
@@ -1476,28 +1546,201 @@ git commit -m "feat(cli): tierkit doctor gateway"
 
 ---
 
-## Task 8: Sidebar toggle — pure `gatewayModeConfig` helpers + control URL + daemon-rejection stops fallback
+## Task 8: Sidebar toggle — pure VS Code helpers FIRST, then server PATCH, then extension toggle
 
-**Why:** Three corrections converge here.
-- (correction 22) The extension canonicalizes the configured `tierkit.baseUrl` to a loopback control URL before calling `/v1/gateway/status` / `/v1/config/runtime`, so a user with a non-loopback baseUrl doesn't get 403s.
-- (correction 23) When the daemon is reachable but rejects the PATCH, the extension shows the rejection and stops — never falls back to a direct file write that would bypass schema validation.
-- (correction 24) Offline config mutation is extracted into `gatewayModeConfig.ts` pure helpers with full test coverage.
+**Why:** Three corrections converge here (29, 30, 31). The pure helpers (`gatewayControlUrl.ts`, `gatewayModeConfig.ts`, `webviewCommandAllowlist.ts`) are created BEFORE the extension code that imports them so the build order is correct (correction 29). The toggle's reachability is a discriminated union — non-2xx status responses are rejections, not transport failures (correction 30). Once a PATCH has been attempted and the response is lost, the extension does NOT execute file fallback — the daemon may have already committed (correction 31).
 
 **Files:**
-- Modify: `packages/core/src/runtime/Server.ts` — loopback-guarded, full-schema-validated `PATCH /v1/config/runtime` (server side from rev4)
-- Create: `packages/core/test/Server.patchRuntime.test.ts`
+- Create: `packages/vscode-tierkit/src/gatewayControlUrl.ts`
+- Create: `packages/vscode-tierkit/test/gatewayControlUrl.test.ts`
 - Create: `packages/vscode-tierkit/src/gatewayModeConfig.ts`
 - Create: `packages/vscode-tierkit/test/gatewayModeConfig.test.ts`
 - Create: `packages/vscode-tierkit/src/webviewCommandAllowlist.ts`
 - Create: `packages/vscode-tierkit/test/webviewCommandAllowlist.test.ts`
+- Modify: `packages/core/src/runtime/Server.ts` — loopback-guarded, full-schema-validated `PATCH /v1/config/runtime`
+- Create: `packages/core/test/Server.patchRuntime.test.ts`
 - Modify: `packages/vscode-tierkit/src/extension.ts`
 - Modify: `packages/vscode-tierkit/package.json` (command only, no config property)
 - Modify: `packages/vscode-tierkit/package.nls.json` + `package.nls.ko.json`
 - Modify: `packages/core/src/runtime/ui/gui.ts`
 
-### 8a. Server PATCH route (unchanged from rev4)
+### 8a. Pure helpers (NO `vscode` import)
 
-- [ ] **Step 1: Failing PATCH test**
+- [ ] **Step 1: `gatewayControlUrl.ts` failing test**
+
+```typescript
+// packages/vscode-tierkit/test/gatewayControlUrl.test.ts
+import { describe, it, expect } from "vitest";
+import { controlBaseUrlFromConfiguredBaseUrl } from "../src/gatewayControlUrl.js";
+
+describe("controlBaseUrlFromConfiguredBaseUrl", () => {
+  it("rewrites LAN bind addresses to loopback while preserving the port", () => {
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://192.168.1.10:4101")).toBe("http://127.0.0.1:4101");
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://0.0.0.0:9876")).toBe("http://127.0.0.1:9876");
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://localhost:9876")).toBe("http://127.0.0.1:9876");
+  });
+  it("uses IPv6 loopback for IPv6 hosts", () => {
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://[::1]:4101")).toBe("http://[::1]:4101");
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://[::]:4101")).toBe("http://[::1]:4101");
+  });
+  it("leaves loopback IPv4 unchanged", () => {
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://127.0.0.1:4101")).toBe("http://127.0.0.1:4101");
+    expect(controlBaseUrlFromConfiguredBaseUrl("http://127.0.0.1:4101/")).toBe("http://127.0.0.1:4101");
+  });
+});
+```
+
+- [ ] **Step 2: Implement**
+
+```typescript
+// packages/vscode-tierkit/src/gatewayControlUrl.ts
+/**
+ * Canonicalize the user-configured `tierkit.baseUrl` into a loopback control
+ * URL. Phase 1's control endpoints reject non-loopback callers; the extension
+ * must always use this canonical URL for control calls.
+ *
+ * Pure. NO `vscode` import. Unit-testable without the VS Code runtime.
+ *
+ * NOTE: This canonicalization rescues daemons bound to 127.0.0.1, ::1,
+ * 0.0.0.0, or :: only. A daemon bound only to a specific LAN interface
+ * (e.g. 192.168.1.50) is NOT reachable through this flow — see
+ * docs/ANTHROPIC_GATEWAY.md.
+ */
+export function controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl: string): string {
+  const url = new URL(configuredBaseUrl);
+  if (configuredBaseUrl.includes("[")) {
+    return `http://[::1]:${url.port}`;
+  }
+  return `http://127.0.0.1:${url.port}`;
+}
+```
+
+- [ ] **Step 3: Test passes**
+
+```bash
+pnpm --filter @tierkit/vscode-tierkit test -- gatewayControlUrl
+```
+
+- [ ] **Step 4: `gatewayModeConfig.ts` failing test**
+
+```typescript
+// packages/vscode-tierkit/test/gatewayModeConfig.test.ts
+import { describe, it, expect } from "vitest";
+import { readGatewayModeFromConfig, withGatewayMode } from "../src/gatewayModeConfig.js";
+
+describe("readGatewayModeFromConfig", () => {
+  it("defaults absent gatewayMode to off", () => {
+    expect(readGatewayModeFromConfig({ version: "0.1" })).toBe("off");
+    expect(readGatewayModeFromConfig({ version: "0.1", runtime: {} })).toBe("off");
+  });
+  it("reads existing on so offline toggle can flip to off", () => {
+    expect(readGatewayModeFromConfig({ runtime: { gatewayMode: "on" } })).toBe("on");
+  });
+  it("reads existing off", () => {
+    expect(readGatewayModeFromConfig({ runtime: { gatewayMode: "off" } })).toBe("off");
+  });
+  it("rejects malformed existing values rather than silently coercing", () => {
+    expect(() => readGatewayModeFromConfig({ runtime: { gatewayMode: "auto" } })).toThrow();
+    expect(() => readGatewayModeFromConfig({ runtime: { gatewayMode: 1 } })).toThrow();
+  });
+});
+
+describe("withGatewayMode", () => {
+  it("mutates only runtime.gatewayMode", () => {
+    expect(
+      withGatewayMode(
+        { version: "0.1", runtime: { port: 4101, dataDir: ".tierkit/runtime" }, plugins: { enabled: true } },
+        "on",
+      ),
+    ).toEqual({
+      version: "0.1",
+      runtime: { port: 4101, dataDir: ".tierkit/runtime", gatewayMode: "on" },
+      plugins: { enabled: true },
+    });
+  });
+  it("creates runtime block when absent", () => {
+    expect(withGatewayMode({ version: "0.1" }, "off").runtime).toEqual({ gatewayMode: "off" });
+  });
+});
+```
+
+- [ ] **Step 5: Implement**
+
+```typescript
+// packages/vscode-tierkit/src/gatewayModeConfig.ts
+export type GatewayMode = "off" | "on";
+
+export function readGatewayModeFromConfig(config: Record<string, unknown>): GatewayMode {
+  const runtime =
+    config.runtime && typeof config.runtime === "object"
+      ? (config.runtime as Record<string, unknown>)
+      : {};
+  const value = runtime.gatewayMode;
+  if (value === undefined) return "off";
+  if (value === "off" || value === "on") return value;
+  throw new Error("runtime.gatewayMode has an invalid value");
+}
+
+export function withGatewayMode(config: Record<string, unknown>, next: GatewayMode): Record<string, unknown> {
+  const runtime =
+    config.runtime && typeof config.runtime === "object"
+      ? { ...(config.runtime as Record<string, unknown>) }
+      : {};
+  runtime.gatewayMode = next;
+  return { ...config, runtime };
+}
+```
+
+- [ ] **Step 6: Test passes**
+
+```bash
+pnpm --filter @tierkit/vscode-tierkit test -- gatewayModeConfig
+```
+
+- [ ] **Step 7: Webview allowlist module + test**
+
+```typescript
+// packages/vscode-tierkit/src/webviewCommandAllowlist.ts
+const ALLOWED = new Set<string>([
+  "tierkit.toggleGatewayMode",
+  "tierkit.launchClaudeCodeWithGateway",
+]);
+export function isAllowedWebviewCommand(command: unknown): command is string {
+  return typeof command === "string" && ALLOWED.has(command);
+}
+```
+
+```typescript
+// packages/vscode-tierkit/test/webviewCommandAllowlist.test.ts
+import { describe, it, expect } from "vitest";
+import { isAllowedWebviewCommand } from "../src/webviewCommandAllowlist.js";
+
+describe("isAllowedWebviewCommand", () => {
+  it("admits Phase 1 gateway commands", () => {
+    expect(isAllowedWebviewCommand("tierkit.toggleGatewayMode")).toBe(true);
+    expect(isAllowedWebviewCommand("tierkit.launchClaudeCodeWithGateway")).toBe(true);
+  });
+  it("rejects other tierkit commands", () => {
+    expect(isAllowedWebviewCommand("tierkit.openInPanel")).toBe(false);
+    expect(isAllowedWebviewCommand("tierkit.restartDaemon")).toBe(false);
+  });
+  it("rejects arbitrary VS Code commands", () => {
+    expect(isAllowedWebviewCommand("workbench.action.terminal.kill")).toBe(false);
+  });
+  it("rejects non-strings", () => {
+    expect(isAllowedWebviewCommand(undefined)).toBe(false);
+    expect(isAllowedWebviewCommand(42)).toBe(false);
+  });
+});
+```
+
+```bash
+pnpm --filter @tierkit/vscode-tierkit test -- webviewCommandAllowlist
+```
+
+### 8b. Server PATCH route (correction 8)
+
+- [ ] **Step 8: Failing PATCH tests**
 
 ```typescript
 // packages/core/test/Server.patchRuntime.test.ts
@@ -1551,7 +1794,7 @@ describe("PATCH /v1/config/runtime", () => {
 });
 ```
 
-- [ ] **Step 2: Implement the route** (same as rev4; imports add `TierkitConfigSchema`, `fs`, `path` if missing):
+- [ ] **Step 9: Implement the route** in `Server.ts` (imports add `TierkitConfigSchema`, `fs`, `path` if missing):
 
 ```typescript
       if (route === "PATCH /v1/config/runtime") {
@@ -1594,136 +1837,15 @@ describe("PATCH /v1/config/runtime", () => {
       }
 ```
 
-- [ ] **Step 3: Tests pass**
+- [ ] **Step 10: Tests pass**
 
 ```bash
 pnpm --filter @tierkit/core test -- Server.patchRuntime
 ```
 
-### 8b. Pure helpers + tests for offline config mutation (correction 24)
+### 8c. Extension toggle command — discriminated reachability + no-fallback-after-PATCH
 
-- [ ] **Step 4: Failing tests**
-
-```typescript
-// packages/vscode-tierkit/test/gatewayModeConfig.test.ts
-import { describe, it, expect } from "vitest";
-import { readGatewayModeFromConfig, withGatewayMode } from "../src/gatewayModeConfig.js";
-
-describe("readGatewayModeFromConfig", () => {
-  it("defaults absent gatewayMode to off", () => {
-    expect(readGatewayModeFromConfig({ version: "0.1" })).toBe("off");
-    expect(readGatewayModeFromConfig({ version: "0.1", runtime: {} })).toBe("off");
-  });
-  it("reads existing on so offline toggle can flip to off", () => {
-    expect(readGatewayModeFromConfig({ runtime: { gatewayMode: "on" } })).toBe("on");
-  });
-  it("reads existing off", () => {
-    expect(readGatewayModeFromConfig({ runtime: { gatewayMode: "off" } })).toBe("off");
-  });
-  it("rejects malformed existing values rather than silently coercing", () => {
-    expect(() => readGatewayModeFromConfig({ runtime: { gatewayMode: "auto" } })).toThrow();
-    expect(() => readGatewayModeFromConfig({ runtime: { gatewayMode: 1 } })).toThrow();
-  });
-});
-
-describe("withGatewayMode", () => {
-  it("mutates only runtime.gatewayMode", () => {
-    expect(
-      withGatewayMode(
-        {
-          version: "0.1",
-          runtime: { port: 4101, dataDir: ".tierkit/runtime" },
-          plugins: { enabled: true },
-        },
-        "on",
-      ),
-    ).toEqual({
-      version: "0.1",
-      runtime: { port: 4101, dataDir: ".tierkit/runtime", gatewayMode: "on" },
-      plugins: { enabled: true },
-    });
-  });
-  it("creates runtime block when absent", () => {
-    expect(withGatewayMode({ version: "0.1" }, "off").runtime).toEqual({ gatewayMode: "off" });
-  });
-});
-```
-
-- [ ] **Step 5: Implement**
-
-```typescript
-// packages/vscode-tierkit/src/gatewayModeConfig.ts
-export type GatewayMode = "off" | "on";
-
-export function readGatewayModeFromConfig(config: Record<string, unknown>): GatewayMode {
-  const runtime =
-    config.runtime && typeof config.runtime === "object"
-      ? (config.runtime as Record<string, unknown>)
-      : {};
-  const value = runtime.gatewayMode;
-  if (value === undefined) return "off";
-  if (value === "off" || value === "on") return value;
-  throw new Error("runtime.gatewayMode has an invalid value");
-}
-
-export function withGatewayMode(config: Record<string, unknown>, next: GatewayMode): Record<string, unknown> {
-  const runtime =
-    config.runtime && typeof config.runtime === "object"
-      ? { ...(config.runtime as Record<string, unknown>) }
-      : {};
-  runtime.gatewayMode = next;
-  return { ...config, runtime };
-}
-```
-
-- [ ] **Step 6: Tests pass**
-
-```bash
-pnpm --filter @tierkit/vscode-tierkit test -- gatewayModeConfig
-```
-
-### 8c. Webview allowlist (unchanged)
-
-- [ ] **Step 7: Module + test**
-
-```typescript
-// packages/vscode-tierkit/src/webviewCommandAllowlist.ts
-const ALLOWED = new Set<string>([
-  "tierkit.toggleGatewayMode",
-  "tierkit.launchClaudeCodeWithGateway",
-]);
-export function isAllowedWebviewCommand(command: unknown): command is string {
-  return typeof command === "string" && ALLOWED.has(command);
-}
-```
-
-```typescript
-// packages/vscode-tierkit/test/webviewCommandAllowlist.test.ts
-import { describe, it, expect } from "vitest";
-import { isAllowedWebviewCommand } from "../src/webviewCommandAllowlist.js";
-
-describe("isAllowedWebviewCommand", () => {
-  it("admits Phase 1 gateway commands", () => {
-    expect(isAllowedWebviewCommand("tierkit.toggleGatewayMode")).toBe(true);
-    expect(isAllowedWebviewCommand("tierkit.launchClaudeCodeWithGateway")).toBe(true);
-  });
-  it("rejects other tierkit commands", () => {
-    expect(isAllowedWebviewCommand("tierkit.openInPanel")).toBe(false);
-    expect(isAllowedWebviewCommand("tierkit.restartDaemon")).toBe(false);
-  });
-  it("rejects arbitrary VS Code commands", () => {
-    expect(isAllowedWebviewCommand("workbench.action.terminal.kill")).toBe(false);
-  });
-  it("rejects non-strings", () => {
-    expect(isAllowedWebviewCommand(undefined)).toBe(false);
-    expect(isAllowedWebviewCommand(42)).toBe(false);
-  });
-});
-```
-
-### 8d. Extension toggle command (control URL, daemon-rejection stops fallback)
-
-- [ ] **Step 8: Imports**
+- [ ] **Step 11: Imports**
 
 At the top of `extension.ts`:
 
@@ -1732,10 +1854,10 @@ import * as fsp from "node:fs/promises";
 import * as nodePath from "node:path";
 import { isAllowedWebviewCommand } from "./webviewCommandAllowlist.js";
 import { readGatewayModeFromConfig, withGatewayMode } from "./gatewayModeConfig.js";
-import { controlBaseUrlFromConfiguredBaseUrl } from "./gatewayLaunch.js";
+import { controlBaseUrlFromConfiguredBaseUrl } from "./gatewayControlUrl.js";
 ```
 
-- [ ] **Step 9: Register the toggle command**
+- [ ] **Step 12: Register the toggle command** (corrections 13, 19, 23, 30, 31)
 
 ```typescript
     vscode.commands.registerCommand("tierkit.toggleGatewayMode", async () => {
@@ -1749,87 +1871,107 @@ import { controlBaseUrlFromConfiguredBaseUrl } from "./gatewayLaunch.js";
       const controlBaseUrl = controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl);
       const cfgPath = nodePath.join(workspace.uri.fsPath, "tierkit.config.json");
 
-      // Read current state. Prefer the daemon; fall back to the file.
-      let current: "off" | "on" = "off";
-      let daemonReachable = false;
-      try {
-        const r = await fetch(`${controlBaseUrl}/v1/gateway/status`);
-        if (r.ok) {
-          current = ((await r.json()) as { gatewayMode: "off" | "on" }).gatewayMode;
-          daemonReachable = true;
-        }
-      } catch { /* fall through */ }
+      // Discriminated reachability — corrections 30 & 23.
+      type Reach =
+        | { kind: "reachable"; gatewayMode: "off" | "on" }
+        | { kind: "transport-failure" }
+        | { kind: "rejected"; status: number; detail: string };
 
-      let cfgOnDisk: Record<string, unknown> | undefined;
-      if (!daemonReachable) {
+      const probeDaemon = async (): Promise<Reach> => {
+        let res: Response;
         try {
-          cfgOnDisk = JSON.parse(await fsp.readFile(cfgPath, "utf8")) as Record<string, unknown>;
-          try {
-            current = readGatewayModeFromConfig(cfgOnDisk);
-          } catch {
-            void vscode.window.showErrorMessage(
-              vscode.l10n.t("tierkit.config.json runtime.gatewayMode has an invalid value. Fix it manually and re-toggle."),
-            );
-            return;
-          }
+          res = await fetch(`${controlBaseUrl}/v1/gateway/status`);
+        } catch {
+          return { kind: "transport-failure" };
+        }
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          return { kind: "rejected", status: res.status, detail };
+        }
+        let body: { gatewayMode?: unknown };
+        try { body = (await res.json()) as { gatewayMode?: unknown }; }
+        catch (err) { return { kind: "rejected", status: res.status, detail: (err as Error).message }; }
+        if (body.gatewayMode !== "on" && body.gatewayMode !== "off") {
+          return { kind: "rejected", status: res.status, detail: "Gateway status response contained an invalid gatewayMode." };
+        }
+        return { kind: "reachable", gatewayMode: body.gatewayMode };
+      };
+
+      const reach = await probeDaemon();
+
+      if (reach.kind === "rejected") {
+        void vscode.window.showErrorMessage(
+          vscode.l10n.t("Tierkit daemon rejected the gateway status request.") +
+            (reach.detail ? ` ${reach.detail}` : ""),
+        );
+        return;
+      }
+
+      if (reach.kind === "transport-failure") {
+        // Pre-mutation transport failure → offline file fallback is allowed (correction 23).
+        let cfg: Record<string, unknown>;
+        try {
+          cfg = JSON.parse(await fsp.readFile(cfgPath, "utf8")) as Record<string, unknown>;
         } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+            cfg = { version: "0.1" };
+          } else {
             void vscode.window.showErrorMessage(`tierkit.config.json: ${(err as Error).message}`);
             return;
           }
         }
-      }
-
-      const next: "off" | "on" = current === "on" ? "off" : "on";
-
-      if (daemonReachable) {
-        // Daemon is reachable — daemon owns the write. If it rejects, surface the
-        // rejection and stop. NEVER fall back to a direct file write, which would
-        // bypass the daemon's full-schema validation.
-        let r: Response;
+        let current: "off" | "on";
         try {
-          r = await fetch(`${controlBaseUrl}/v1/config/runtime`, {
-            method: "PATCH",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ gatewayMode: next }),
-          });
-        } catch (err) {
-          // Transport failure mid-request — treat as offline (drop into fallback below).
-          daemonReachable = false;
-          r = undefined as unknown as Response;
-        }
-        if (daemonReachable) {
-          if (!r.ok) {
-            const detail = await r.text().catch(() => "");
-            void vscode.window.showErrorMessage(
-              vscode.l10n.t("Tierkit daemon rejected the gateway mode update.") + (detail ? ` ${detail}` : ""),
-            );
-            return;
-          }
-          void vscode.window.showInformationMessage(
-            next === "on"
-              ? vscode.l10n.t("Gateway: on. Use 'Launch Claude Code through Tierkit' to start a routed session.")
-              : vscode.l10n.t("Gateway: off."),
+          current = readGatewayModeFromConfig(cfg);
+        } catch {
+          void vscode.window.showErrorMessage(
+            vscode.l10n.t("tierkit.config.json runtime.gatewayMode has an invalid value. Fix it manually and re-toggle."),
           );
-          sidebarRef?.render();
           return;
         }
+        const next: "off" | "on" = current === "on" ? "off" : "on";
+        const updated = withGatewayMode(cfg, next);
+        const tmp = `${cfgPath}.tmp-${process.pid}-${Date.now()}`;
+        await fsp.writeFile(tmp, JSON.stringify(updated, null, 2) + "\n");
+        await fsp.rename(tmp, cfgPath);
+        void vscode.commands.executeCommand("tierkit.restartDaemon");
+        void vscode.window.showInformationMessage(
+          next === "on"
+            ? vscode.l10n.t("Gateway: on (offline file fallback applied; daemon will pick this up on restart).")
+            : vscode.l10n.t("Gateway: off (offline file fallback applied)."),
+        );
+        sidebarRef?.render();
+        return;
       }
 
-      // Transport-failure-only offline fallback.
-      const cfg = cfgOnDisk ?? (await (async () => {
-        try {
-          return JSON.parse(await fsp.readFile(cfgPath, "utf8")) as Record<string, unknown>;
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-          return { version: "0.1" } as Record<string, unknown>;
-        }
-      })());
-      const updated = withGatewayMode(cfg, next);
-      const tmp = `${cfgPath}.tmp-${process.pid}-${Date.now()}`;
-      await fsp.writeFile(tmp, JSON.stringify(updated, null, 2) + "\n");
-      await fsp.rename(tmp, cfgPath);
-      void vscode.commands.executeCommand("tierkit.restartDaemon");
+      // reach.kind === "reachable" — daemon owns the write from here on.
+      const next: "off" | "on" = reach.gatewayMode === "on" ? "off" : "on";
+
+      let patchRes: Response;
+      try {
+        patchRes = await fetch(`${controlBaseUrl}/v1/config/runtime`, {
+          method: "PATCH",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ gatewayMode: next }),
+        });
+      } catch {
+        // correction 31: PATCH attempted, response lost. Daemon may have already
+        // committed. NEVER auto-fallback — show indeterminate-state error.
+        void vscode.window.showErrorMessage(
+          vscode.l10n.t("The gateway update request did not complete cleanly. Check the current status (sidebar) before trying again."),
+        );
+        sidebarRef?.render();
+        return;
+      }
+
+      if (!patchRes.ok) {
+        const detail = await patchRes.text().catch(() => "");
+        void vscode.window.showErrorMessage(
+          vscode.l10n.t("Tierkit daemon rejected the gateway mode update.") +
+            (detail ? ` ${detail}` : ""),
+        );
+        return;
+      }
 
       void vscode.window.showInformationMessage(
         next === "on"
@@ -1840,7 +1982,7 @@ import { controlBaseUrlFromConfiguredBaseUrl } from "./gatewayLaunch.js";
     }),
 ```
 
-- [ ] **Step 10: Wire `tk:cmd` in both `onDidReceiveMessage` sites** (sidebar `:572-603` and main panel `:279-299`), before `if (msg.type.startsWith("tk:"))`:
+- [ ] **Step 13: Wire `tk:cmd` in both `onDidReceiveMessage` sites** (unchanged):
 
 ```typescript
       if (msg.type === "tk:cmd" && isAllowedWebviewCommand(msg.command)) {
@@ -1849,40 +1991,41 @@ import { controlBaseUrlFromConfiguredBaseUrl } from "./gatewayLaunch.js";
       }
 ```
 
-- [ ] **Step 11: package.json command + nls (NO configuration property)**
+- [ ] **Step 14: package.json command + nls** (unchanged): add `tierkit.toggleGatewayMode` command, NO configuration property.
 
-`contributes.commands`:
+### 8d. Sidebar HTML
 
-```json
-        {
-          "command": "tierkit.toggleGatewayMode",
-          "title": "%command.toggleGatewayMode%",
-          "category": "Tierkit"
-        }
-```
-
-`package.nls.json`: `"command.toggleGatewayMode": "Route Claude Code through Tierkit (toggle)"`
-`package.nls.ko.json`: `"command.toggleGatewayMode": "Claude Code를 Tierkit 통해 연결 (토글)"`
-
-### 8e. Sidebar toggle row in `gui.ts`
-
-- [ ] **Step 12: Inspect + reuse the existing bridge** before editing:
+- [ ] **Step 15: `gui.ts` toggle row** — inspect existing bridge before editing:
 
 ```bash
 grep -n "acquireVsCodeApi\|postMessage\|window.parent" packages/core/src/runtime/ui/gui.ts | head -30
 ```
 
-Reuse the existing dispatch helper. If a `tk:cmd` post is not yet supported, extend the existing helper rather than calling `acquireVsCodeApi()` directly.
+Reuse the existing dispatch helper. If a `tk:cmd` post is not yet supported, extend the existing helper rather than calling `acquireVsCodeApi()` directly. Suggested helper shape if you need to add one:
 
-Add a card titled **"Route Claude Code through Tierkit"** with sub-text **"Phase 1 passthrough connection. Requests are routed through the local Tierkit daemon without modifying message content."**. On render, fetch `/v1/gateway/status` for current value. On change, dispatch `{ type: "tk:cmd", command: "tierkit.toggleGatewayMode" }`. In browser context, disable the control with `"Use the VS Code sidebar to toggle"`. No token/percentage/efficiency display.
+```javascript
+// Inside gui.ts — align with the file's existing style.
+function postTierkitCommand(commandName) {
+  if (typeof acquireVsCodeApi === "function") {
+    const api = (window.__tierkitVsApi ??= acquireVsCodeApi());
+    api.postMessage({ type: "tk:cmd", command: commandName });
+    return true;
+  }
+  return false;  // Browser context — caller disables the control with a small note.
+}
+```
 
-- [ ] **Step 13: Build + tests + commit**
+Add a card titled **"Route Claude Code through Tierkit"** with sub-text **"Phase 1 passthrough connection. Requests are routed through the local Tierkit daemon without modifying message content."**. On render, fetch `/v1/gateway/status` for the current value. On change, call `postTierkitCommand("tierkit.toggleGatewayMode")`. In the browser context (no VS Code API), disable the control with `"Use the VS Code sidebar to toggle"`. No token/percentage/efficiency display.
+
+- [ ] **Step 16: Build + test + commit**
 
 ```bash
 pnpm --filter @tierkit/vscode-tierkit build
 pnpm --filter @tierkit/vscode-tierkit test
 git add packages/core/src/runtime/Server.ts \
         packages/core/test/Server.patchRuntime.test.ts \
+        packages/vscode-tierkit/src/gatewayControlUrl.ts \
+        packages/vscode-tierkit/test/gatewayControlUrl.test.ts \
         packages/vscode-tierkit/src/gatewayModeConfig.ts \
         packages/vscode-tierkit/test/gatewayModeConfig.test.ts \
         packages/vscode-tierkit/src/webviewCommandAllowlist.ts \
@@ -1892,33 +2035,33 @@ git add packages/core/src/runtime/Server.ts \
         packages/vscode-tierkit/package.nls.json \
         packages/vscode-tierkit/package.nls.ko.json \
         packages/core/src/runtime/ui/gui.ts
-git commit -m "feat: sidebar toggle — control URL, daemon-rejection stops, pure config helpers"
+git commit -m "feat: sidebar toggle — pure helpers, discriminated reachability, no-fallback-after-PATCH"
 ```
 
 ---
 
-## Task 9: Scoped terminal launch — control URL, readiness discrimination, fallback honors `TIERKIT_CLAUDE_CODE_BIN`
+## Task 9: Scoped terminal launch — pure `gatewayLaunchCore` + VS Code-side `gatewayTerminal` + extension launch
 
-**Why:** Launch readiness probes go through the canonical control URL (correction 22). Status response classified into ready/mode-off/unreachable (correction 14). Direct fallback uses `gatewayLaunchCommand(process.env)` (correction 18).
+**Why:** Pure helpers live in `gatewayLaunchCore.ts` (NO `vscode` import) so unit tests run regardless of the test harness's VS Code mock (correction 35). The VS Code-specific terminal helper lives in `gatewayTerminal.ts`. The launch command reuses `controlBaseUrlFromConfiguredBaseUrl` (already created in Task 8a) and `classifyReadiness` to drive readiness states (correction 14). Direct fallback honors `TIERKIT_CLAUDE_CODE_BIN` (correction 18).
 
 **Files:**
-- Create: `packages/vscode-tierkit/src/gatewayLaunch.ts` — adds `controlBaseUrlFromConfiguredBaseUrl`
-- Create: `packages/vscode-tierkit/test/gatewayLaunch.test.ts`
-- Modify: `packages/vscode-tierkit/src/extension.ts`
+- Create: `packages/vscode-tierkit/src/gatewayLaunchCore.ts`
+- Create: `packages/vscode-tierkit/test/gatewayLaunchCore.test.ts`
+- Create: `packages/vscode-tierkit/src/gatewayTerminal.ts`
+- Modify: `packages/vscode-tierkit/src/extension.ts` — register launch command
 - Modify: `packages/vscode-tierkit/package.json` + nls
 
-- [ ] **Step 1: Failing tests (includes `controlBaseUrlFromConfiguredBaseUrl`)**
+- [ ] **Step 1: Failing pure tests**
 
 ```typescript
-// packages/vscode-tierkit/test/gatewayLaunch.test.ts
+// packages/vscode-tierkit/test/gatewayLaunchCore.test.ts
 import { describe, it, expect } from "vitest";
 import {
   buildGatewayEnv,
   gatewayLaunchCommand,
   classifyReadiness,
   nextGatewayMode,
-  controlBaseUrlFromConfiguredBaseUrl,
-} from "../src/gatewayLaunch.js";
+} from "../src/gatewayLaunchCore.js";
 
 describe("buildGatewayEnv", () => {
   it("sets ANTHROPIC_BASE_URL", () => {
@@ -1928,7 +2071,7 @@ describe("buildGatewayEnv", () => {
     const env = buildGatewayEnv({ baseUrl: "http://127.0.0.1:4101", parentEnv: { ANTHROPIC_API_KEY: "sk-secret" } });
     expect(env.ANTHROPIC_API_KEY).toBe("sk-secret");
   });
-  it("preserves PATH, HOME, etc.", () => {
+  it("preserves PATH and HOME", () => {
     const env = buildGatewayEnv({ baseUrl: "http://127.0.0.1:4101", parentEnv: { PATH: "/usr/local/bin", HOME: "/u" } });
     expect(env.PATH).toBe("/usr/local/bin");
     expect(env.HOME).toBe("/u");
@@ -1941,17 +2084,15 @@ describe("gatewayLaunchCommand", () => {
 });
 
 describe("classifyReadiness", () => {
-  it("ready when status returns routesEnabled true", () => {
+  it("ready when routesEnabled true", () => {
     expect(classifyReadiness({ gatewayMode: "on", routesEnabled: true })).toEqual({ kind: "ready" });
   });
   it("mode-off when gatewayMode is off", () => {
     expect(classifyReadiness({ gatewayMode: "off", routesEnabled: false })).toEqual({ kind: "mode-off" });
   });
-  it("unreachable when the status body is null/undefined", () => {
+  it("unreachable when body is null/undefined or malformed", () => {
     expect(classifyReadiness(null).kind).toBe("unreachable");
     expect(classifyReadiness(undefined).kind).toBe("unreachable");
-  });
-  it("unreachable when the body is malformed", () => {
     expect(classifyReadiness({} as never).kind).toBe("unreachable");
   });
 });
@@ -1962,30 +2103,12 @@ describe("nextGatewayMode", () => {
     expect(nextGatewayMode("off")).toBe("on");
   });
 });
-
-describe("controlBaseUrlFromConfiguredBaseUrl", () => {
-  it("rewrites LAN bind addresses to loopback while preserving the port", () => {
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://192.168.1.10:4101")).toBe("http://127.0.0.1:4101");
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://0.0.0.0:9876")).toBe("http://127.0.0.1:9876");
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://localhost:9876")).toBe("http://127.0.0.1:9876");
-  });
-  it("preserves IPv6 loopback form when host is an IPv6 family", () => {
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://[::1]:4101")).toBe("http://[::1]:4101");
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://[::]:4101")).toBe("http://[::1]:4101");
-  });
-  it("leaves already-loopback IPv4 unchanged (modulo trailing slash)", () => {
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://127.0.0.1:4101")).toBe("http://127.0.0.1:4101");
-    expect(controlBaseUrlFromConfiguredBaseUrl("http://127.0.0.1:4101/")).toBe("http://127.0.0.1:4101");
-  });
-});
 ```
 
-- [ ] **Step 2: Implement**
+- [ ] **Step 2: Implement pure module** (NO `vscode` import)
 
 ```typescript
-// packages/vscode-tierkit/src/gatewayLaunch.ts
-import * as vscode from "vscode";
-
+// packages/vscode-tierkit/src/gatewayLaunchCore.ts
 export interface GatewayEnvInput {
   baseUrl: string;
   parentEnv: Record<string, string | undefined>;
@@ -2014,28 +2137,20 @@ export function classifyReadiness(body: { gatewayMode?: "off" | "on"; routesEnab
 export function nextGatewayMode(current: "off" | "on"): "off" | "on" {
   return current === "on" ? "off" : "on";
 }
+```
 
-/**
- * Canonicalize the user-configured `tierkit.baseUrl` into a loopback control
- * URL. Phase 1's control endpoints (/v1/gateway/status, /v1/config/runtime,
- * /v1/doctor/gateway) reject non-loopback callers; the extension must always
- * use this canonical URL for those calls, not the (possibly LAN-facing)
- * configured base URL.
- *
- * - IPv6 host families (`[::1]`, `[::]`, etc.) → `http://[::1]:<port>`
- * - Everything else (IPv4 LAN, 0.0.0.0, localhost) → `http://127.0.0.1:<port>`
- * Port is preserved.
- */
-export function controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl: string): string {
-  const url = new URL(configuredBaseUrl);
-  // URL.hostname for IPv6 strips the brackets; check the raw URL for ":".
-  if (configuredBaseUrl.includes("[")) {
-    url.hostname = "::1";
-    return `http://[::1]:${url.port}`;
-  }
-  url.hostname = "127.0.0.1";
-  return `${url.protocol}//${url.hostname}:${url.port}`;
-}
+- [ ] **Step 3: Tests pass**
+
+```bash
+pnpm --filter @tierkit/vscode-tierkit test -- gatewayLaunchCore
+```
+
+- [ ] **Step 4: VS Code-side terminal helper**
+
+```typescript
+// packages/vscode-tierkit/src/gatewayTerminal.ts
+import * as vscode from "vscode";
+import { buildGatewayEnv, gatewayLaunchCommand } from "./gatewayLaunchCore.js";
 
 export async function openGatewayTerminal(baseUrl: string): Promise<vscode.Terminal> {
   const env = buildGatewayEnv({ baseUrl, parentEnv: process.env });
@@ -2046,14 +2161,14 @@ export async function openGatewayTerminal(baseUrl: string): Promise<vscode.Termi
 }
 ```
 
-- [ ] **Step 3: Register the launch command** (uses control URL + readiness discrimination + binary-honored fallback)
+- [ ] **Step 5: Register the launch command** (corrections 14, 18, 22, 35)
 
 ```typescript
     vscode.commands.registerCommand("tierkit.launchClaudeCodeWithGateway", async () => {
       const cfg = vscode.workspace.getConfiguration("tierkit");
       const configuredBaseUrl = cfg.get<string>("baseUrl") ?? "http://127.0.0.1:4101";
-      const { controlBaseUrlFromConfiguredBaseUrl, classifyReadiness, gatewayLaunchCommand, openGatewayTerminal } =
-        await import("./gatewayLaunch.js");
+      const { classifyReadiness, gatewayLaunchCommand } = await import("./gatewayLaunchCore.js");
+      const { openGatewayTerminal } = await import("./gatewayTerminal.js");
       const controlBaseUrl = controlBaseUrlFromConfiguredBaseUrl(configuredBaseUrl);
 
       const readReadiness = async () => {
@@ -2112,7 +2227,7 @@ export async function openGatewayTerminal(baseUrl: string): Promise<vscode.Termi
     }),
 ```
 
-- [ ] **Step 4: Command + nls**
+- [ ] **Step 6: Command + nls**
 
 ```json
         {
@@ -2130,25 +2245,24 @@ export async function openGatewayTerminal(baseUrl: string): Promise<vscode.Termi
   "command.launchClaudeCodeWithGateway": "Tierkit 통해 Claude Code 실행"
 ```
 
-- [ ] **Step 5: Tests + build + commit**
+- [ ] **Step 7: Tests + build + commit**
 
 ```bash
-pnpm --filter @tierkit/vscode-tierkit test -- gatewayLaunch
+pnpm --filter @tierkit/vscode-tierkit test -- gatewayLaunchCore
 pnpm --filter @tierkit/vscode-tierkit build
-git add packages/vscode-tierkit/src/gatewayLaunch.ts \
-        packages/vscode-tierkit/test/gatewayLaunch.test.ts \
+git add packages/vscode-tierkit/src/gatewayLaunchCore.ts \
+        packages/vscode-tierkit/test/gatewayLaunchCore.test.ts \
+        packages/vscode-tierkit/src/gatewayTerminal.ts \
         packages/vscode-tierkit/src/extension.ts \
         packages/vscode-tierkit/package.json \
         packages/vscode-tierkit/package.nls.json \
         packages/vscode-tierkit/package.nls.ko.json
-git commit -m "feat(vscode): launch — control URL + readiness discrimination + custom-binary fallback"
+git commit -m "feat(vscode): launch — pure core + terminal side effects, readiness, env-stripping fallback"
 ```
 
 ---
 
 ## Task 10: Manual test plan
-
-(rev4 + tests for offline-fallback bypass guard and control URL canonicalization.)
 
 **Files:**
 - Create: `packages/vscode-tierkit/test/MANUAL_gateway_flows.md`
@@ -2169,12 +2283,12 @@ git commit -m "feat(vscode): launch — control URL + readiness discrimination +
 
 ## Test 2 — Auth preservation
 - Parent shell: `export ANTHROPIC_API_KEY=sk-test-DO-NOT-USE`. Launch VS Code from that shell.
-- Click launch. New terminal: `echo $ANTHROPIC_API_KEY` → prints the test value.
+- Click launch. `echo $ANTHROPIC_API_KEY` → prints the test value.
 
 ## Test 3 — Mode-off guidance (NO daemon restart)
 - Sidebar toggle OFF. Click launch.
 - Expected info message: `Enable "Route Claude Code through Tierkit" before launching a routed session.`
-- Expected: NO status-bar "starting daemon…" message and NO daemon restart attempt.
+- Expected: NO "starting daemon…" message and NO daemon restart attempt.
 
 ## Test 4 — Auto-restart + fallback
 - Mode ON. `pkill -f 'tierkit runtime'`. Click launch.
@@ -2183,13 +2297,14 @@ git commit -m "feat(vscode): launch — control URL + readiness discrimination +
 ## Test 5 — Hard fallback (env stripping + custom binary)
 - `tierkit.autoStartDaemon: false`. Kill daemon. Click launch.
 - Dialog appears → click "Launch direct".
-- In the new terminal: `echo "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"` → empty.
-- Optional: with `TIERKIT_CLAUDE_CODE_BIN=/opt/custom/claude`, confirm BOTH the routed terminal AND the direct fallback terminal launch `/opt/custom/claude`.
+- `echo "ANTHROPIC_BASE_URL=$ANTHROPIC_BASE_URL"` → empty.
+- With `TIERKIT_CLAUDE_CODE_BIN=/opt/custom/claude`, confirm BOTH routed AND direct terminals launch `/opt/custom/claude`.
 
 ## Test 6 — Safe log inspection
 - After Tests 1 and 4: `cat .tierkit/runtime/anthropic-gateway.jsonl`.
 - Each record has only `ts, path, stream, status, durationMs, auth {authorizationScheme, authorizationFingerprint, apiKeyPresent, apiKeyFingerprint}`.
-- `authorizationScheme` is `null`, `"Bearer"`, or `"Other"` — never a raw secret.
+- `authorizationScheme` is `null`, `"Bearer"`, or `"Other"`.
+- The invariant holds in every record: scheme null iff fingerprint null; apiKeyPresent false iff fingerprint null.
 - Negative: grep for `sk-`, API key prefix, message text → no hits.
 
 ## Test 7 — Local-only enforcement (LAN)
@@ -2197,39 +2312,55 @@ git commit -m "feat(vscode): launch — control URL + readiness discrimination +
 - From ANOTHER machine on the same LAN: `curl http://<machine-ip>:<port>/v1/gateway/status` → 403 `local_only`.
 - `curl -X PATCH http://<machine-ip>:<port>/v1/config/runtime ...` → 403.
 - From the same machine: `curl http://127.0.0.1:<port>/v1/gateway/status` → 200.
-- Restore `runtime.host`.
+- Restore.
 
 ## Test 8 — Offline toggle works in both directions
 - With daemon running: sidebar toggle to ON.
-- Stop daemon (`pkill -f 'tierkit runtime'`, set `tierkit.autoStartDaemon: false`).
-- Sidebar toggle → file should flip ON → OFF.
+- Stop daemon. Sidebar toggle → file should flip ON → OFF.
 
 ## Test 9 — Daemon rejection does NOT trigger offline fallback
-- With daemon running, manually corrupt `tierkit.config.json` to contain a field the daemon will reject (e.g. add a top-level `version: "ZZ"` while daemon is alive in memory).
-- Click sidebar toggle.
-- Expected: error message containing daemon's rejection detail. tierkit.config.json on disk is NOT silently overwritten by the extension.
+- With daemon running, send a request that the daemon will reject (the sidebar
+  toggle's PATCH should succeed under normal conditions; this test exercises
+  the rejection path by temporarily exporting a value the daemon rejects).
+- Expected: error message containing daemon's rejection detail.
+- tierkit.config.json on disk is NOT silently overwritten by the extension.
 
 ## Test 10 — Extension uses loopback even with LAN configured baseUrl
-- Set `tierkit.baseUrl` in VS Code settings to `http://192.168.1.50:4101` (a non-loopback host).
-- Sidebar toggle still works (the extension's PATCH succeeds because it canonicalizes to `127.0.0.1:4101` before calling).
-- Launch button still opens a terminal (status probe succeeds for the same reason).
-- Restore `tierkit.baseUrl`.
+- Set `tierkit.baseUrl` in VS Code settings to `http://192.168.1.50:4101`.
+- Sidebar toggle and launch button still work (extension canonicalizes to `127.0.0.1:4101`).
+- Restore.
+
+## Test 11 — Streaming abort logs the observed HTTP status (correction 32)
+- Mode ON. From `claude` running in the gateway terminal, start a long streaming completion.
+- Kill the daemon mid-stream (`pkill -f 'tierkit runtime'`).
+- The Claude Code session may show a disconnect.
+- After restart, `cat .tierkit/runtime/anthropic-gateway.jsonl | tail -1`.
+- Expected: the aborted record's `status` is `200` (the status the client actually observed at the start of the stream), NOT `502`. `stream: true` is present.
+
+## Test 12 — Bind-mode constraints (LAN-only bind is NOT supported)
+- Set `runtime.host: "192.168.1.50"` (a specific LAN interface, NOT 0.0.0.0). Restart daemon.
+- `tierkit doctor gateway` reports `gateway-daemon: fail` because the extension's loopback probe cannot reach the LAN-only bind. This is expected behavior (docs/ANTHROPIC_GATEWAY.md lists the supported bind modes).
+- Restore to `127.0.0.1` or `0.0.0.0`.
+
+## Test 13 — PATCH-then-transport-failure indeterminate state (correction 31)
+- Mode ON. Set up a flaky network condition between extension and daemon (or kill the daemon between the status probe and the PATCH request).
+- Click sidebar toggle.
+- Expected: indeterminate-state error like "The gateway update request did not complete cleanly. Check the current status before trying again."
+- Expected: `tierkit.config.json` was NOT silently overwritten by the extension.
 ```
 
-- [ ] **Step 2: Walk Tests 1–10; record observations in PR.**
+- [ ] **Step 2: Walk Tests 1–13.**
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add packages/vscode-tierkit/test/MANUAL_gateway_flows.md
-git commit -m "docs(vscode): manual test plan — offline-fallback guard, LAN-baseUrl, custom binary"
+git commit -m "docs(vscode): manual test plan — adds streaming-abort + bind-mode + PATCH-ambiguity tests"
 ```
 
 ---
 
 ## Task 11: `GET /v1/doctor/gateway` + sidebar diagnostics card
-
-(Unchanged from rev4.)
 
 **Files:**
 - Modify: `packages/core/src/runtime/Server.ts`
@@ -2277,7 +2408,9 @@ describe("GET /v1/doctor/gateway", () => {
 pnpm --filter @tierkit/core test -- Server.doctorGateway
 ```
 
-- [ ] **Step 4: Sidebar card**: title **"Anthropic Gateway — diagnostics"**, fetch `/v1/doctor/gateway`, refresh button, render `label`/`status`/`detail`. No token/percentage/efficiency display.
+- [ ] **Step 4: Sidebar card in `gui.ts`**
+
+Add a card titled **"Anthropic Gateway — diagnostics"** that fetches `/v1/doctor/gateway` on render + a refresh button. Render each check's `label`, colored `status`, and `detail`. Use the browser/webview-compatible helper already in `gui.ts`. No token/percentage/efficiency display.
 
 - [ ] **Step 5: Build + commit**
 
@@ -2291,9 +2424,9 @@ git commit -m "feat(server): GET /v1/doctor/gateway (loopback) + sidebar diagnos
 
 ---
 
-## Task 12: Docs — README + ANTHROPIC_GATEWAY.md (EN + KR), accurate auth shape
+## Task 12: Docs — README + ANTHROPIC_GATEWAY.md (EN + KR), accurate auth shape + bind modes
 
-- [ ] **Step 1: Write `docs/ANTHROPIC_GATEWAY.md`**
+- [ ] **Step 1: Write `docs/ANTHROPIC_GATEWAY.md`** (rev5 content + bind-mode paragraph from correction 34)
 
 ```markdown
 # Anthropic Gateway
@@ -2327,18 +2460,29 @@ You should see `OK` for `runtime.gatewayMode`, `daemon @ ...`, `routes`,
 When the gateway is on, the daemon writes a per-request log to
 `.tierkit/runtime/anthropic-gateway.jsonl`. Each record contains: timestamp,
 path, stream flag, upstream status, duration, and an `auth` block with the
-Authorization classification (`Bearer`, `Other`, or `null` when no Authorization
-header was present), an `apiKeyPresent` boolean for the `x-api-key` channel,
-and a 12-character fingerprint for each credential channel that was present.
-The log never contains the request body, the response body, the raw
-`Authorization` or `x-api-key` value, the `system` prompt, the `messages[]`
-array, or `tool_result` content. The file rotates at 5 MB or 7 days,
-whichever comes first.
+Authorization classification (`Bearer`, `Other`, or `null` when no
+Authorization header was present), an `apiKeyPresent` boolean for the
+`x-api-key` channel, and a 12-character fingerprint for each credential
+channel that was present. The schema enforces that a fingerprint is present
+exactly when its channel is present — there are no records with a fingerprint
+for an absent channel. The log never contains the request body, the response
+body, the raw `Authorization` or `x-api-key` value, the `system` prompt, the
+`messages[]` array, or `tool_result` content. The file rotates at 5 MB or
+7 days, whichever comes first.
+
+For streaming requests, the recorded `status` is the HTTP status the client
+actually observed (typically 200), even when the upstream stream aborts
+mid-flight. A separate stream-abort outcome field is planned for a later phase.
 
 ## Local-only control surface
 
 `GET /v1/gateway/status`, `GET /v1/doctor/gateway`, and
 `PATCH /v1/config/runtime` reject any non-loopback caller with HTTP 403.
+
+For these control endpoints to be reachable, run the daemon on a loopback or
+wildcard bind address: `127.0.0.1`, `::1`, `0.0.0.0`, or `::`. A daemon bound
+only to a specific LAN interface (for example `192.168.1.50`) is not supported
+by the Phase 1 local-control flow.
 
 ## Direct fallback
 
@@ -2386,14 +2530,25 @@ tierkit doctor gateway
 상태 코드, 처리 시간과, `auth` 블록을 포함합니다. `auth`는 Authorization 분류
 값(`Bearer`, `Other`, 또는 Authorization 헤더가 없을 때 `null`), `x-api-key`
 존재 여부를 나타내는 `apiKeyPresent` boolean, 그리고 존재했던 각 인증 채널의
-12자 fingerprint로 구성됩니다. 요청·응답 본문, `Authorization`·`x-api-key`
+12자 fingerprint로 구성됩니다. 스키마는 채널이 존재할 때에만 해당 채널의
+fingerprint가 기록되도록 보장합니다 — 없는 채널의 fingerprint가 기록되는
+레코드는 발생하지 않습니다. 요청·응답 본문, `Authorization`·`x-api-key`
 원문, `system` 프롬프트, `messages[]`, `tool_result` 내용은 포함되지 않습니다.
 5 MB 또는 7일 중 먼저 도달하는 조건으로 회전합니다.
+
+스트리밍 요청의 경우, 기록되는 `status`는 클라이언트가 실제로 관측한 HTTP
+상태 코드(보통 200)이며, 업스트림 스트림이 중간에 끊긴 경우에도 그렇습니다.
+별도의 stream-abort outcome 필드는 후속 단계에서 제공할 예정입니다.
 
 ## 로컬 전용 제어 surface
 
 `GET /v1/gateway/status`, `GET /v1/doctor/gateway`, `PATCH /v1/config/runtime`는
 loopback이 아닌 호출자를 HTTP 403으로 거부합니다.
+
+이 제어 endpoint를 사용하려면 데몬은 `127.0.0.1`, `::1`, `0.0.0.0`, `::`처럼
+loopback 또는 wildcard 주소에 바인딩되어야 합니다. 특정 LAN 인터페이스 주소
+(예: `192.168.1.50`)에만 바인딩된 데몬은 Phase 1 제어 흐름의 지원 대상이
+아닙니다.
 
 ## Direct fallback
 
@@ -2418,7 +2573,7 @@ loopback이 아닌 호출자를 HTTP 403으로 거부합니다.
 
 ```bash
 git add docs/ANTHROPIC_GATEWAY.md docs/ANTHROPIC_GATEWAY.ko.md README.md
-git commit -m "docs: Anthropic Gateway — accurate auth shape, EN+KR"
+git commit -m "docs: Anthropic Gateway — accurate auth shape + supported bind modes (EN+KR)"
 ```
 
 ---
@@ -2434,7 +2589,7 @@ pnpm -r build
 pnpm -r test
 ```
 
-- [ ] **Step 2: Diff-based language audit**
+- [ ] **Step 2: Diff-based language audit (correction 11, 17)**
 
 ```bash
 BASE="$(git merge-base HEAD worktree-anthropic-gateway-spike)"
@@ -2462,9 +2617,9 @@ git diff --unified=0 "$BASE"...HEAD -- "${USER_FACING[@]}" \
   || echo "language audit ok"
 ```
 
-- [ ] **Step 3: Sensitive-logging review aid (advisory, NOT a guard — correction 27)**
+- [ ] **Step 3: Sensitive-logging review aid (advisory, correction 27)**
 
-The hard redaction guarantees are the value-constrained schema and `gatewayLog.redaction.test.ts`. This step is a review aid that surfaces sensitive-sounding console calls that Phase 1 ADDED, so the reviewer can eyeball them. It does NOT fail CI.
+The hard redaction guarantees are the value-constrained schema and `gatewayLog.redaction.test.ts`. This step surfaces sensitive-sounding console calls that Phase 1 ADDED, for reviewer eyeballing. It does NOT fail CI.
 
 ```bash
 BASE="$(git merge-base HEAD worktree-anthropic-gateway-spike)"
@@ -2479,9 +2634,7 @@ git diff --unified=0 "$BASE"...HEAD -- packages \
   || echo "  (none)"
 ```
 
-- [ ] **Step 4: Phase 2 entry-gate**
-
-Append to `docs/RFC-anthropic-gateway.md`:
+- [ ] **Step 4: Phase 2 entry-gate** — append to `docs/RFC-anthropic-gateway.md`:
 
 ```markdown
 ## Phase 2 entry gate (added during Phase 1)
@@ -2524,12 +2677,12 @@ local-only connection feature.
 - New: \`GET /v1/gateway/status\` (loopback-guarded)
 - New: \`PATCH /v1/config/runtime\` (loopback-guarded, allowlist, full-schema-validated)
 - New: \`GET /v1/doctor/gateway\` (loopback-guarded)
-- New: async safe per-request log (value-constrained schema with Bearer|Other scheme classification, 5 MB / 7-day rotation, queue, oversized rejection)
+- New: async safe per-request log (value-constrained schema with Bearer|Other scheme + superRefine invariants, 5 MB / 7-day rotation, queue, oversized rejection)
 - New: \`tierkit doctor gateway\` CLI (local-only, cross-platform, loopback control probe)
-- New: sidebar **Route Claude Code through Tierkit** toggle (single SoT; daemon-rejection stops fallback; offline write only on transport failure)
-- New: **Launch Claude Code through Tierkit** terminal button (preserves auth env; readiness discrimination; canonicalizes configured baseUrl to loopback control URL; honors \`TIERKIT_CLAUDE_CODE_BIN\` in both routed and direct terminals)
+- New: sidebar **Route Claude Code through Tierkit** toggle (single SoT; discriminated reachability — daemon rejection stops, post-PATCH transport failure shows indeterminate-state; offline write only on pre-mutation transport failure)
+- New: **Launch Claude Code through Tierkit** terminal button (preserves auth env; readiness discrimination; canonicalizes configured baseUrl to loopback control URL via pure helper; honors \`TIERKIT_CLAUDE_CODE_BIN\` in routed AND direct terminals)
 - New: explicit Direct fallback dialog (removes ANTHROPIC_BASE_URL)
-- New: \`docs/ANTHROPIC_GATEWAY.md\` + Korean version
+- New: \`docs/ANTHROPIC_GATEWAY.md\` + Korean version (with supported bind-mode constraints)
 
 ## Stacked on Phase 0
 
@@ -2539,16 +2692,16 @@ merges to main, change this PR's base to main.
 ## NOT in this PR
 
 Body transformation, compression, dedupe, pagination, body-level redaction,
-provider routing, any numeric efficiency claim. Strengthening the streaming
-completion-logging contract is deferred to Phase 2 (requires changes to
-\`anthropicGateway.ts\`).
+provider routing, any numeric efficiency claim. Strengthening the
+streaming-completion logging contract is deferred to Phase 2 (requires
+changes to \`anthropicGateway.ts\`). LAN-only bind support is out of scope.
 
 ## Test plan
 
 - [ ] \`pnpm -r build && pnpm -r test\` green
 - [ ] Diff-based language audit green (Task 13 Step 2)
 - [ ] Sensitive-logging review aid reviewed (Task 13 Step 3 — advisory)
-- [ ] Manual flows from \`packages/vscode-tierkit/test/MANUAL_gateway_flows.md\` 1–10 all pass
+- [ ] Manual flows from \`packages/vscode-tierkit/test/MANUAL_gateway_flows.md\` 1–13 all pass
 - [ ] \`tierkit doctor gateway\` returns OK on a configured workstation
 - [ ] Safe log inspected — no raw token, no body, \`authorizationScheme\` ∈ {null, "Bearer", "Other"}
 
@@ -2561,34 +2714,47 @@ EOF
 
 ## Self-review checklist
 
-**Coverage:** every Phase 1 scope item from RFC §3 implemented (mapping unchanged from rev4).
+**Coverage:** every Phase 1 scope item from RFC §3 implemented:
 
-**Hard rules verified (all 28 corrections):**
+| RFC item | Tasks |
+|---|---|
+| 1. Setting + sidebar toggle | 1, 8 |
+| 2. Scoped env injection only | 9 |
+| 3. Per-request safe log + rotation | 2, 5 |
+| 4. Auto-heal + Direct fallback | 9, 10 |
+| 5. Onboarding card | 11, 12 |
+| 6. \`tierkit doctor gateway\` | 6, 7, 11 |
+| 7. README + UI language (EN + KR) | 12 |
+| 8. Phase 2 entry gate | 13 |
 
-- [ ] gatewayLog: value-constrained schema; `authorizationScheme: Bearer|Other|null`; no defaults for required fields.
-- [ ] gatewayLog: declared `async`; tests use `expect(...).rejects.toThrow()`.
+**Hard rules verified (all 35 corrections):**
+
+- [ ] gatewayLog: value-constrained schema, `Bearer|Other` scheme enum, no default for `apiKeyPresent`, superRefine invariants on auth shape.
+- [ ] `appendGatewayLog()` is `async`; tests use `await expect(...).rejects.toThrow()`.
 - [ ] All three control endpoints reject non-loopback with 403.
 - [ ] `resolveRuntimeDataDir(dataDir, cwd)` used by status, log writer, doctor.
 - [ ] No Phase 1 automated test calls `api.anthropic.com`.
-- [ ] Non-stream `await logFinal()` BEFORE `res.end()`; stream after `streamMessages` resolves.
-- [ ] Transport-error responses log `status: 502`.
-- [ ] `PATCH /v1/config/runtime` runs result through `TierkitConfigSchema.parse()`.
+- [ ] Non-stream: `await logFinal()` BEFORE `res.end()`. Stream: log after `streamMessages` resolves.
+- [ ] Pre-headers transport error returns AND logs 502. Post-headers (stream in progress) error logs `res.statusCode`.
+- [ ] `PATCH /v1/config/runtime` runs through `TierkitConfigSchema.parse()`.
 - [ ] Ordinary `tierkit doctor` not modified.
 - [ ] `doctorGateway` exported from `@tierkit/core`.
 - [ ] Language audit is diff-based and includes `extension.ts` + `DoctorGatewayCommand.ts` + manual test plan.
-- [ ] `gui.ts` toggle uses the existing browser/webview-compatible helper.
-- [ ] Toggle reads file as fallback for current state so OFF transitions work offline.
-- [ ] Launch classifies into ready / mode-off / unreachable; mode-off does not trigger daemon restart.
-- [ ] Non-Bearer Authorization scheme persists as `"Other"`; tests assert.
-- [ ] Tests cover `/v1/messages` (off/on/non-stream/stream/502) AND `/v1/messages/count_tokens` (off/on).
-- [ ] Direct fallback honors `TIERKIT_CLAUDE_CODE_BIN`.
-- [ ] Doctor probes `loopbackControlUrl(host, port)`; non-loopback host test asserts on `label`.
-- [ ] Mock upstream decides stream vs JSON on the request body, not on `Accept`.
-- [ ] Offline config helpers (`readGatewayModeFromConfig`, `withGatewayMode`) are pure and have explicit unit tests.
-- [ ] Extension PATCH non-2xx → show error and stop. Offline write only on transport failure.
-- [ ] Extension control requests go through `controlBaseUrlFromConfiguredBaseUrl(...)`.
-- [ ] Docs describe the auth shape as a classification (`Bearer`, `Other`, or `null`), not a separate "present" boolean.
-- [ ] Sensitive-logging audit is positioned as a review aid, not a guard.
+- [ ] `gui.ts` toggle uses the existing dispatch bridge.
+- [ ] Offline toggle reads the file for current state so OFF transitions work.
+- [ ] Launch classifies ready / mode-off / unreachable; mode-off skips daemon restart.
+- [ ] Non-Bearer Authorization scheme persists as `"Other"`.
+- [ ] Tests cover `/v1/messages` (off/on/non-stream/stream/502 pre-headers) AND `/v1/messages/count_tokens`.
+- [ ] Direct fallback honors `TIERKIT_CLAUDE_CODE_BIN` via `gatewayLaunchCommand(process.env)`.
+- [ ] Doctor probes `loopbackControlUrl`; test asserts on `label`.
+- [ ] Mock upstream parses request body to decide SSE.
+- [ ] Pure helpers (`gatewayControlUrl.ts`, `gatewayModeConfig.ts`, `gatewayLaunchCore.ts`) — NO `vscode` import; testable standalone.
+- [ ] Extension toggle: discriminated reachability (`reachable | transport-failure | rejected`); only `transport-failure` permits file fallback.
+- [ ] Extension toggle: after PATCH was attempted and threw, show indeterminate-state error — do NOT write the file.
+- [ ] Extension control requests use `controlBaseUrlFromConfiguredBaseUrl`.
+- [ ] Task 8 imports `controlBaseUrlFromConfiguredBaseUrl` from `./gatewayControlUrl.js` (created in Task 8a), NOT from a Task 9 file.
+- [ ] Docs describe auth as `Bearer`/`Other`/`null` classification and list supported bind modes.
+- [ ] Manual Test 11 covers streaming-abort logging; Test 12 covers LAN-only-bind non-support; Test 13 covers PATCH-then-transport-failure indeterminate state.
 
 ---
 
