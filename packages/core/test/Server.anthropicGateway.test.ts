@@ -38,6 +38,12 @@ describe("/v1/messages — Anthropic passthrough (integration)", () => {
     await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
     upstreamUrl = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     process.env.TIERKIT_ANTHROPIC_UPSTREAM = upstreamUrl;
+    // Routes are now gated on gatewayMode === "on"; write config so Phase 0
+    // passthrough tests continue to exercise the route.
+    await fs.writeFile(
+      path.join(cwd, "tierkit.config.json"),
+      JSON.stringify({ version: "0.1", runtime: { gatewayMode: "on" } }),
+    );
     running = await startServer({ port: 0, host: "127.0.0.1", cwd });
     url = `http://${running.address}:${running.port}`;
   });
