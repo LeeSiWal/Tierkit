@@ -181,6 +181,58 @@ async function startStreamingUpstream(
 }
 
 describe("streamMessages (SSE passthrough)", () => {
+  it("aborts upstream when downstream closes, even if caller supplied opts.signal", async () => {
+    // Regression guard for the original bug: when opts.signal was provided,
+    // the internal controller wired to req-aborted / res-close was IGNORED,
+    // so a Claude Code disconnect couldn't stop the upstream stream.
+    let upstreamReqAborted = false;
+    const slowUpstream = http.createServer((req, res) => {
+      req.on("aborted", () => { upstreamReqAborted = true; });
+      res.setHeader("content-type", "text/event-stream");
+      res.statusCode = 200;
+      res.write(`event: message_start\ndata: {"type":"message_start"}\n\n`);
+      // Hold the connection open — never end. Only an abort from our side
+      // (downstream close → upstream abort) should free this server.
+    });
+    await new Promise<void>((resolve) => slowUpstream.listen(0, "127.0.0.1", resolve));
+    const port = (slowUpstream.address() as AddressInfo).port;
+
+    const { EventEmitter } = await import("node:events");
+    const res = Object.assign(new EventEmitter(), {
+      setHeader: () => {},
+      write: () => true,
+      end: () => {},
+      statusCode: 0,
+      headersSent: false,
+      off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+    }) as unknown as http.ServerResponse;
+    const req = Object.assign(new EventEmitter(), {
+      headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" },
+      off: function (this: any, ev: string, fn: any) { return this.removeListener(ev, fn); },
+    }) as unknown as http.IncomingMessage;
+
+    // Caller supplies their own signal — the bug was that this caused the
+    // downstream-close wiring to be discarded.
+    const callerController = new AbortController();
+    const body = Buffer.from(JSON.stringify({ stream: true }));
+    const streamPromise = streamMessages(req, body, res, {
+      upstreamBaseUrl: `http://127.0.0.1:${port}`,
+      signal: callerController.signal,
+    });
+
+    // Wait briefly for the first chunk to land, then simulate the downstream
+    // closing (Claude Code disconnect / VS Code reload).
+    await new Promise((r) => setTimeout(r, 50));
+    res.emit("close");
+
+    // The stream must terminate; the upstream must observe an aborted request.
+    await streamPromise.catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 50));
+    expect(upstreamReqAborted).toBe(true);
+
+    await new Promise<void>((resolve, reject) => slowUpstream.close((e) => (e ? reject(e) : resolve())));
+  });
+
   it("pipes upstream SSE events in order and without modification", async () => {
     const events = [
       `event: message_start\ndata: {"type":"message_start","message":{"id":"m1"}}\n\n`,

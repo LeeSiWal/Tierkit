@@ -124,11 +124,24 @@ export async function streamMessages(
   res: ServerResponse,
   opts: ForwardOptions = {},
 ): Promise<void> {
+  // The internal controller fires on downstream events (req aborted or res
+  // closed). If the caller ALSO supplied opts.signal, we must honor BOTH
+  // — the original implementation took opts.signal alone and silently
+  // discarded the downstream-disconnect wiring, so a Claude Code disconnect
+  // could not stop the upstream stream. Manually combine: either side
+  // aborts the controller and that's what fetch() sees.
   const controller = new AbortController();
   const abort = (): void => controller.abort();
   req.once("aborted", abort);
   res.once("close", abort);
-  const signal = opts.signal ?? controller.signal;
+  if (opts.signal) {
+    if (opts.signal.aborted) {
+      controller.abort();
+    } else {
+      opts.signal.addEventListener("abort", abort, { once: true });
+    }
+  }
+  const signal = controller.signal;
 
   try {
     const upstreamRes = await fetch(upstreamUrl(opts, "/v1/messages"), {
@@ -154,6 +167,10 @@ export async function streamMessages(
         if (done) break;
         const writable = res.write(Buffer.from(value));
         if (!writable) {
+          // Respect backpressure so a fast upstream cannot grow the downstream
+          // response buffer without bound while Claude Code consumes slowly.
+          // Node still buffers what we already wrote — this only paces the
+          // next read.
           await once(res, "drain");
         }
       }
