@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import http from "node:http";
 import { AddressInfo } from "node:net";
-import { pickForwardHeaders, forwardMessages, streamMessages } from "../src/runtime/anthropicGateway.js";
+import { pickForwardHeaders, forwardMessages, streamMessages, forwardCountTokens } from "../src/runtime/anthropicGateway.js";
 
 async function startFakeUpstream(
   handler: (req: http.IncomingMessage, body: Buffer) => { status: number; body: object; headers?: Record<string, string> },
@@ -170,6 +170,24 @@ describe("streamMessages (SSE passthrough)", () => {
       await streamMessages(req, body, res, { upstreamBaseUrl: upstream.url });
       const piped = Buffer.concat(written).toString("utf8");
       expect(piped).toBe(events.join(""));
+    } finally {
+      await upstream.close();
+    }
+  });
+});
+
+describe("forwardCountTokens", () => {
+  it("forwards to /v1/messages/count_tokens and returns the upstream JSON", async () => {
+    const upstream = await startFakeUpstream((req) => {
+      expect(req.url).toBe("/v1/messages/count_tokens");
+      return { status: 200, body: { input_tokens: 12 } };
+    });
+    try {
+      const req = { headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01" } } as unknown as http.IncomingMessage;
+      const body = Buffer.from(JSON.stringify({ model: "m", messages: [{ role: "user", content: "hi" }] }));
+      const r = await forwardCountTokens(req, body, { upstreamBaseUrl: upstream.url });
+      expect(r.status).toBe(200);
+      expect(JSON.parse(r.body.toString("utf8")).input_tokens).toBe(12);
     } finally {
       await upstream.close();
     }

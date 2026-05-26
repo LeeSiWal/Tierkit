@@ -144,3 +144,21 @@ export async function streamMessages(
     res.off("close", abort);
   }
 }
+
+export async function forwardCountTokens(
+  req: IncomingMessage,
+  body: Buffer,
+  opts: ForwardOptions = {},
+): Promise<ForwardResult> {
+  const res = await fetch(upstreamUrl(opts, "/v1/messages/count_tokens"), {
+    method: "POST",
+    headers: pickForwardHeaders(req.headers),
+    body,
+    signal: opts.signal,
+  });
+  return {
+    status: res.status,
+    headers: pickResponseHeaders(res.headers),
+    body: Buffer.from(await res.arrayBuffer()),
+  };
+}
