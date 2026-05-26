@@ -130,6 +130,14 @@ export const RuntimeConfigSchema = z
      * defined profiles and don't want the auto-route to consider random installed models.
      */
     discoverOllamaModels: z.boolean().default(true),
+    /**
+     * Anthropic Gateway flag. When "on", the daemon serves /v1/messages and
+     * /v1/messages/count_tokens as a transparent passthrough so Claude Code
+     * can be pointed at it via ANTHROPIC_BASE_URL. Default "off".
+     *
+     * This flag does NOT enable any request/response transformation.
+     */
+    gatewayMode: z.enum(["off", "on"]).default("off"),
   })
   .strict();
 
