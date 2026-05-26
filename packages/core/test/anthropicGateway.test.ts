@@ -1,5 +1,39 @@
 import { describe, it, expect } from "vitest";
-import { pickForwardHeaders } from "../src/runtime/anthropicGateway.js";
+import http from "node:http";
+import { AddressInfo } from "node:net";
+import { pickForwardHeaders, forwardMessages } from "../src/runtime/anthropicGateway.js";
+
+async function startFakeUpstream(
+  handler: (req: http.IncomingMessage, body: Buffer) => { status: number; body: object; headers?: Record<string, string> },
+): Promise<{ url: string; close: () => Promise<void>; received: () => { headers: http.IncomingHttpHeaders; body: string; url?: string; method?: string } }> {
+  let receivedHeaders: http.IncomingHttpHeaders = {};
+  let receivedBody = "";
+  let receivedUrl: string | undefined;
+  let receivedMethod: string | undefined;
+  const server = http.createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c) => chunks.push(c));
+    req.on("end", () => {
+      const body = Buffer.concat(chunks);
+      receivedHeaders = req.headers;
+      receivedBody = body.toString("utf8");
+      receivedUrl = req.url;
+      receivedMethod = req.method;
+      const r = handler(req, body);
+      const headers = { "content-type": "application/json", ...(r.headers ?? {}) };
+      for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+      res.statusCode = r.status;
+      res.end(JSON.stringify(r.body));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = (server.address() as AddressInfo).port;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    close: () => new Promise((resolve, reject) => server.close((e) => (e ? reject(e) : resolve()))),
+    received: () => ({ headers: receivedHeaders, body: receivedBody, url: receivedUrl, method: receivedMethod }),
+  };
+}
 
 describe("pickForwardHeaders", () => {
   it("forwards Anthropic-required headers and drops hop-by-hop ones", () => {
@@ -38,5 +72,45 @@ describe("pickForwardHeaders", () => {
       "anthropic-beta": ["prompt-caching-2024-07-31", "tools-2024-04-04"],
     });
     expect(out["anthropic-beta"]).toBe("prompt-caching-2024-07-31,tools-2024-04-04");
+  });
+});
+
+describe("forwardMessages (non-streaming)", () => {
+  it("forwards POST body verbatim and returns upstream status+body+headers", async () => {
+    const upstream = await startFakeUpstream(() => ({
+      status: 200,
+      body: { id: "msg_test", content: [{ type: "text", text: "ok" }] },
+    }));
+    try {
+      const req = { headers: { "x-api-key": "sk-x", "anthropic-version": "2023-06-01", "content-type": "application/json" } } as unknown as http.IncomingMessage;
+      const body = Buffer.from(JSON.stringify({ model: "m", max_tokens: 4, messages: [{ role: "user", content: "hi" }] }));
+      const r = await forwardMessages(req, body, { upstreamBaseUrl: upstream.url });
+      expect(r.status).toBe(200);
+      const parsed = JSON.parse(r.body.toString("utf8"));
+      expect(parsed.id).toBe("msg_test");
+      const rec = upstream.received();
+      expect(rec.headers["x-api-key"]).toBe("sk-x");
+      expect(rec.headers["anthropic-version"]).toBe("2023-06-01");
+      expect(JSON.parse(rec.body).model).toBe("m");
+    } finally {
+      await upstream.close();
+    }
+  });
+
+  it("propagates non-2xx status codes (e.g. 401 from upstream)", async () => {
+    const upstream = await startFakeUpstream(() => ({
+      status: 401,
+      body: { type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } },
+    }));
+    try {
+      const req = { headers: { "x-api-key": "sk-bad", "anthropic-version": "2023-06-01" } } as unknown as http.IncomingMessage;
+      const body = Buffer.from("{}");
+      const r = await forwardMessages(req, body, { upstreamBaseUrl: upstream.url });
+      expect(r.status).toBe(401);
+      const parsed = JSON.parse(r.body.toString("utf8"));
+      expect(parsed.error.type).toBe("authentication_error");
+    } finally {
+      await upstream.close();
+    }
   });
 });
