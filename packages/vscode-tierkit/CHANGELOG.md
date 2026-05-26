@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.22.6 — 2026-05-26
+
+**Sidebar auto-recovers when the daemon comes up after the tab opens.**
+
+Cold-start race: the user opens VS Code, the Tierkit sidebar resolves and runs `refreshAll()` immediately — but the daemon's HTTP server isn't accepting connections yet, so every parallel fetch fails. The 5-second `setInterval` only re-polls activity / usage / health, so once-only cards (Tools, Plugins, Models, Settings, Tk*) stay blank until the user clicks the ↻ refresh button.
+
+`refreshHealth` now tracks the offline→online edge and refires `refreshAll()` exactly once when health becomes reachable, so the dashboard self-recovers without user input.
+
+- fix(gui): `refreshHealth` flips `_healthWasOffline` on the offline→online transition and refires `refreshAll()` once
+- test(core): regression assertion in `guiHtml.test.ts` so future refactors can't quietly remove the recovery hook
+
 ## 0.22.5 — 2026-05-26
 
 **Auto-heal stale MCP cliPath after extension updates.**

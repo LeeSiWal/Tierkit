@@ -1,7 +1,7 @@
 {
   "name": "tierkit",
   "private": true,
-  "version": "0.22.5",
+  "version": "0.22.6",
   "description": "Local-first cost optimizer and token firewall for AI coding CLIs.",
   "license": "MIT",
   "packageManager": "pnpm@9.0.0",

@@ -19,6 +19,7 @@ This extension is the VS Code companion. The daemon **auto-starts in-process** o
 
 ## What's new in 0.22
 
+- **0.22.6** — Sidebar self-recovers on cold start. If the webview opens before the daemon is accepting connections, `refreshHealth` now detects the offline→online edge and refires `refreshAll()` once — no more "blank cards until I click ↻".
 - **0.22.5** — Auto-heal stale MCP `cliPath` on extension auto-update. Previously, when the extension upgraded, Claude Code's `.mcp.json` entry kept pointing at the old extension folder, silently breaking MCP after VS Code GC'd it. Now the daemon's host-info handler rewrites it in place — no manual reconnect needed.
 - **0.22.4** — Savings "today" window respects the daemon's local timezone (was UTC midnight — KST users used to see the card reset at 09:00). Long profile/model IDs in the sidebar wrap correctly instead of overflowing. New "System requirements" section below.
 - **0.22.3** — Savings card pushes via Server-Sent Events. Sub-second updates after any MCP tool call; no more 5-second polling lag.
@@ -203,6 +204,7 @@ The **"Tierkit" Output channel** (View → Output → Tierkit) logs every auto-s
 
 ## 0.22 신기능
 
+- **0.22.6** — 사이드바 cold-start 자동 복구. 웹뷰가 데몬 ready 전에 열리면 `refreshHealth`가 offline→online 전환을 감지해 `refreshAll()`을 1회 재실행 — "↻ 누르기 전까지 카드 비어있음" 증상 해결.
 - **0.22.5** — 익스텐션 자동 업데이트 시 `.mcp.json`이 옛 버전 폴더를 가리키던 stale path 문제 자동 복구. 이전엔 업데이트 후 VS Code가 옛 폴더를 GC하면 Claude Code의 MCP가 조용히 끊어져 절감 카드가 0에 멈춰 있는 증상이 생겼습니다. 이제 데몬이 host-info 받을 때마다 path를 자동 갱신 — 사용자가 재연결 누를 필요 없음.
 - **0.22.4** — Savings "오늘" 윈도우가 PC의 로컬 타임존을 따름 (이전에는 UTC 자정 기준이라 KST 사용자는 매일 오전 9시에 카드가 0으로 리셋되는 버그). 긴 프로파일/모델 ID도 사이드바를 벗어나지 않고 줄바꿈됨. 아래 "추천 사양" 섹션 추가.
 - **0.22.3** — Savings 카드가 SSE로 push됨. MCP 도구 호출 후 ~500ms 내 자동 갱신 (수동 새로고침 불필요)

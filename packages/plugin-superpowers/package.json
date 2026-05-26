@@ -1,6 +1,6 @@
 {
   "name": "@tierkit/plugin-superpowers",
-  "version": "0.22.5",
+  "version": "0.22.6",
   "description": "Bundled Tierkit policy rule packs (currently named `superpowers-{free,guided,balanced,strict}` — slug rename deferred to v0.13). Apply per-task discipline and tool permissions on top of cost routing.",
   "license": "MIT",
   "type": "module",

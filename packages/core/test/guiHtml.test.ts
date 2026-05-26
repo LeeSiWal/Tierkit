@@ -52,6 +52,28 @@ describe("GUI_HTML inline script", () => {
    * on the second call. If the inline script calls `acquireVsCodeApi` more than once,
    * the IIFE will throw and this test fails.
    */
+  /**
+   * v0.22.6 fix for the "open the tab, see blank cards until I click ↻" symptom.
+   * The setInterval refresher only ticks activity/usage/health every 5s; the
+   * once-only fetchers (tools/plugins/models/settings) never auto-retry. When
+   * the webview loads before the daemon is up, they stay stuck blank.
+   *
+   * refreshHealth now tracks `_healthWasOffline` and refires refreshAll() once
+   * on the offline→online edge. This test asserts the flag survives future
+   * refactors so we don't quietly regress to "user must click refresh."
+   */
+  it("refreshHealth refires refreshAll on offline→online edge (v0.22.6)", () => {
+    const script = extractScript();
+    expect(script).toContain("_healthWasOffline");
+    // Must appear in three places: declaration, success-path conditional,
+    // error-path set. A delete or rename that collapses this count means the
+    // auto-recovery wiring is broken.
+    const occurrences = (script.match(/_healthWasOffline/g) ?? []).length;
+    expect(occurrences).toBeGreaterThanOrEqual(3);
+    // And the success path must call refreshAll — the actual recovery.
+    expect(script).toMatch(/_healthWasOffline[\s\S]{0,200}refreshAll\(\)/);
+  });
+
   it("does not call acquireVsCodeApi more than once (VS Code webview API contract)", () => {
     const script = extractScript();
     let acquireCount = 0;

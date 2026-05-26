@@ -3820,6 +3820,13 @@ export const GUI_HTML = `<!doctype html>
   // EXPECTED_GUI_VERSION is stamped at build time (the GUI string IS this version). If the
   // daemon reports a different number, the daemon is running stale code — surface a banner.
   const EXPECTED_GUI_VERSION = '${GUI_BUILD_VERSION}';
+  // v0.22.6: track the offline→online edge. When the webview is opened before
+  // the daemon is ready, the first refreshAll()'s parallel fetches all fail —
+  // and only health/activity/usage are on the 5s setInterval, so cards like
+  // Tools, Plugins, Models, Settings stay blank until the user clicks the ↻
+  // button. We watch the health pulse and refire refreshAll() once when health
+  // first becomes reachable, so the dashboard self-recovers without input.
+  let _healthWasOffline = false;
   async function refreshHealth() {
     try {
       const h = await jget('/v1/health');
@@ -3834,10 +3841,19 @@ export const GUI_HTML = `<!doctype html>
       } else {
         hideVersionMismatchBanner();
       }
+      // Offline→online edge: refire the once-only refreshers so the dashboard
+      // catches up. The nested refreshHealth here will see _healthWasOffline=false
+      // and skip the recursion. refreshAll() runs in parallel; double-firing
+      // health/activity/usage in the same tick is harmless.
+      if (_healthWasOffline) {
+        _healthWasOffline = false;
+        refreshAll();
+      }
     } catch (e) {
       $('health-pill').textContent = i18n.offline;
       $('health-pill').className = 'pill pill-err';
       $('daemon-info').textContent = e.message;
+      _healthWasOffline = true;
     }
   }
 
